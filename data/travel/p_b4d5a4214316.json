@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767617169359,
+  "patientId": "p_b4d5a4214316",
+  "hotel": {
+    "name": "Radisson Hotel",
+    "address": "",
+    "checkIn": "2026-01-08",
+    "checkOut": "2026-01-30",
+    "googleMapsUrl": "https://maps.app.goo.gl/7USQSAYF3sHvM2H36"
+  },
+  "flights": [
+    {
+      "type": "ARRIVAL",
+      "from": "London",
+      "to": "Antalya",
+      "date": "2026-01-08",
+      "flightNo": "TK 567"
+    },
+    {
+      "type": "DEPARTURE",
+      "from": "Antalya",
+      "to": "London",
+      "date": "2026-01-26",
+      "flightNo": "TK 843"
+    }
+  ],
+  "notes": "Luggage max 20kg",
+  "airportPickup": {
+    "name": "Ali Naci",
+    "phone": "+905437676764",
+    "meetingPoint": "Gate B",
+    "role": "Driver",
+    "vehicleInfo": "White Toyaota Prius",
+    "plate": "07 KL 937",
+    "note": "Our staff will be waiting for you with a sign displaying your name."
+  },
+  "editPolicy": {
+    "hotel": "ADMIN",
+    "flights": "ADMIN",
+    "notes": "ADMIN"
+  },
+  "events": []
+}

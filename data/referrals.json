@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ref_977f3a0caf64",
+    "inviterPatientId": "p_97b97244e40c",
+    "inviterPatientName": "Sarp Zorlu",
+    "invitedPatientId": "p_0032b0ed3700",
+    "invitedPatientName": "Erman Topal",
+    "status": "APPROVED",
+    "createdAt": 1767566376695,
+    "inviterDiscountPercent": 2,
+    "invitedDiscountPercent": 2,
+    "discountPercent": 2,
+    "checkInAt": null,
+    "approvedAt": 1767566545467
+  },
+  {
+    "id": "ref_85bbf834856d",
+    "inviterPatientId": "p_97b97244e40c",
+    "inviterPatientName": "Sarp Zorlu",
+    "invitedPatientId": "p_a04b98d010c8",
+    "invitedPatientName": "Serap Zorlu",
+    "status": "APPROVED",
+    "createdAt": 1767569180390,
+    "inviterDiscountPercent": 2,
+    "invitedDiscountPercent": 2,
+    "discountPercent": 2,
+    "checkInAt": null,
+    "approvedAt": 1767569472271
+  }
+]

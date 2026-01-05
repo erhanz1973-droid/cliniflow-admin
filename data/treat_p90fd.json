@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767367380144,
+  "patientId": "p90fd",
+  "teeth": [
+    {
+      "toothId": "11",
+      "procedures": [
+        {
+          "type": "CROWN",
+          "at": 1768003200000
+        },
+        {
+          "type": "IMPLANT",
+          "at": 1768003200000
+        }
+      ]
+    },
+    {
+      "toothId": "35",
+      "procedures": [
+        {
+          "type": "FILLING",
+          "at": 1768003200000
+        }
+      ]
+    }
+  ]
+}

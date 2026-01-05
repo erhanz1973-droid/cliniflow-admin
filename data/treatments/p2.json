@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767217930835,
+  "patientId": "p2",
+  "teeth": [
+    {
+      "jaw": "upper",
+      "toothId": "11",
+      "procedures": [
+        {
+          "id": "p2-11-1767216826792",
+          "type": "IMPLANT",
+          "status": "DONE",
+          "createdAt": 1767216826792
+        },
+        {
+          "id": "p2-11-1767217619751",
+          "type": "IMPLANT",
+          "status": "SCHEDULED",
+          "createdAt": 1767217619751
+        }
+      ]
+    },
+    {
+      "jaw": "upper",
+      "toothId": "13",
+      "procedures": [
+        {
+          "id": "p2-13-1767216918203",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "createdAt": 1767216918203,
+          "scheduledAt": 1768114800000
+        }
+      ]
+    }
+  ]
+}

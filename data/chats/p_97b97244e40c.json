@@ -1,0 +1,140 @@
+{
+  "patientId": "p_97b97244e40c",
+  "messages": [
+    {
+      "id": "msg_1767468618616_f1bf1ac7",
+      "text": "Kimse var mı",
+      "from": "PATIENT",
+      "createdAt": 1767468618616,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767468650735_f08f759c",
+      "text": "var",
+      "from": "CLINIC",
+      "createdAt": 1767468650735
+    },
+    {
+      "id": "msg_1767470445714_bb1a8119",
+      "text": "Sikim Aaaaa",
+      "from": "PATIENT",
+      "createdAt": 1767470445714,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471628570_812aefdf",
+      "text": "aluu",
+      "from": "CLINIC",
+      "createdAt": 1767471628570
+    },
+    {
+      "id": "msg_1767471689003_5651f7f7",
+      "text": "Ne var",
+      "from": "PATIENT",
+      "createdAt": 1767471689003,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471721521_b4148825",
+      "text": "Hwy",
+      "from": "PATIENT",
+      "createdAt": 1767471721521,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471760775_1be72e36",
+      "text": "Alpp",
+      "from": "PATIENT",
+      "createdAt": 1767471760775,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471766003_9855aad9",
+      "text": "Alp",
+      "from": "PATIENT",
+      "createdAt": 1767471766003,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471967775_ab8d1dce",
+      "text": "Bdjd",
+      "from": "PATIENT",
+      "createdAt": 1767471967776,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471978965_9ffadaf6",
+      "text": "Zvfdcgg",
+      "from": "PATIENT",
+      "createdAt": 1767471978965,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767471994908_6f7228bf",
+      "text": "kjhkjkhh",
+      "from": "CLINIC",
+      "createdAt": 1767471994908
+    },
+    {
+      "id": "msg_1767476136384_bf832a24",
+      "text": "jiii",
+      "from": "CLINIC",
+      "createdAt": 1767476136385
+    },
+    {
+      "id": "msg_1767476402478_6f318323",
+      "text": "Zaman yayaya kalakal jsjsjsj kslsk",
+      "from": "PATIENT",
+      "createdAt": 1767476402478,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767545739076_4f270121",
+      "text": "Dmdk",
+      "from": "PATIENT",
+      "createdAt": 1767545739077,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767548106547_7dbb4331",
+      "text": "Ahfhgg",
+      "from": "PATIENT",
+      "createdAt": 1767548106548,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767548129467_0c295d59",
+      "text": "mbjhb",
+      "from": "CLINIC",
+      "createdAt": 1767548129467
+    },
+    {
+      "id": "msg_1767548138988_925c0525",
+      "text": "Xhxhd",
+      "from": "PATIENT",
+      "createdAt": 1767548138988,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767549129291_0377ff68",
+      "text": "nmnmb",
+      "from": "CLINIC",
+      "createdAt": 1767549129292
+    },
+    {
+      "id": "msg_1767561760876_dd6e62f4",
+      "text": "cd /Users/macbookpro/Documents/cliniflow/cliniflow-app\nnpm install @react-native-clipboard/clipboard",
+      "from": "PATIENT",
+      "createdAt": 1767561760877,
+      "patientId": "p_97b97244e40c"
+    },
+    {
+      "id": "msg_1767562413159_92becd8b",
+      "text": "p_97b97244e40c",
+      "from": "PATIENT",
+      "createdAt": 1767562413160,
+      "patientId": "p_97b97244e40c"
+    }
+  ],
+  "updatedAt": 1767562413160
+}

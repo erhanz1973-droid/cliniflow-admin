@@ -1,0 +1,220 @@
+// server/index.cjs
+// Cliniflow minimal server (Express)
+// - health
+// - register (PENDING)
+// - access verify -> token
+// - me/patient (token -> patientId)
+// - treatments + travel (simple JSON storage)
+// - CORS + JSON
+// - listens on 0.0.0.0:5050
+
+const express = require("express");
+const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
+
+const app = express();
+
+app.use(cors({ origin: "*", credentials: false }));
+app.use(express.json({ limit: "10mb" }));
+
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5050;
+
+// --------------------
+// Storage helpers
+// --------------------
+const DATA_DIR =
+  process.env.CLINIFLOW_DATA_DIR || path.join(process.cwd(), "data");
+
+function ensureDir() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  } catch {}
+}
+
+function fileOf(name) {
+  return path.join(DATA_DIR, name);
+}
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(file, obj) {
+  ensureDir();
+  fs.writeFileSync(file, JSON.stringify(obj, null, 2), "utf8");
+}
+
+function now() {
+  return Date.now();
+}
+
+function mkToken() {
+  return "pt_" + Math.random().toString(16).slice(2) + "_" + 
+now().toString(16);
+}
+
+function mkPatientId() {
+  return "p" + Math.random().toString(16).slice(2, 6);
+}
+
+const REG_FILE = fileOf("registrations.json"); // array
+const TOK_FILE = fileOf("tokens.json");        // map token -> {patientId, 
+createdAt}
+
+// --------------------
+// Health
+// --------------------
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    server: "index.cjs",
+    port: String(PORT),
+    time: now(),
+  });
+});
+
+// --------------------
+// Register (A aşaması)
+// POST /api/patient/register
+// body: { name, phone }
+// returns: { ok:true, requestId, status:"PENDING" }
+// --------------------
+app.post("/api/patient/register", (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const phone = String(req.body?.phone || "").trim();
+
+  if (!name || !phone) {
+    return res.status(400).json({ ok: false, error: 
+"name_and_phone_required" });
+  }
+
+  const regs = readJson(REG_FILE, []);
+  const requestId = mkPatientId();
+
+  regs.push({
+    requestId,
+    name,
+    phone,
+    status: "PENDING",
+    createdAt: now(),
+  });
+
+  writeJson(REG_FILE, regs);
+  return res.json({ ok: true, requestId, status: "PENDING" });
+});
+
+// --------------------
+// Access Verify
+// POST /api/access/verify
+// body: { code }
+// Demo: code = patientId gibi düşün (ör: "p2")
+// returns: { ok:true, patientId, token }
+// --------------------
+app.post("/api/access/verify", (req, res) => {
+  const code = String(req.body?.code || "").trim();
+  if (!code) return res.status(400).json({ ok: false, error: 
+"code_required" });
+
+  const patientId = code; // demo
+
+  const tokens = readJson(TOK_FILE, {});
+  const token = mkToken();
+
+  tokens[token] = { patientId, createdAt: now() };
+  writeJson(TOK_FILE, tokens);
+
+  return res.json({ ok: true, patientId, token });
+});
+
+// --------------------
+// Me (Token -> Patient)
+// GET /api/me/patient
+// header: x-patient-token
+// returns: { ok:true, patient:{id} }
+// --------------------
+app.get("/api/me/patient", (req, res) => {
+  const token = String(req.headers["x-patient-token"] || "").trim();
+  if (!token) return res.status(401).json({ ok: false, error: 
+"missing_token" });
+
+  const tokens = readJson(TOK_FILE, {});
+  const row = tokens[token];
+
+  if (!row?.patientId) return res.status(401).json({ ok: false, error: 
+"invalid_token" });
+
+  return res.json({ ok: true, patient: { id: row.patientId } });
+});
+
+// --------------------
+// Treatments storage
+// GET /api/patient/:patientId/treatments
+// POST /api/patient/:patientId/treatments
+// --------------------
+app.get("/api/patient/:patientId/treatments", (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  const f = fileOf(`${patientId}.treatments.json`);
+  const data = readJson(f, { schemaVersion: 1, updatedAt: now(), 
+patientId, teeth: [] });
+  return res.json(data);
+});
+
+app.post("/api/patient/:patientId/treatments", (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  const f = fileOf(`${patientId}.treatments.json`);
+
+  const body = req.body || {};
+  const payload = {
+    schemaVersion: 1,
+    updatedAt: now(),
+    patientId,
+    teeth: Array.isArray(body.teeth) ? body.teeth : [],
+  };
+
+  writeJson(f, payload);
+  return res.json({ ok: true, saved: true, treatments: payload });
+});
+
+// --------------------
+// Travel storage
+// GET /api/patient/:patientId/travel
+// POST /api/patient/:patientId/travel
+// --------------------
+app.get("/api/patient/:patientId/travel", (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  const f = fileOf(`${patientId}.travel.json`);
+  const data = readJson(f, { schemaVersion: 1, updatedAt: now(), 
+patientId, hotel: null, flights: [], notes: "" });
+  return res.json(data);
+});
+
+app.post("/api/patient/:patientId/travel", (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  const f = fileOf(`${patientId}.travel.json`);
+
+  const body = req.body || {};
+  const payload = {
+    schemaVersion: 1,
+    updatedAt: now(),
+    patientId,
+    hotel: body.hotel || null,
+    flights: Array.isArray(body.flights) ? body.flights : [],
+    notes: String(body.notes || ""),
+  };
+
+  writeJson(f, payload);
+  return res.json({ ok: true, saved: true, travel: payload });
+});
+
+// --------------------
+// Start
+// --------------------
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running: http://127.0.0.1:${PORT}`);
+});
+

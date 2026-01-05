@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767617255813,
+  "patientId": "p_b4d5a4214316",
+  "teeth": [
+    {
+      "toothId": "13",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-13-1767616122399",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "scheduledAt": 1767965280000,
+          "createdAt": 1767616122399
+        }
+      ]
+    },
+    {
+      "toothId": "14",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-14-1767616133812",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "scheduledAt": 1768051680000,
+          "createdAt": 1767616133812
+        }
+      ]
+    },
+    {
+      "toothId": "15",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-15-1767616139312",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "scheduledAt": 1768051680000,
+          "createdAt": 1767616139312
+        }
+      ]
+    },
+    {
+      "toothId": "16",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-16-1767616144246",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "scheduledAt": 1768051680000,
+          "createdAt": 1767616144246
+        },
+        {
+          "id": "p_b4d5a4214316-16-1767616155264",
+          "type": "ROOT_CANAL",
+          "status": "PLANNED",
+          "scheduledAt": 1768051680000,
+          "createdAt": 1767616155264
+        },
+        {
+          "id": "p_b4d5a4214316-16-1767616163848",
+          "type": "CHECKUP",
+          "status": "PLANNED",
+          "scheduledAt": 1768051680000,
+          "createdAt": 1767616163848
+        }
+      ]
+    },
+    {
+      "toothId": "17",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-17-1767617242128",
+          "type": "IMPLANT",
+          "status": "SCHEDULED",
+          "scheduledAt": 1767966420000,
+          "createdAt": 1767617242128
+        }
+      ]
+    },
+    {
+      "toothId": "18",
+      "procedures": [
+        {
+          "id": "p_b4d5a4214316-18-1767617255813",
+          "type": "IMPLANT",
+          "status": "DONE",
+          "scheduledAt": 1768139220000,
+          "createdAt": 1767617255813
+        }
+      ]
+    }
+  ]
+}

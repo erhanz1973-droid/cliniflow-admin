@@ -1,0 +1,52 @@
+{
+  "leads": [
+    {
+      "id": "lead_1767196426658",
+      "name": "Test",
+      "phone": "+90555",
+      "country": "TR",
+      "note": "implant",
+      "status": "APPROVED",
+      "createdAt": 1767196426658,
+      "approvedAt": 1767197156885,
+      "patientId": "p_1767197156885",
+      "accessCode": "SZGDP34Z"
+    },
+    {
+      "id": "lead_1767196160549",
+      "name": "Test Hasta",
+      "phone": "+905555555555",
+      "country": "TR",
+      "note": "implant",
+      "status": "APPROVED",
+      "createdAt": 1767196160549,
+      "approvedAt": 1767197168520,
+      "patientId": "p_1767197168520",
+      "accessCode": "D82HQ6KA"
+    }
+  ],
+  "accessCodes": {
+    "SZGDP34Z": {
+      "patientId": "p_1767197156885",
+      "createdAt": 1767197156885
+    },
+    "D82HQ6KA": {
+      "patientId": "p_1767197168520",
+      "createdAt": 1767197168520
+    }
+  },
+  "patients": {
+    "p_1767197156885": {
+      "createdAt": 1767197156885,
+      "leadId": "lead_1767196426658",
+      "name": "Test",
+      "phone": "+90555"
+    },
+    "p_1767197168520": {
+      "createdAt": 1767197168520,
+      "leadId": "lead_1767196160549",
+      "name": "Test Hasta",
+      "phone": "+905555555555"
+    }
+  }
+}

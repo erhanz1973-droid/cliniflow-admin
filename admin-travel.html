@@ -1,0 +1,64 @@
+cd /Users/macbookpro/Documents/cliniflow/server
+mkdir -p _backup
+
+cd /Users/macbookpro/Documents/cliniflow/cliniflow-admin
+mkdir -p _backup
+cd /Users/macbookpro/Documents/cliniflow/cliniflow-app
+mkdir -p _backup
+cd /Users/macbookpro/Documents/cliniflow/server
+TS=$(date +"%Y-%m-%d_%H-%M")
+cp -v index.cjs "_backup/index.cjs.$TS"
+cd /Users/macbookpro/Documents/cliniflow/cliniflow-admin
+TS=$(date +"%Y-%m-%d_%H-%M")
+
+# travel sayfası/route (senin yapına göre bazıları olmayabilir)
+cp -v app/admin/patients/[patientId]/travel/page.tsx "_backup/travel.page.tsx.$TS" 2>/dev/null || true
+cp -v app/admin/patients/[patientId]/travel/route.ts "_backup/travel.route.ts.$TS" 2>/dev/null || true
+
+# genel admin entry dosyaları (varsa)
+cp -v app/admin/page.tsx "_backup/admin.page.tsx.$TS" 2>/dev/null || true
+
+cd /Users/macbookpro/Documents/cliniflow/cliniflow-app
+TS=$(date +"%Y-%m-%d_%H-%M")
+cp -v app/travel.tsx "_backup/app.travel.tsx.$TS" 2>/dev/null || true
+cp -v app/treatments.tsx "_backup/app.treatments.tsx.$TS" 2>/dev/null || true
+
+mkdir -p /Users/macbookpro/Documents/cliniflow/_data_backup
+TS=$(date +"%Y-%m-%d_%H-%M")
+curl -s http://127.0.0.1:5050/api/patient/p2/travel | tee "/Users/macbookpro/Documents/cliniflow/_data_backup/p2.travel.$TS.json" >/dev/null
+cd /Users/macbookpro/Documents/cliniflow
+TS=$(date +"%Y-%m-%d_%H-%M")
+zip -r "cliniflow_backup_$TS.zip" server/_backup cliniflow-admin/_backup cliniflow-app/_backup _data_backup 2>/dev/null || true
+ls -lh "cliniflow_backup_$TS.zip"
+
+ls -la /Users/macbookpro/Documents/cliniflow/server
+ls -la /Users/macbookpro/Documents/cliniflow/cliniflow-admin/app/admin/patients/[patientId]/travel
+ls -la /Users/macbookpro/Documents/cliniflow/cliniflow-app/app
+cd /Users/macbookpro/Documents/cliniflow/server/_backup
+ls -lh
+
+cd /Users/macbookpro/Documents/cliniflow/server
+ls -lh
+echo "---- adaylar ----"
+ls -lh index.* 2>/dev/null || true
+find . -maxdepth 2 -type f \( -name "index.cjs" -o -name "index.js" -o -name "server.cjs" -o -name "app.cjs" \) -print
+
+cd /Users/macbookpro/Documents/cliniflow/server/_backup
+ls -lh
+
+cd /Users/macbookpro/Documents/cliniflow/server
+mkdir -p _backup
+TS=$(date +"%Y-%m-%d_%H-%M")
+
+# server giriş dosyası adaylarını bul
+CANDIDATE=$(find . -maxdepth 3 -type f \( -name "index.cjs" -o -name "index.js" -o -name "server.cjs" -o -name "app.cjs" \) | head -n 1)
+
+echo "SERVER_MAIN=$CANDIDATE"
+if [ -n "$CANDIDATE" ]; then
+  cp -v "$CANDIDATE" "_backup/$(basename "$CANDIDATE").$TS"
+else
+  echo "Server giriş dosyası bulunamadı (maxdepth=3)."
+fi
+
+ls -lh _backup
+

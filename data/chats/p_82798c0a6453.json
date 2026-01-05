@@ -1,0 +1,26 @@
+{
+  "patientId": "p_82798c0a6453",
+  "messages": [
+    {
+      "id": "msg_1767570501355_e14e4cbc",
+      "text": "Admin",
+      "from": "PATIENT",
+      "createdAt": 1767570501355,
+      "patientId": "p_82798c0a6453"
+    },
+    {
+      "id": "msg_1767570536898_02a68303",
+      "text": "lklklj",
+      "from": "CLINIC",
+      "createdAt": 1767570536899
+    },
+    {
+      "id": "msg_1767570603277_fcb75872",
+      "text": "Bbk",
+      "from": "PATIENT",
+      "createdAt": 1767570603277,
+      "patientId": "p_82798c0a6453"
+    }
+  ],
+  "updatedAt": 1767570603277
+}

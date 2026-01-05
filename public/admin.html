@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cliniflow Admin - Yeni Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Arial;
+      margin: 0;
+      background: #0b0f16;
+      color: #e6eaf2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      text-align: center;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      background: #0f1522;
+      border: 1px solid #1c2432;
+      border-radius: 16px;
+      padding: 40px;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 16px;
+      color: #ffffff;
+    }
+    p {
+      color: #a7b2c8;
+      margin-bottom: 20px;
+      line-height: 1.6;
+      font-size: 16px;
+    }
+    .link-box {
+      background: #1a2640;
+      border: 2px solid #2b3a58;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 24px 0;
+    }
+    .link-box a {
+      display: block;
+      color: #6aa6ff;
+      font-size: 18px;
+      font-weight: 600;
+      text-decoration: none;
+      margin-bottom: 8px;
+    }
+    .link-box a:hover {
+      color: #8bb5ff;
+      text-decoration: underline;
+    }
+    .muted {
+      font-size: 14px;
+      color: #6b7280;
+      margin-top: 8px;
+    }
+    .warning {
+      background: #3a1620;
+      border: 1px solid #5a2232;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 20px;
+      color: #ffd7df;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚠️ Bu Sayfa Artık Kullanılmıyor</h1>
+    <p>
+      Eski admin panel sayfası kaldırıldı. Lütfen yeni Next.js admin panelini kullanın.
+    </p>
+
+    <div class="link-box">
+      <strong style="color: #e6eaf2; display: block; margin-bottom: 12px;">Yeni Admin Panel:</strong>
+      <a href="http://localhost:3000" target="_blank">http://localhost:3000</a>
+      <a href="http://localhost:3000/patients" target="_blank">http://localhost:3000/patients (Hasta Listesi)</a>
+      <div class="muted">Yukarıdaki linklere tıklayarak yeni admin panele gidebilirsiniz.</div>
+  </div>
+
+    <div class="warning">
+      <strong>Not:</strong> Eğer yeni admin panel açılmıyorsa, terminal'de <code>npm run dev</code> komutunun çalıştığından emin olun.
+    </div>
+  </div>
+</body>
+</html>

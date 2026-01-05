@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cliniflow Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Arial; margin: 0; background:#0b0f16; color:#e6eaf2; }
+    header { padding:16px 20px; border-bottom:1px solid #1c2432; display:flex; gap:12px; align-items:center; }
+    header h1 { font-size:16px; margin:0; letter-spacing:0.2px; }
+    .wrap { display:grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 58px); }
+    .left { border-right:1px solid #1c2432; padding:16px; }
+    .right { padding:16px; }
+    .box { background:#0f1522; border:1px solid #1c2432; border-radius:12px; padding:12px; margin-bottom:12px; }
+    .muted { color:#a7b2c8; font-size:12px; }
+    .patients { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+    .pitem { padding:10px; border:1px solid #1c2432; border-radius:10px; cursor:pointer; background:#0b1220; }
+    .pitem:hover { border-color:#2d3a52; }
+    .pitem.active { border-color:#6aa6ff; box-shadow: 0 0 0 2px rgba(106,166,255,0.15) inset; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; }
+    .pill { font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid #1c2432; background:#0b1220; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#0b1220; border:1px solid #1c2432; border-radius:12px; padding:10px; overflow:auto; }
+    button { background:#1a2640; border:1px solid #2b3a58; color:#e6eaf2; padding:8px 10px; border-radius:10px; cursor:pointer; }
+    button:hover { border-color:#6aa6ff; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .title { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .title h2 { margin:0; font-size:14px; }
+    .small { font-size:12px; color:#a7b2c8; }
+    .tlist { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+    .titem { border:1px solid #1c2432; border-radius:10px; padding:10px; background:#0b1220; }
+    .titem b { color:#ffffff; }
+  
+    .btnDanger { background:#3a1620; border:1px solid #5a2232; color:#ffd7df; padding:4px 8px; border-radius:8px; cursor:pointer; margin-left:8px; font-size:12px; }
+    .btnDanger:hover { border-color:#ff6a8a; }
+    .procRow { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  
+    .procSelect{ background:#0b1220;color:#e6eaf2;border:1px solid #1c2432;border-radius:8px;padding:3px 6px;font-size:12px; }
+  
+    .toothRow{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .toothBadge{
+      min-width:22px;
+      height:22px;
+      border-radius:11px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:12px;
+      font-weight:700;
+      color:#0b1220;
+    }
+    .toothDone{ background:#4ade80; }
+    .toothPlanned{ background:#facc15; }
+    .toothCanceled{ background:#9ca3af; }
+  
+  /* FDI Grid */
+  .fdiWrap{ display:flex; flex-direction:column; gap:10px; margin-bottom:12px; }
+  .fdiRow{ display:flex; justify-content:space-between; gap:10px; }
+  .quad{ flex:1; background:#0b1220; border:1px solid #1c2432; border-radius:12px; padding:10px; }
+  .quadTitle{ font-size:12px; color:#9ca3af; margin-bottom:8px; }
+  .teeth{ display:flex; gap:6px; flex-wrap:wrap; }
+  .toothBtn{
+    width:44px; height:44px;
+    border-radius:12px;
+    border:1px solid #1c2432;
+    background:#0f172a;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; position:relative;
+  }
+  .toothBtn:hover{ border-color:#60a5fa; }
+  .toothBtn.selected{ outline:2px solid #60a5fa; outline-offset:2px; }
+  .toothNum{ font-size:12px; font-weight:800; line-height:1; }
+  .toothCount{
+    position:absolute; top:6px; right:6px;
+    width:18px; height:18px; border-radius:9px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:800; color:#0b1220;
+  }
+  .toothStateDone{ background:#4ade80; }
+  .toothStatePlanned{ background:#facc15; }
+  .toothStateNone{ background:#9ca3af; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Cliniflow Admin</h1>
+    <span class="muted">Hasta listesi -> tikla -> Treatments + Travel</span>
+    <span style="margin-left:auto" class="muted" id="status">...</span>
+  </header>
+
+  <div class="wrap">
+    <div class="left">
+      <div class="box">
+        <div class="title">
+          <h2>Patients</h2>
+          <button id="btnReload">Reload</button>
+        </div>
+        <div class="muted">/api/patients</div>
+        <div class="patients" id="patients"></div>
+      </div>
+
+      <div class="box">
+        <div class="title">
+          <h2>Selected</h2>
+          <span class="small" id="selectedId">none</span>
+        </div>
+        <div class="row" id="selectedMeta"></div>
+      </div>
+    </div>
+
+    <div class="right">
+      <div class="grid2">
+        <div class="box">
+          <div class="title">
+            <h2>Treatment Plan</h2>
+            <span class="small" id="treatUpdated">-</span>
+          </div>
+          <div class="muted" id="treatEndpoint">-</div>
+          
+          <div class="box" style="margin-top:10px;">
+            <div class="title"><h2>Add Procedure</h2><span class="small">FDI tooth</span></div>
+            <div class="row" style="margin-top:8px;">
+              
+<div class="fdiWrap">
+  <div style="font-weight:800;margin-bottom:6px;">FDI Grid</div>
+  <div class="muted" style="margin-bottom:10px;">Click a tooth to preselect it for Add Procedure.</div>
+  <div id="fdiGrid"></div>
+</div>
+<div class="pill">Tooth:
+                <select id="addTooth" style="margin-left:6px;background:#0b1220;color:#e6eaf2;border:1px solid #1c2432;border-radius:8px;padding:4px 8px;"></select>
+              </div>
+              <div class="pill">Type:
+                <select id="addType" style="margin-left:6px;background:#0b1220;color:#e6eaf2;border:1px solid #1c2432;border-radius:8px;padding:4px 8px;">
+                  <option value="IMPLANT">IMPLANT</option>
+                  <option value="CROWN">CROWN</option>
+                  <option value="FILLING">FILLING</option>
+                  <option value="ROOT_CANAL">ROOT_CANAL</option>
+                  <option value="EXTRACTION">EXTRACTION</option>
+                  <option value="VENEER">VENEER</option>
+                  <option value="CLEANING">CLEANING</option>
+                </select>
+              </div>
+              <div class="pill">Status:
+                <select id="addStatus" style="margin-left:6px;background:#0b1220;color:#e6eaf2;border:1px solid #1c2432;border-radius:8px;padding:4px 8px;">
+                  <option value="PLANNED">PLANNED</option>
+                  <option value="SCHEDULED">SCHEDULED</option>
+                  <option value="DONE">DONE</option>
+                  <option value="CANCELED">CANCELED</option>
+                </select>
+              </div>
+              <div class="pill">Date:
+                <input id="addDate" type="datetime-local" style="margin-left:6px;background:#0b1220;color:#e6eaf2;border:1px solid #1c2432;border-radius:8px;padding:4px 8px;">
+              </div>
+              <button id="btnAddProc">Add</button>
+            </div>
+            <div class="muted" id="addProcMsg" style="margin-top:8px;"></div>
+          </div>
+
+<div class="tlist" id="treatList"></div>
+          <details style="margin-top:10px;">
+            <summary class="muted">Raw JSON</summary>
+            <pre id="treatRaw">{}</pre>
+          </details>
+        </div>
+
+        <div class="box">
+          <div class="title">
+            <h2>Travel</h2>
+            <span class="small" id="travelUpdated">-</span>
+          </div>
+          <div class="muted" id="travelEndpoint">-</div>
+          <div class="tlist" id="travelList"></div>
+          <details style="margin-top:10px;">
+            <summary class="muted">Raw JSON</summary>
+            <pre id="travelRaw">{}</pre>
+          </details>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let SELECTED_PATIENT_ID = null;
+  const elPatients = document.getElementById("patients");
+  const elStatus = document.getElementById("status");
+  const elSelectedId = document.getElementById("selectedId");
+  const elSelectedMeta = document.getElementById("selectedMeta");
+
+  const elTreatEndpoint = document.getElementById("treatEndpoint");
+  const elTreatUpdated = document.getElementById("treatUpdated");
+  const elTreatList = document.getElementById("treatList");
+  const elTreatRaw = document.getElementById("treatRaw");
+
+  const elTravelEndpoint = document.getElementById("travelEndpoint");
+  const elTravelUpdated = document.getElementById("travelUpdated");
+  const elTravelList = document.getElementById("travelList");
+  const elTravelRaw = document.getElementById("travelRaw");
+
+  document.getElementById("btnReload").addEventListener("click", loadPatients);
+
+  function setStatus(t){ elStatus.textContent=t; }
+
+  async function apiGet(url){
+    const res = await fetch(url, { headers: { "Accept":"application/json" } });
+    if(!res.ok) throw new Error("HTTP " + res.status + " " + url);
+    return res.json();
+  }
+
+  function fmtTime(ts){
+    if(!ts) return "-";
+    try { return new Date(ts).toLocaleString(); } catch(e) { return String(ts); }
+  }
+
+  function pill(text){
+    const d=document.createElement("div");
+    d.className="pill";
+    d.textContent=text;
+    return d;
+  }
+
+
+  async function updateProcedure(procId, patch){
+    if (!SELECTED_PATIENT_ID) return;
+    try{
+      const url = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/procedure/" + encodeURIComponent(procId);
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type":"application/json", "Accept":"application/json" },
+        body: JSON.stringify(patch || {})
+      });
+      const txt = await res.text();
+      let json=null;
+      try{ json=JSON.parse(txt);}catch(e){}
+      if(!res.ok) throw new Error("HTTP "+res.status+" -> "+txt.slice(0,120));
+      if(!json || !json.ok) throw new Error((json&&json.error)?json.error:("Non-JSON: "+txt.slice(0,120)));
+      renderTreatments(json.data);
+      setStatus("Updated");
+    } catch(e){
+      alert("Update failed: "+e.message);
+    }
+  }
+
+  async function deleteProcedure(procId){
+    if (!SELECTED_PATIENT_ID) return;
+    const ok = confirm("Delete this procedure?");
+    if (!ok) return;
+
+    try{
+      const url = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/procedure/" + encodeURIComponent(procId);
+      const res = await fetch(url, { method: "DELETE", headers: { "Accept":"application/json" } });
+      const txt = await res.text();
+      let json = null;
+      try { json = JSON.parse(txt); } catch(e) {}
+
+      if (!res.ok) {
+        throw new Error("HTTP " + res.status + " -> " + txt.slice(0,120));
+      }
+      if (!json || !json.ok) {
+        throw new Error((json && json.error) ? json.error : ("Non-JSON: " + txt.slice(0,120)));
+      }
+
+      renderTreatments(json.data);
+      setStatus("Deleted");
+    } catch(e){
+      alert("Delete failed: " + e.message);
+    }
+  }
+
+
+  function renderTreatments(json){
+    elTreatRaw.textContent = JSON.stringify(json,null,2);
+    elTreatUpdated.textContent = fmtTime(json.updatedAt || json.updated_at);
+    const teeth = Array.isArray(json.teeth) ? json.teeth : [];
+    if(!teeth.length){ elTreatList.innerHTML = '<div class="muted">No treatments</div>'; return; }
+
+    elTreatList.innerHTML = "";
+    teeth.forEach(t=>{
+      const procs = Array.isArray(t.procedures) ? t.procedures : [];
+      const item = document.createElement("div");
+      item.className="titem";
+      const title = document.createElement("div");
+      title.innerHTML = "<b>" + (t.jaw||"?") + " " + (t.toothId||"?") + "</b> <span class='muted'>(" + procs.length + " procedure)</span>";
+      item.appendChild(title);
+
+      procs.forEach(p=>{
+        const row=document.createElement("div");
+        row.className="procRow";
+
+        const left=document.createElement("div");
+        left.className="muted";
+        left.textContent = "- " + (p.type||"?") + " - ";
+
+        const right=document.createElement("div");
+        right.style.display="flex";
+        right.style.gap="8px";
+        right.style.alignItems="center";
+
+        const sel=document.createElement("select");
+        sel.className="procSelect";
+        ["PLANNED","SCHEDULED","DONE","CANCELED"].forEach(st=>{
+          const opt=document.createElement("option");
+          opt.value=st; opt.textContent=st;
+          if ((p.status||"PLANNED")===st) opt.selected=true;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener("change",(ev)=>{
+          ev.stopPropagation();
+          updateProcedure(p.id,{status: sel.value});
+        });
+
+        const del=document.createElement("button");
+        del.className="btnDanger";
+        del.textContent="Delete";
+        del.addEventListener("click",(ev)=>{ ev.stopPropagation(); deleteProcedure(p.id); });
+
+        right.appendChild(sel);
+        right.appendChild(del);
+
+        row.appendChild(left);
+        row.appendChild(right);
+        item.appendChild(row);
+      });
+      elTreatList.appendChild(item);
+    });
+  }
+
+  function renderTravel(json){
+    elTravelRaw.textContent = JSON.stringify(json,null,2);
+    elTravelUpdated.textContent = fmtTime(json.updatedAt || json.updated_at);
+    elTravelList.innerHTML = "";
+
+    const hotel = json.hotel || null;
+    const flights = Array.isArray(json.flights) ? json.flights : [];
+    const notes = json.notes || "";
+
+    const hotelDiv=document.createElement("div");
+    hotelDiv.className="titem";
+    hotelDiv.innerHTML="<b>Hotel</b><div class='muted'>" + (hotel?hotel:"-") + "</div>";
+    elTravelList.appendChild(hotelDiv);
+
+    const fdiv=document.createElement("div");
+    fdiv.className="titem";
+    fdiv.innerHTML="<b>Flights</b>";
+    if(!flights.length){
+      const m=document.createElement("div");
+      m.className="muted";
+      m.textContent="-";
+      fdiv.appendChild(m);
+    } else {
+      flights.forEach(f=>{
+        const line=document.createElement("div");
+        line.className="muted";
+        line.textContent = "- " + (f.dir||"") + " " + (f.from||"") + " -> " + (f.to||"") + " | " + (f.date||"") + " " + (f.time||"") + " | " + (f.flightNo||"");
+        fdiv.appendChild(line);
+      });
+    }
+    elTravelList.appendChild(fdiv);
+
+    const ndiv=document.createElement("div");
+    ndiv.className="titem";
+    ndiv.innerHTML="<b>Notes</b><div class='muted'>" + (notes?notes:"-") + "</div>";
+    elTravelList.appendChild(ndiv);
+  }
+
+  function clearRight(){
+    elTreatUpdated.textContent="-";
+    elTreatEndpoint.textContent="-";
+    elTreatList.innerHTML='<div class="muted">Select a patient</div>';
+    elTreatRaw.textContent="{}";
+
+    elTravelUpdated.textContent="-";
+    elTravelEndpoint.textContent="-";
+    elTravelList.innerHTML='<div class="muted">Select a patient</div>';
+    elTravelRaw.textContent="{}";
+  }
+
+  async function selectPatient(patient){
+    document.querySelectorAll(".pitem").forEach(x=>x.classList.remove("active"));
+    const activeEl = document.querySelector(`.pitem[data-id="${patient.id}"]`);
+    if(activeEl) activeEl.classList.add("active");
+
+    SELECTED_PATIENT_ID = patient.id;
+    elSelectedId.textContent = patient.id;
+    elSelectedMeta.innerHTML = "";
+    elSelectedMeta.appendChild(pill("Name: " + (patient.name || "-")));
+    elSelectedMeta.appendChild(pill("ID: " + patient.id));
+
+    clearRight();
+    setStatus("Loading " + patient.id + "...");
+
+    const tUrl = "/api/patient/" + encodeURIComponent(patient.id) + "/treatments";
+    const trUrl = "/api/patient/" + encodeURIComponent(patient.id) + "/travel";
+    elTreatEndpoint.textContent = tUrl;
+    elTravelEndpoint.textContent = trUrl;
+
+    try{
+      const results = await Promise.all([apiGet(tUrl), apiGet(trUrl)]);
+      renderTreatments(results[0]);
+      renderTravel(results[1]);
+      setStatus("Loaded " + patient.id);
+    } catch(e){
+      setStatus("Error: " + e.message);
+      elTreatList.innerHTML = '<div class="muted">' + e.message + '</div>';
+      elTravelList.innerHTML = '<div class="muted">' + e.message + '</div>';
+    }
+  }
+
+  async function loadPatients(){
+    setStatus("Loading patients...");
+    elPatients.innerHTML = "";
+    try{
+      const json = await apiGet("/api/patients");
+      const patients = Array.isArray(json.patients) ? json.patients : [];
+      if(!patients.length){
+        elPatients.innerHTML = '<div class="muted">No patients</div>';
+        setStatus("No patients");
+        return;
+      }
+
+      patients.forEach(p=>{
+        const div=document.createElement("div");
+        div.className="pitem";
+        div.dataset.id=p.id;
+        div.innerHTML = "<div><b>" + (p.name||p.id) + "</b></div><div class='muted'>" + p.id + "</div>";
+        div.addEventListener("click", ()=>selectPatient(p));
+        elPatients.appendChild(div);
+      });
+
+      setStatus("Patients loaded");
+    } catch(e){
+      setStatus("Error: " + e.message);
+      elPatients.innerHTML = '<div class="muted">' + e.message + '</div>';
+    }
+  }
+
+
+  // ---- Add Procedure UI ----
+  const elAddTooth = document.getElementById("addTooth");
+
+
+let SELECTED_TOOTH_ID = null;
+const elFDIGrid = document.getElementById("fdiGrid");
+
+function selectToothFDI(toothId){
+  SELECTED_TOOTH_ID = toothId;
+  if (elAddTooth) elAddTooth.value = toothId;
+  document.querySelectorAll(".toothBtn").forEach(b=>{
+    b.classList.toggle("selected", b.dataset.tooth === toothId);
+  });
+}
+
+function toothSummaryClass(procs){
+  const arr = Array.isArray(procs) ? procs : [];
+  if (arr.some(p=>p.status==="DONE")) return "toothStateDone";
+  if (arr.some(p=>p.status==="PLANNED" || p.status==="SCHEDULED")) return "toothStatePlanned";
+  return "toothStateNone";
+}
+
+function buildToothMap(json){
+  const map = new Map();
+  const teeth = Array.isArray(json && json.teeth) ? json.teeth : [];
+  teeth.forEach(t=>{
+    const id = String(t.toothId||"").trim();
+    if(!id) return;
+    const procs = Array.isArray(t.procedures) ? t.procedures : [];
+    map.set(id, { count: procs.length, cls: toothSummaryClass(procs) });
+  });
+  return map;
+}
+
+function renderFDIGrid(json){
+  if (!elFDIGrid) return;
+  elFDIGrid.innerHTML = "";
+
+  const map = buildToothMap(json);
+
+  const mkQuad = (title, toothIds) => {
+    const q = document.createElement("div");
+    q.className = "quad";
+    const qt = document.createElement("div");
+    qt.className = "quadTitle";
+    qt.textContent = title;
+
+    const wrap = document.createElement("div");
+    wrap.className = "teeth";
+
+    toothIds.forEach(id=>{
+      const btn = document.createElement("div");
+      btn.className = "toothBtn";
+      btn.dataset.tooth = id;
+      if (SELECTED_TOOTH_ID === id) btn.classList.add("selected");
+
+      const num = document.createElement("div");
+      num.className = "toothNum";
+      num.textContent = id;
+
+      const meta = map.get(id) || { count: 0, cls: "toothStateNone" };
+      const count = document.createElement("div");
+      count.className = "toothCount " + meta.cls;
+      count.textContent = String(meta.count);
+
+      btn.appendChild(num);
+      btn.appendChild(count);
+      btn.addEventListener("click", ()=>selectToothFDI(id));
+
+      wrap.appendChild(btn);
+    });
+
+    q.appendChild(qt);
+    q.appendChild(wrap);
+    return q;
+  };
+
+  const upper = document.createElement("div");
+  upper.className = "fdiRow";
+  upper.appendChild(mkQuad("Upper Right (Q1): 11–18", ["11","12","13","14","15","16","17","18"]));
+  upper.appendChild(mkQuad("Upper Left (Q2): 21–28", ["21","22","23","24","25","26","27","28"]));
+
+  const lower = document.createElement("div");
+  lower.className = "fdiRow";
+  lower.appendChild(mkQuad("Lower Left (Q3): 31–38", ["31","32","33","34","35","36","37","38"]));
+  lower.appendChild(mkQuad("Lower Right (Q4): 41–48", ["41","42","43","44","45","46","47","48"]));
+
+  elFDIGrid.appendChild(upper);
+  elFDIGrid.appendChild(lower);
+
+  if (!SELECTED_TOOTH_ID) selectToothFDI((elAddTooth && elAddTooth.value) ? elAddTooth.value : "11");
+}
+  const elAddType = document.getElementById("addType");
+  const elAddStatus = document.getElementById("addStatus");
+  const elAddDate = document.getElementById("addDate");
+  const elAddProcMsg = document.getElementById("addProcMsg");
+  const btnAddProc = document.getElementById("btnAddProc");
+
+  function fillFDI() {
+    if (!elAddTooth) return;
+    const teeth = [];
+    // adult FDI: 11-18, 21-28, 31-38, 41-48
+    for (let q of [1,2,3,4]) {
+      for (let i=1;i<=8;i++) teeth.push(String(q*10+i));
+    }
+    elAddTooth.innerHTML = "";
+    teeth.forEach(t=>{
+      const opt=document.createElement("option");
+      opt.value=t;
+      opt.textContent=t;
+      elAddTooth.appendChild(opt);
+    });
+  }
+
+  fillFDI();
+
+  async function addProcedureForSelected() {
+    const pid = elSelectedId.textContent;
+    if (!pid || pid === "none") {
+      elAddProcMsg.textContent = "Select a patient first";
+      return;
+    }
+    const toothId = elAddTooth.value;
+    const type = elAddType.value;
+    const status = elAddStatus.value;
+    const dt = elAddDate.value;
+    const scheduledAt = dt ? new Date(dt).getTime() : null;
+
+    elAddProcMsg.textContent = "Saving...";
+    try {
+      const url = "/api/patient/" + encodeURIComponent(pid) + "/treatments/procedure";
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Accept":"application/json" },
+        body: JSON.stringify({ toothId, type, status, scheduledAt })
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || ("HTTP " + res.status));
+      // re-render
+      renderTreatments(json.data);
+      elAddProcMsg.textContent = "Saved: " + pid + " tooth " + toothId;
+      setStatus("Loaded " + pid);
+    } catch(e) {
+      elAddProcMsg.textContent = "Error: " + e.message;
+    }
+  }
+
+  if (btnAddProc) btnAddProc.addEventListener("click", addProcedureForSelected);
+
+  clearRight();
+  loadPatients();
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": 1767216924271,
+  "patientId": "p3",
+  "teeth": [
+    {
+      "jaw": "upper",
+      "toothId": "13",
+      "procedures": [
+        {
+          "id": "p3-13-1767216924271",
+          "type": "IMPLANT",
+          "status": "PLANNED",
+          "createdAt": 1767216924271,
+          "scheduledAt": 1768114800000
+        }
+      ]
+    }
+  ]
+}
