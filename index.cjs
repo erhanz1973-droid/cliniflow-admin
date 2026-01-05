@@ -103,6 +103,7 @@ app.post("/api/register", (req, res) => {
     name: String(name || ""),
     phone: String(phone || ""),
     status: "PENDING",
+    clinicCode: validatedClinicCode, // Add clinicCode to registration
     createdAt: now(),
     updatedAt: now(),
   };
@@ -296,11 +297,22 @@ app.post("/api/patient/register", (req, res) => {
 function requireToken(req, res, next) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!token) return res.status(401).json({ ok: false, error: "missing_token" });
+  // Also check x-patient-token header (for compatibility)
+  const altToken = req.headers["x-patient-token"] || "";
+  const finalToken = token || altToken;
+  
+  if (!finalToken) {
+    console.log("[AUTH] Missing token");
+    return res.status(401).json({ ok: false, error: "missing_token" });
+  }
 
   const tokens = readJson(TOK_FILE, {});
-  const t = tokens[token];
-  if (!t?.patientId) return res.status(401).json({ ok: false, error: "bad_token" });
+  const t = tokens[finalToken];
+  if (!t?.patientId) {
+    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 10)}... (not found in tokens.json)`);
+    console.log(`[AUTH] Available tokens: ${Object.keys(tokens).length} tokens`);
+    return res.status(401).json({ ok: false, error: "bad_token" });
+  }
 
   req.patientId = t.patientId;
   req.role = t.role || "PENDING";
@@ -327,11 +339,16 @@ app.get("/api/patient/me", requireToken, (req, res) => {
   const patients = readJson(PAT_FILE, {});
   const p = patients[req.patientId] || null;
 
+  // Priority: patient.status > token.role > "PENDING"
+  const finalStatus = p?.status || req.role || "PENDING";
+  
+  console.log(`[ME] patientId: ${req.patientId}, patient.status: ${p?.status}, token.role: ${req.role}, finalStatus: ${finalStatus}`);
+
   res.json({
     ok: true,
     patientId: req.patientId,
-    role: req.role,
-    status: p?.status || req.role,
+    role: finalStatus, // Return the final status as role too
+    status: finalStatus, // Return the final status
     name: p?.name || "",
     phone: p?.phone || "",
   });
@@ -347,25 +364,200 @@ app.get("/api/admin/registrations", (req, res) => {
 
 // ================== ADMIN APPROVE ==================
 app.post("/api/admin/approve", (req, res) => {
-  const { requestId } = req.body || {};
-  if (!requestId) return res.status(400).json({ ok: false, error: "requestId_required" });
+  const { requestId, patientId } = req.body || {};
+  // PRIORITY: Use patientId first if available (more reliable), then requestId
+  if (!requestId && !patientId) {
+    return res.status(400).json({ ok: false, error: "requestId_or_patientId_required" });
+  }
+
+  console.log(`[APPROVE] ========== START APPROVE ==========`);
+  console.log(`[APPROVE] Request body:`, JSON.stringify({ requestId, patientId }, null, 2));
+  console.log(`[APPROVE] Will search with patientId: ${patientId}, requestId: ${requestId}`);
 
   const regsRaw = readJson(REG_FILE, {});
   let r = null;
-
+  
+  console.log(`[APPROVE] registrations.json type: ${Array.isArray(regsRaw) ? 'array' : typeof regsRaw}`);
   if (Array.isArray(regsRaw)) {
-    r = regsRaw.find((x) => x && (x.requestId === requestId || x.patientId === requestId)) || null;
+    console.log(`[APPROVE] registrations.json array length: ${regsRaw.length}`);
   } else if (regsRaw && typeof regsRaw === "object") {
-    r = regsRaw[requestId] || null;
-    if (!r) {
-      r =
-        Object.values(regsRaw).find(
-          (x) => x && (x.requestId === requestId || x.patientId === requestId)
-        ) || null;
-    }
+    console.log(`[APPROVE] registrations.json object keys count: ${Object.keys(regsRaw).length}`);
+    console.log(`[APPROVE] First 5 keys:`, Object.keys(regsRaw).slice(0, 5));
   }
 
-  if (!r?.patientId) return res.status(404).json({ ok: false, error: "not_found" });
+  // PRIORITY: Search by patientId first (more reliable), then by requestId
+  // First, try to find in registrations.json
+  if (Array.isArray(regsRaw)) {
+    console.log(`[APPROVE] registrations.json is an array with ${regsRaw.length} items`);
+    
+    // PRIORITY 1: Search by patientId (most reliable)
+    if (patientId) {
+      r = regsRaw.find((x) => x && (x.patientId === patientId || x.requestId === patientId)) || null;
+      if (r) {
+        console.log(`[APPROVE] ✅ Found in array by patientId:`, { requestId: r.requestId, patientId: r.patientId });
+      } else {
+        console.log(`[APPROVE] ❌ Not found in array by patientId: ${patientId}`);
+      }
+    }
+    
+    // PRIORITY 2: Search by requestId (if different from patientId)
+    if (!r && requestId && requestId !== patientId) {
+      r = regsRaw.find((x) => x && x.requestId === requestId) || null;
+      if (r) {
+        console.log(`[APPROVE] ✅ Found in array by requestId:`, { requestId: r.requestId, patientId: r.patientId });
+      } else {
+        console.log(`[APPROVE] ❌ Not found in array by requestId: ${requestId}`);
+      }
+    }
+    
+  } else if (regsRaw && typeof regsRaw === "object") {
+    console.log(`[APPROVE] registrations.json is an object with ${Object.keys(regsRaw).length} keys`);
+    
+    // PRIORITY 1: Search by patientId in values (also check requestId field)
+    if (patientId) {
+      r = Object.values(regsRaw).find((x) => x && (x.patientId === patientId || x.requestId === patientId)) || null;
+      if (r) {
+        console.log(`[APPROVE] ✅ Found in object by patientId:`, { requestId: r.requestId, patientId: r.patientId });
+      } else {
+        console.log(`[APPROVE] ❌ Not found in object by patientId: ${patientId}`);
+      }
+    }
+    
+    // PRIORITY 2: Try requestId as key (if different from patientId)
+    if (!r && requestId && requestId !== patientId) {
+      r = regsRaw[requestId] || null;
+      if (r) {
+        console.log(`[APPROVE] ✅ Found in object by requestId key:`, { requestId: r.requestId, patientId: r.patientId });
+      }
+    }
+    
+    // PRIORITY 3: Search all values by requestId (if different from patientId)
+    if (!r && requestId && requestId !== patientId) {
+      r = Object.values(regsRaw).find((x) => x && x.requestId === requestId) || null;
+      if (r) {
+        console.log(`[APPROVE] ✅ Found in object by requestId value:`, { requestId: r.requestId, patientId: r.patientId });
+      } else {
+        console.log(`[APPROVE] ❌ Not found in object by requestId: ${requestId}`);
+      }
+    }
+  } else {
+    console.log(`[APPROVE] registrations.json is empty or invalid`);
+  }
+
+  // If not found in registrations, try patients.json
+  // PRIORITY: If we have patientId, use it directly (most reliable)
+  if (!r?.patientId) {
+    console.log(`[APPROVE] Registration not found, checking patients.json`);
+    const patients = readJson(PAT_FILE, {});
+    console.log(`[APPROVE] Total patients in patients.json: ${Object.keys(patients).length}`);
+    console.log(`[APPROVE] Available patient IDs (first 10):`, Object.keys(patients).slice(0, 10));
+    
+    let patient = null;
+    
+    // PRIORITY 1: If we have patientId from request, use it directly (most reliable)
+    if (patientId) {
+      // Try direct key lookup first
+      patient = patients[patientId] || null;
+      if (patient) {
+        console.log(`[APPROVE] ✅ Found patient directly by patientId key: ${patientId}`);
+      } else {
+        // Try searching by patientId field in all patients
+        console.log(`[APPROVE] Direct lookup failed, searching by patientId field...`);
+        for (const pid in patients) {
+          const p = patients[pid];
+          if (p && (pid === patientId || p.patientId === patientId)) {
+            patient = p;
+            console.log(`[APPROVE] ✅ Found patient by searching: ${pid} (patientId field: ${p.patientId})`);
+            break;
+          }
+        }
+        if (!patient) {
+          console.log(`[APPROVE] ❌ Patient not found by patientId: ${patientId}`);
+        }
+      }
+    }
+    
+    // PRIORITY 2: Search all patients by patientId field (if patientId not found by direct lookup)
+    if (!patient && patientId) {
+      for (const pid in patients) {
+        const p = patients[pid];
+        if (p && (pid === patientId || p.patientId === patientId)) {
+          patient = p;
+          console.log(`[APPROVE] ✅ Found patient by searching with patientId: ${pid} (patientId: ${p.patientId})`);
+          break;
+        }
+      }
+    }
+    
+    // PRIORITY 3: Try requestId as search key (last resort)
+    if (!patient && requestId) {
+      patient = patients[requestId] || null;
+      if (patient) {
+        console.log(`[APPROVE] ✅ Found patient by requestId as key: ${requestId}`);
+      }
+    }
+    
+    // PRIORITY 4: Last resort - Search all registrations to find patientId from requestId (any format)
+    if (!patient && requestId) {
+      console.log(`[APPROVE] Last resort: Searching all registrations for requestId: ${requestId}`);
+      const allRegs = readJson(REG_FILE, {});
+      const regList = Array.isArray(allRegs) ? allRegs : Object.values(allRegs);
+      const foundReg = regList.find((reg) => reg && reg.requestId === requestId);
+      if (foundReg && foundReg.patientId) {
+        patient = patients[foundReg.patientId] || null;
+        if (patient) {
+          console.log(`[APPROVE] ✅ Found patient via registration lookup: ${foundReg.patientId}`);
+          // Use the found registration
+          r = foundReg;
+        } else {
+          console.log(`[APPROVE] ❌ Found registration but patient not found: ${foundReg.patientId}`);
+        }
+      } else {
+        console.log(`[APPROVE] ❌ Registration not found with requestId: ${requestId}`);
+      }
+    }
+    
+    if (patient) {
+      console.log(`[APPROVE] Found patient directly in patients.json, creating registration entry`);
+      // Create a registration entry for this patient
+      const patientIdToUse = patient.patientId || patientId;
+      const newReg = {
+        requestId: requestId || `req_${patientIdToUse}`,
+        patientId: patientIdToUse,
+        name: patient.name || "",
+        phone: patient.phone || "",
+        status: "PENDING",
+        clinicCode: patient.clinicCode || null,
+        createdAt: patient.createdAt || now(),
+        updatedAt: now(),
+      };
+      
+      // Add to registrations
+      const regs = readJson(REG_FILE, {});
+      if (Array.isArray(regs)) {
+        regs.push(newReg);
+        writeJson(REG_FILE, regs);
+      } else {
+        const regsObj = regs || {};
+        regsObj[newReg.requestId] = newReg;
+        writeJson(REG_FILE, regsObj);
+      }
+      
+      r = newReg;
+      console.log(`[APPROVE] Created registration entry:`, newReg);
+    } else {
+      const availableIds = Object.keys(patients).slice(0, 10);
+      console.log(`[APPROVE] Patient not found in patients.json.`);
+      console.log(`[APPROVE] Searched for: requestId=${requestId}, patientId=${patientId}`);
+      console.log(`[APPROVE] Available patient IDs (first 10):`, availableIds);
+      const errorMessage = `Patient not found. Searched with: ${JSON.stringify({ requestId, patientId })}. Available patient IDs: ${availableIds.join(", ")}`;
+      return res.status(404).json({ 
+        ok: false, 
+        error: "not_found", 
+        message: errorMessage 
+      });
+    }
+  }
 
   // patient APPROVED
   const patients = readJson(PAT_FILE, {});
@@ -385,9 +577,11 @@ app.post("/api/admin/approve", (req, res) => {
     if (tokens[tk]?.patientId === r.patientId) {
       tokens[tk].role = "APPROVED";
       upgradedTokens++;
+      console.log(`[APPROVE] Upgraded token: ${tk.substring(0, 10)}... for patientId: ${r.patientId}`);
     }
   }
   writeJson(TOK_FILE, tokens);
+  console.log(`[APPROVE] Total tokens upgraded: ${upgradedTokens} for patientId: ${r.patientId}`);
 
   // registrations update
   if (Array.isArray(regsRaw)) {
@@ -520,10 +714,31 @@ app.post("/api/patient/:patientId/travel", (req, res) => {
 // GET /api/patient/:patientId/treatments
 app.get("/api/patient/:patientId/treatments", (req, res) => {
   const patientId = req.params.patientId;
+  const method = req.method;
+  const url = req.url;
+  const headers = req.headers;
+  
+  console.log(`[TREATMENTS GET] ========== START ==========`);
+  console.log(`[TREATMENTS GET] Method: ${method}`);
+  console.log(`[TREATMENTS GET] URL: ${url}`);
+  console.log(`[TREATMENTS GET] Request for patientId: ${patientId}`);
+  console.log(`[TREATMENTS GET] Headers:`, {
+    authorization: headers.authorization ? "present" : "missing",
+    "x-patient-token": headers["x-patient-token"] ? "present" : "missing",
+    origin: headers.origin,
+    "user-agent": headers["user-agent"]?.substring(0, 50),
+  });
+  
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
-  if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
+  if (!fs.existsSync(TREATMENTS_DIR)) {
+    console.log(`[TREATMENTS GET] Creating treatments directory: ${TREATMENTS_DIR}`);
+    fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
+  }
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+  console.log(`[TREATMENTS GET] Treatments file path: ${treatmentsFile}`);
+  console.log(`[TREATMENTS GET] File exists: ${fs.existsSync(treatmentsFile)}`);
+  
   const defaultData = {
     schemaVersion: 1,
     updatedAt: now(),
@@ -532,6 +747,16 @@ app.get("/api/patient/:patientId/treatments", (req, res) => {
   };
   
   const data = readJson(treatmentsFile, defaultData);
+  const teethCount = data.teeth?.length || 0;
+  const totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
+  
+  console.log(`[TREATMENTS GET] Response data:`, {
+    patientId: data.patientId,
+    teethCount,
+    totalProcedures,
+  });
+  console.log(`[TREATMENTS GET] ========== END ==========`);
+  
   res.json(data);
 });
 
@@ -839,7 +1064,9 @@ app.get("/api/clinic/:code", (req, res) => {
   
   // Check if clinic code matches
   if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
-    return res.json(clinic);
+    // Don't return password hash to public endpoint
+    const { password, ...publicClinic } = clinic;
+    return res.json(publicClinic);
   }
   
   // If no match, return 404
@@ -867,7 +1094,7 @@ app.get("/api/admin/clinic", (req, res) => {
 });
 
 // PUT /api/admin/clinic (Admin günceller)
-app.put("/api/admin/clinic", (req, res) => {
+app.put("/api/admin/clinic", async (req, res) => {
   try {
     const body = req.body || {};
     const existing = readJson(CLINIC_FILE, {});
@@ -887,6 +1114,13 @@ app.put("/api/admin/clinic", (req, res) => {
       return res.status(400).json({ ok: false, error: "defaultInvitedDiscountPercent must be 0-99" });
     }
     
+    // Handle password change
+    let passwordHash = existing.password;
+    if (body.password && String(body.password).trim()) {
+      // New password provided, hash it
+      passwordHash = await bcrypt.hash(String(body.password).trim(), 10);
+    }
+    
     const updated = {
       clinicCode: String(body.clinicCode || existing.clinicCode || "MOON"),
       name: String(body.name || existing.name || "Cliniflow Dental Clinic"),
@@ -900,6 +1134,7 @@ app.put("/api/admin/clinic", (req, res) => {
       defaultInvitedDiscountPercent: invitedPercent,
       googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
       trustpilotReviews: Array.isArray(body.trustpilotReviews) ? body.trustpilotReviews : (existing.trustpilotReviews || []),
+      password: passwordHash, // Keep existing or update
       updatedAt: now(),
     };
     
@@ -1423,62 +1658,145 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 // POST /api/admin/login
-// Clinic login (email/password)
+// Clinic login (clinic code + password)
 app.post("/api/admin/login", async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { clinicCode, password } = req.body || {};
+    
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+    }
+    
+    if (!password || !String(password).trim()) {
+      return res.status(400).json({ ok: false, error: "password_required" });
+    }
+    
+    const code = String(clinicCode).trim().toUpperCase();
+    const clinic = readJson(CLINIC_FILE, {});
+    
+    // Check if clinic code matches
+    if (!clinic.clinicCode || clinic.clinicCode.toUpperCase() !== code) {
+      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+    }
+    
+    // Check password
+    if (!clinic.password) {
+      // If no password is set, allow login with default password "admin123" (for initial setup)
+      const defaultPassword = "admin123";
+      if (password !== defaultPassword) {
+        return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+      }
+      // Set default password hash for first login
+      const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+      clinic.password = hashedPassword;
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      // Verify password hash
+      const passwordMatch = await bcrypt.compare(String(password).trim(), clinic.password);
+      if (!passwordMatch) {
+        return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+      }
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { clinicCode: code, type: "admin" },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+    
+    res.json({
+      ok: true,
+      token,
+      clinicCode: code,
+      clinicName: clinic.name || "Clinic",
+    });
+  } catch (error) {
+    console.error("Admin login error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /api/admin/forgot-password/verify
+// Verify clinic code and email for password reset
+app.post("/api/admin/forgot-password/verify", (req, res) => {
+  try {
+    const { clinicCode, email } = req.body || {};
+    
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+    }
     
     if (!email || !String(email).trim()) {
       return res.status(400).json({ ok: false, error: "email_required" });
     }
-    if (!password) {
-      return res.status(400).json({ ok: false, error: "password_required" });
-    }
     
-    const clinics = readJson(CLINICS_FILE, {});
+    const code = String(clinicCode).trim().toUpperCase();
     const emailLower = String(email).trim().toLowerCase();
+    const clinic = readJson(CLINIC_FILE, {});
     
-    // Find clinic by email
-    let clinicId = null;
-    let clinic = null;
-    for (const id in clinics) {
-      if (clinics[id].email.toLowerCase() === emailLower) {
-        clinicId = id;
-        clinic = clinics[id];
-        break;
-      }
+    // Check if clinic code matches
+    if (!clinic.clinicCode || clinic.clinicCode.toUpperCase() !== code) {
+      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_email" });
     }
     
-    if (!clinic) {
-      return res.status(401).json({ ok: false, error: "invalid_credentials" });
+    // Check if email matches
+    if (!clinic.email || clinic.email.toLowerCase() !== emailLower) {
+      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_email" });
     }
     
-    // Verify password
-    const passwordMatch = await bcrypt.compare(String(password), clinic.password);
-    if (!passwordMatch) {
-      return res.status(401).json({ ok: false, error: "invalid_credentials" });
-    }
-    
-    // Check if clinic is active
-    if (clinic.status !== "ACTIVE" && clinic.status !== "PENDING") {
-      return res.status(403).json({ ok: false, error: "clinic_suspended" });
-    }
-    
-    // Generate JWT token
-    const token = jwt.sign({ clinicId, clinicCode: clinic.clinicCode }, JWT_SECRET, {
-      expiresIn: JWT_EXPIRES_IN,
-    });
-    
-    res.json({
-      ok: true,
-      clinicId,
-      clinicCode: clinic.clinicCode,
-      token,
-      status: clinic.status,
-      subscriptionStatus: clinic.subscriptionStatus,
-    });
+    res.json({ ok: true });
   } catch (error) {
-    console.error("Admin login error:", error);
+    console.error("Forgot password verify error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /api/admin/forgot-password/reset
+// Reset password after verification
+app.post("/api/admin/forgot-password/reset", async (req, res) => {
+  try {
+    const { clinicCode, email, newPassword } = req.body || {};
+    
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+    }
+    
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required" });
+    }
+    
+    if (!newPassword || !String(newPassword).trim()) {
+      return res.status(400).json({ ok: false, error: "new_password_required" });
+    }
+    
+    if (String(newPassword).trim().length < 6) {
+      return res.status(400).json({ ok: false, error: "password_too_short" });
+    }
+    
+    const code = String(clinicCode).trim().toUpperCase();
+    const emailLower = String(email).trim().toLowerCase();
+    const clinic = readJson(CLINIC_FILE, {});
+    
+    // Verify clinic code and email again
+    if (!clinic.clinicCode || clinic.clinicCode.toUpperCase() !== code) {
+      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_email" });
+    }
+    
+    if (!clinic.email || clinic.email.toLowerCase() !== emailLower) {
+      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_email" });
+    }
+    
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(String(newPassword).trim(), 10);
+    clinic.password = hashedPassword;
+    clinic.updatedAt = now();
+    
+    writeJson(CLINIC_FILE, clinic);
+    
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("Forgot password reset error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
