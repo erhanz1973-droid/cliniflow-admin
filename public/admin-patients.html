@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Hasta Listesi - Clinifly Admin</title>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .nav-badge{
+      position:absolute;
+      top:-4px;
+      right:-4px;
+      background:var(--r);
+      color:#fff;
+      border-radius:10px;
+      min-width:18px;
+      height:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      font-weight:700;
+      padding:0 4px;
+      border:2px solid var(--bg);
+    }
+
+    .card{ background:var(--card); border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:16px; padding:24px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .toolbar{ display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .toolbar-left{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .toolbar-right{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+    input, select{
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid var(--b);
+      background:#1f2937;
+      color:#e6eaf2;
+      font-size:14px;
+      min-width:240px;
+    }
+    input::placeholder{ color:#94a3b8; }
+
+    /* Mini Card Grid Layout */
+    .patients-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .patient-card {
+      background: var(--card);
+      border: 0.5px solid rgba(55, 65, 81, 0.5);
+      border-radius: 16px;
+      padding: 20px;
+      transition: all 0.2s;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .patient-card:hover {
+      border-color: #3b82f6;
+      background: #0b1220;
+    }
+    .patient-card.selected {
+      outline: 2px solid #2563eb;
+      outline-offset: -2px;
+      background: #0b1220;
+      border-color: #2563eb;
+    }
+    .patient-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .patient-name {
+      font-weight: 700;
+      font-size: 16px;
+      color: #ffffff;
+      margin: 0;
+      flex: 1;
+    }
+    .clinic-code-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #93c5fd;
+      margin-left: 8px;
+    }
+    .patient-meta {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    .progress-section {
+      margin-bottom: 12px;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .progress-bar-container {
+      height: 8px;
+      background: #1f2937;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #2563eb, #3b82f6);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+    .progress-bar.good { background: linear-gradient(90deg, #16a34a, #22c55e); }
+    .progress-bar.warning { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .progress-bar.danger { background: linear-gradient(90deg, #dc2626, #ef4444); }
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .card-actions button {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      padding: 8px 12px;
+    }
+
+    code{ background:#0b1220; padding:2px 6px; border-radius:6px; border:1px solid #1f2937; color:#e6eaf2; }
+
+    .status{ display:inline-block; padding:4px 12px; border-radius:999px; font-size:12px; font-weight:800; border:1px solid #334155; text-transform:uppercase; }
+    .status.PENDING{ background:#0b1220; color:#fef3c7; border-color:#92400e; }
+    .status.APPROVED{ background:#064e3b; color:#6ee7b7; border-color:#059669; }
+
+    button{ padding:8px 14px; border-radius:10px; border:1px solid transparent; cursor:pointer; font-size:13px; font-weight:800; transition:opacity 0.2s; }
+    button:hover{ opacity:0.92; }
+    button:disabled{ opacity:0.5; cursor:not-allowed; }
+    .btn-approve{ background:var(--g); color:#fff; }
+    /* Primary: Treatment (most important) */
+    .btn-treatment{ background:var(--p); color:#fff; border-color:var(--p); }
+    /* Secondary: Chat (secondary importance) */
+    .btn-chat{ background:transparent; border-color:#334155; color:#e6eaf2; }
+    .btn-chat:hover{ background:#1f2937; border-color:#4b5563; }
+    /* Ghost: Travel / Health (tertiary, less visual weight) */
+    .btn-travel, .btn-health{ background:transparent; border-color:#334155; color:var(--muted); }
+    .btn-travel:hover, .btn-health:hover{ background:#1f2937; border-color:#4b5563; color:#e6eaf2; }
+    .btn-ghost{ background:transparent; border-color:#334155; color:#e6eaf2; }
+
+    .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+    .loading{ text-align:center; padding:40px; color:var(--muted); }
+    .error{ background:#7f1d1d; border:1px solid #dc2626; color:#fca5a5; padding:12px; border-radius:10px; margin-bottom:16px; }
+    .token-info{ background:#0b1220; border:1px solid #334155; padding:12px; border-radius:10px; margin-bottom:16px; font-size:13px; color:#e6eaf2; }
+
+    .selected-bar{
+      position:sticky;
+      top:0;
+      z-index:5;
+      background:rgba(2,6,23,0.92);
+      backdrop-filter: blur(6px);
+      border:1px solid #334155;
+      border-radius:12px;
+      padding:12px;
+      margin-bottom:12px;
+      display:none;
+    }
+    .selected-title{ font-weight:900; }
+    .selected-meta{ color:var(--muted); font-size:13px; margin-top:2px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>👥 Clinifly Admin – Patients</h1>
+      <div id="usageBadge" style="display:none; padding:6px 10px; border:1px solid #334155; border-radius:999px; background:#0b1220; color:#e6eaf2; font-size:12px; font-weight:800; margin-top:12px;"></div>
+    </header>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link active" id="patientsNavLink">
+          Patients
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" id="chatNavLink">
+          Chat
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+      </div>
+    </nav>
+
+    <div id="tokenInfo" class="token-info" style="display:none;">
+      ⚠️ Admin token bulunamadı. Lütfen önce giriş yapın.
+    </div>
+
+    <div id="errorMsg" class="error" style="display:none;"></div>
+
+    <div id="selectedBar" class="selected-bar">
+      <div class="toolbar">
+        <div>
+          <div class="selected-title" id="selectedTitle">Seçili Hasta: —</div>
+          <div class="selected-meta" id="selectedMeta">Patient ID: —</div>
+        </div>
+        <div class="actions">
+          <button class="btn-travel" onclick="openTravel(getSelectedPatientId())">Travel</button>
+          <button class="btn-treatment" onclick="openTreatment(getSelectedPatientId())">Treatment</button>
+          <button class="btn-health" onclick="openHealth(getSelectedPatientId())">Health</button>
+          <button class="btn-chat" onclick="openChat(getSelectedPatientId())">Chat</button>
+          <button class="btn-ghost" onclick="copySelectedPatientId()">Copy ID</button>
+          <button class="btn-ghost" onclick="clearSelectedPatient()">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:12px;">
+        <div class="toolbar-left">
+          <h2 style="margin:0; font-size:18px;">Kayıtlı Hastalar</h2>
+          <input id="searchInput" type="search" placeholder="Ara: isim / telefon / patientId / clinicCode" />
+          <select id="statusFilter" style="min-width:180px;">
+            <option value="">Tümü</option>
+            <option value="PENDING">PENDING</option>
+            <option value="APPROVED">APPROVED</option>
+          </select>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn-ghost" onclick="clearFilters()">Temizle</button>
+          <button onclick="loadPatients()" style="background:var(--p); color:#fff;">Yenile</button>
+        </div>
+      </div>
+
+      <div id="loading" class="loading">Yükleniyor...</div>
+      <div id="patientsGrid" class="patients-grid" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script>
+    // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+    (function bindNavTravelLink() {
+      try {
+        const pid = String(localStorage.getItem('selected_patient_id') || '').trim();
+        if (!pid) return;
+        const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+        if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+      } catch {}
+    })();
+
+    const API_BASE = '';
+    let ALL_PATIENTS = [];
+    let CLINIC_PLAN = "";
+    let CLINIC_MAX_PATIENTS = null;
+    
+    function getAdminToken() {
+      return localStorage.getItem('admin_token') || '';
+    }
+
+    function getSelectedPatientId() {
+      return localStorage.getItem('selected_patient_id') || '';
+    }
+
+    function setSelectedPatient(patientId, name) {
+      if (!patientId) return;
+      localStorage.setItem('selected_patient_id', patientId);
+      if (name) localStorage.setItem('selected_patient_name', name);
+      renderSelectedBar();
+      // refresh row highlighting
+      applyFilters();
+    }
+
+    function clearSelectedPatient() {
+      localStorage.removeItem('selected_patient_id');
+      localStorage.removeItem('selected_patient_name');
+      renderSelectedBar();
+      applyFilters();
+    }
+
+    function renderSelectedBar() {
+      const bar = document.getElementById('selectedBar');
+      const pid = getSelectedPatientId();
+      const name = localStorage.getItem('selected_patient_name') || '';
+      if (!pid) {
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'block';
+      document.getElementById('selectedTitle').textContent = `Seçili Hasta: ${name || '—'}`;
+      document.getElementById('selectedMeta').textContent = `Patient ID: ${pid}`;
+    }
+
+    async function copySelectedPatientId() {
+      const pid = getSelectedPatientId();
+      if (!pid) return;
+      try {
+        await navigator.clipboard.writeText(pid);
+      } catch {
+        // fallback
+        const ta = document.createElement('textarea');
+        ta.value = pid;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      alert('✅ Patient ID kopyalandı');
+    }
+
+    function normalizePlanValue(planValue) {
+      const raw = String(planValue || "").trim().toUpperCase();
+      if (raw === "PROFESSIONAL") return "PRO";
+      if (raw === "FREE" || raw === "BASIC" || raw === "PRO") return raw;
+      return "FREE";
+    }
+
+    function getMaxPatients(plan, explicitMax) {
+      if (explicitMax !== null && explicitMax !== undefined && explicitMax !== "") {
+        const num = Number(explicitMax);
+        return Number.isFinite(num) ? num : explicitMax;
+      }
+      if (plan === "FREE") return 3;
+      if (plan === "BASIC") return 10;
+      if (plan === "PRO") return null;
+      return 3;
+    }
+
+    function renderUsageBadge() {
+      const el = document.getElementById("usageBadge");
+      if (!el) return;
+      const plan = normalizePlanValue(CLINIC_PLAN || "FREE");
+      const maxPatients = getMaxPatients(plan, CLINIC_MAX_PATIENTS);
+      const used = ALL_PATIENTS.length;
+      if (maxPatients === null || maxPatients === undefined) {
+        el.textContent = `Plan: ${plan} • ${used} / ∞ patients`;
+      } else {
+        el.textContent = `Plan: ${plan} • ${used} / ${maxPatients} patients`;
+      }
+      el.style.display = "inline-flex";
+      if (maxPatients !== null && maxPatients !== undefined && used >= maxPatients) {
+        el.style.borderColor = "#dc2626";
+        el.style.color = "#fecaca";
+      } else {
+        el.style.borderColor = "#334155";
+        el.style.color = "#e6eaf2";
+      }
+    }
+
+    async function loadClinicBadge() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+          headers: { Authorization: `Bearer ${token}`, 'Accept': 'application/json' },
+        });
+        if (!res.ok) return;
+        const clinic = await res.json();
+        const name = clinic.branding?.clinicName || clinic.name || "Clinic";
+        
+        // Update navbar clinic name
+        const navbarClinicName = document.getElementById("navbarClinicName");
+        if (navbarClinicName) {
+          navbarClinicName.textContent = name;
+        }
+        
+        // Also update clinic badge if exists
+        const code = clinic.clinicCode || clinic.code || "";
+        const badge = document.getElementById("clinicBadge");
+        if (badge) {
+          badge.textContent = code ? `${code} · ${name}` : name;
+        badge.style.display = "inline-flex";
+        }
+        
+        // Update clinic plan and max patients if needed
+        if (clinic.plan) CLINIC_PLAN = clinic.plan;
+        if (clinic.subscriptionPlan) CLINIC_PLAN = clinic.subscriptionPlan;
+        if (clinic.max_patients !== undefined) CLINIC_MAX_PATIENTS = clinic.max_patients;
+        if (clinic.maxPatients !== undefined) CLINIC_MAX_PATIENTS = clinic.maxPatients;
+        
+        renderUsageBadge();
+      } catch (error) {
+        console.error('Failed to load clinic name:', error);
+        const navbarClinicName = document.getElementById("navbarClinicName");
+        if (navbarClinicName) {
+          navbarClinicName.textContent = "Clinic";
+        }
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    function clearFilters() {
+      const s = document.getElementById('searchInput');
+      const f = document.getElementById('statusFilter');
+      if (s) s.value = '';
+      if (f) f.value = '';
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const q = (document.getElementById('searchInput')?.value || '').trim().toLowerCase();
+      const status = (document.getElementById('statusFilter')?.value || '').trim();
+
+      const filtered = ALL_PATIENTS.filter((p) => {
+        const pid = String(p.patientId || p.patient_id || '').toLowerCase();
+        const name = String(p.fullName || p.name || '').toLowerCase();
+        const phone = String(p.phone || '').toLowerCase();
+        const clinic = String(p.clinicCode || p.clinic_code || '').toLowerCase();
+        const st = String(p.status || 'PENDING');
+
+        const qok = !q || pid.includes(q) || name.includes(q) || phone.includes(q) || clinic.includes(q);
+        const sok = !status || st === status;
+        return qok && sok;
+      });
+
+      renderPatients(filtered);
+    }
+
+    async function loadPatients() {
+      const token = getAdminToken();
+      if (!token) {
+        document.getElementById('tokenInfo').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+        return;
+      }
+      document.getElementById('tokenInfo').style.display = 'none';
+
+      const loadingEl = document.getElementById('loading');
+      const patientsGrid = document.getElementById('patientsGrid');
+
+      loadingEl.style.display = 'block';
+      patientsGrid.style.display = 'none';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/patients`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            showError('❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.');
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const json = await res.json();
+        if (!json.ok) {
+          throw new Error(json.error || 'Bilinmeyen hata');
+        }
+
+        const patients = Array.isArray(json.patients) ? json.patients : (Array.isArray(json.list) ? json.list : []);
+        ALL_PATIENTS = patients;
+        applyFilters();
+        renderUsageBadge();
+        
+        loadingEl.style.display = 'none';
+        patientsGrid.style.display = 'grid';
+      } catch (error) {
+        console.error('Load patients error:', error);
+        showError('❌ Hasta listesi yüklenemedi: ' + error.message);
+        loadingEl.style.display = 'none';
+      }
+    }
+
+    function renderPatients(patients) {
+      const grid = document.getElementById('patientsGrid');
+      if (patients.length === 0) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:#a7b2c8;">Sonuç yok</div>';
+        return;
+      }
+
+      function getProgressClass(score) {
+        if (score === null || score === undefined) return '';
+        if (score >= 80) return 'good';
+        if (score >= 60) return 'warning';
+        if (score >= 40) return 'danger';
+        return 'danger';
+      }
+      
+      function formatScore(score) {
+        if (score === null || score === undefined) return 0;
+        return Math.round(score);
+      }
+
+      grid.innerHTML = patients.map(p => {
+        const status = p.status || 'PENDING';
+        const patientId = (p.patientId || p.patient_id || '').toString();
+        const displayName = (p.fullName || p.name || '-').toString();
+        const isSelected = getSelectedPatientId() && getSelectedPatientId() === patientId;
+        const createdAt = p.createdAt || p.created_at || '-';
+        const dateStr = createdAt !== '-' ? new Date(createdAt).toLocaleDateString('tr-TR') : '-';
+        const beforeScore = p.beforeScore !== undefined ? p.beforeScore : null;
+        const afterScore = p.afterScore !== undefined ? p.afterScore : null;
+        const beforePercent = formatScore(beforeScore);
+        const afterPercent = formatScore(afterScore);
+        const clinicCode = p.clinicCode || p.clinic_code || '';
+        
+        return `
+          <div class="patient-card ${isSelected ? 'selected' : ''}" onclick="setSelectedPatient('${escapeHtml(patientId)}', '${escapeHtml(displayName)}')">
+            <div class="patient-card-header">
+              <h3 class="patient-name">${escapeHtml(displayName)}${clinicCode ? `<span class="clinic-code-badge">${escapeHtml(clinicCode)}</span>` : ''}</h3>
+              ${status === 'PENDING' ? `<span class="status ${status}">${status}</span>` : ''}
+            </div>
+            
+            <div class="patient-meta">
+              ${p.phone ? `<div>📞 ${escapeHtml(p.phone)}</div>` : ''}
+              <div style="margin-top:4px; font-size:11px; color:#64748b;">
+                <code style="font-size:11px;">${escapeHtml(patientId)}</code> • ${dateStr}
+              </div>
+            </div>
+            
+            ${(beforeScore !== null || afterScore !== null) ? `
+            <div class="progress-section">
+              ${beforeScore !== null ? `
+              <div class="progress-label">
+                <span>Before</span>
+                <span>${beforePercent}%</span>
+              </div>
+              <div class="progress-bar-container">
+                <div class="progress-bar ${getProgressClass(beforeScore)}" style="width: ${beforePercent}%"></div>
+              </div>
+              ` : ''}
+              
+              ${afterScore !== null ? `
+              <div class="progress-label" style="margin-top:8px;">
+                <span>After</span>
+                <span>${afterPercent}%</span>
+              </div>
+              <div class="progress-bar-container">
+                <div class="progress-bar ${getProgressClass(afterScore)}" style="width: ${afterPercent}%"></div>
+              </div>
+              ` : ''}
+            </div>
+            ` : ''}
+            
+            <div class="card-actions" onclick="event.stopPropagation()">
+              ${status === 'PENDING' ? `<button class="btn-approve" onclick="approvePatient('${escapeHtml(patientId)}')">Onayla</button>` : ''}
+              <button class="btn-treatment" onclick="openTreatment('${escapeHtml(patientId)}')">Treatment</button>
+              <button class="btn-chat" onclick="openChat('${escapeHtml(patientId)}')">Chat</button>
+              <button class="btn-travel" onclick="openTravel('${escapeHtml(patientId)}')">Travel</button>
+              <button class="btn-health" onclick="openHealth('${escapeHtml(patientId)}')">Health</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function approvePatient(patientId) {
+      const token = getAdminToken();
+      if (!token) {
+        showError('❌ Admin token bulunamadı');
+        return;
+      }
+
+      if (!confirm(`Hastayı onaylamak istediğinize emin misiniz? (${patientId})`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/approve`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({ patientId })
+        });
+
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          throw new Error(json.error || 'Onaylama başarısız');
+        }
+
+        alert('✅ Hasta onaylandı');
+        loadPatients();
+      } catch (error) {
+        console.error('Approve error:', error);
+        showError('❌ Onaylama hatası: ' + error.message);
+      }
+    }
+
+    function getPatientNameById(patientId) {
+      const found = ALL_PATIENTS.find(
+        (p) => String(p.patientId || p.patient_id || "") === String(patientId || "")
+      );
+      return (found?.fullName || found?.name || "").toString();
+    }
+
+    function openTravel(patientId) {
+      setSelectedPatient(patientId, getPatientNameById(patientId));
+      window.location.href = `/admin-travel.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
+    function openTreatment(patientId) {
+      setSelectedPatient(patientId, getPatientNameById(patientId));
+      window.location.href = `/admin-treatment.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
+    function openChat(patientId) {
+      setSelectedPatient(patientId, getPatientNameById(patientId));
+      window.location.href = `/admin-chat.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
+    function openHealth(patientId) {
+      setSelectedPatient(patientId, getPatientNameById(patientId));
+      window.location.href = `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
+    // Badge loading functions
+    const API = location.origin;
+    function adminHeaders(extra = {}) {
+      const token = getAdminToken();
+      return {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...extra,
+      };
+    }
+
+    let previousUnreadCount = 0;
+    let previousPendingPatients = 0;
+    let previousPendingReferrals = 0;
+
+    function playNotificationSound() {
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } catch (e) {
+        console.warn("Could not play notification sound:", e);
+      }
+    }
+
+    async function loadUnreadMessageCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        let lastSeenTimestamp = 0;
+        try {
+          const stored = localStorage.getItem('chat_last_seen_timestamp');
+          if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
+        } catch (e) {}
+        const patientsRes = await fetch(`${API}/api/admin/patients`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!patientsRes.ok) return;
+        const patientsData = await patientsRes.json();
+        if (!patientsData.ok) return;
+        const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+        let totalUnread = 0;
+        for (const patient of patients) {
+          const patientId = patient.patientId || patient.id;
+          if (!patientId) continue;
+          try {
+            const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+              headers: adminHeaders({ Accept: "application/json" }),
+            });
+            if (!messagesRes.ok) continue;
+            const messagesData = await messagesRes.json();
+            if (!messagesData.ok) continue;
+            const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
+            const unread = messages.filter((m) => {
+              if (m.from !== "PATIENT") return false;
+              if (m.createdAt) {
+                const msgTimestamp = new Date(m.createdAt).getTime();
+                return msgTimestamp > lastSeenTimestamp;
+              }
+              return true;
+            }).length;
+            totalUnread += unread;
+          } catch (e) { continue; }
+        }
+        if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
+          playNotificationSound();
+        }
+        previousUnreadCount = totalUnread;
+        const badgeEl = document.getElementById("chatBadge");
+        if (badgeEl) {
+          if (totalUnread > 0) {
+            badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load unread count error:", error);
+      }
+    }
+
+    async function loadPendingPatientsCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API}/api/admin/patients`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+        const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+        const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
+        if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
+          playNotificationSound();
+        }
+        previousPendingPatients = pendingCount;
+        const badgeEl = document.getElementById("patientsBadge");
+        if (badgeEl) {
+          if (pendingCount > 0) {
+            badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load pending patients count error:", error);
+      }
+    }
+
+    async function loadPendingReferralsCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        const pendingCount = items.length;
+        if (pendingCount > previousPendingReferrals && previousPendingReferrals > 0) {
+          playNotificationSound();
+        }
+        previousPendingReferrals = pendingCount;
+        const badgeEl = document.getElementById("referralsBadge");
+        if (badgeEl) {
+          if (pendingCount > 0) {
+            badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load pending referrals count error:", error);
+      }
+    }
+
+    async function loadAllBadges() {
+      await Promise.all([
+        loadUnreadMessageCount(),
+        loadPendingPatientsCount(),
+        loadPendingReferralsCount()
+      ]);
+    }
+
+    // Load on page load
+    window.addEventListener('load', () => {
+      loadClinicBadge();
+      renderSelectedBar();
+      const s = document.getElementById('searchInput');
+      const f = document.getElementById('statusFilter');
+      if (s) s.addEventListener('input', () => applyFilters());
+      if (f) f.addEventListener('change', () => applyFilters());
+      loadPatients();
+      loadAllBadges();
+    });
+
+    // Auto-refresh badges every 30 seconds
+    setInterval(loadAllBadges, 30000);
+  </script>
+</body>
+</html>
+

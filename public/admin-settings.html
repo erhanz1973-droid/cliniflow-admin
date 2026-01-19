@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Clinifly Admin – Clinic Settings</title>
+  <style>
+    :root { 
+      --bg:#111827; 
+      --card:#1f2937; 
+      --b:#1f2937; 
+      --p:#2563eb; 
+      --g:#16a34a; 
+      --r:#dc2626;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+    }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
+    .card{ 
+      background:var(--card); 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:16px; 
+      padding:24px; 
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
+      margin-bottom:16px;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    label{ 
+      display:block; 
+      font-size:14px; 
+      font-weight:600; 
+      margin-bottom:6px; 
+      color:#e6eaf2;
+    }
+    input, textarea, button, select{
+      width:100%;
+      padding:10px 12px;
+      border:1px solid var(--b);
+      border-radius:8px;
+      font-size:14px;
+      margin-bottom:12px;
+    }
+    input, textarea, select{
+      background:#1f2937;
+      color:#e6eaf2;
+    }
+    textarea{
+      min-height:80px;
+      resize:vertical;
+    }
+    button{ 
+      cursor:pointer; 
+      border:none; 
+      background:var(--p); 
+      color:#fff; 
+      font-weight:600; 
+      transition:background 0.2s;
+    }
+    button:hover{ background:#1d4ed8; }
+    .muted{ color:var(--muted); font-size:13px; margin-top:4px; }
+    .status{ 
+      padding:8px 12px;
+      border-radius:8px;
+      margin-top:12px;
+      font-size:14px;
+    }
+    .status.success{
+      background:#064e3b;
+      color:#6ee7b7;
+      border:1px solid #059669;
+    }
+    .status.error{
+      background:#7f1d1d;
+      color:#fca5a5;
+      border:1px solid #dc2626;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>⚙️ Clinifly Admin – Settings</h1>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link">Patients</a>
+        <a href="/admin-treatment.html" class="nav-link">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link">Chat</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary active">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+      </div>
+    </nav>
+
+    <div class="card">
+      <h2>Clinic Information</h2>
+      <div id="brandingNotice" class="muted" style="margin-bottom:10px; display:none;">
+        Branding ayarları yalnızca PRO plan için kullanılabilir.
+      </div>
+      <form id="clinicForm">
+        <label>Abonelik Paketi</label>
+        <select id="plan">
+          <option value="FREE">FREE</option>
+          <option value="BASIC">BASIC</option>
+          <option value="PRO">PRO</option>
+        </select>
+        <div class="muted">FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.</div>
+
+
+        <label>Clinic Name</label>
+        <input type="text" id="clinicName" placeholder="My Clinic" />
+        
+        <label>Clinic Logo URL</label>
+        <input type="url" id="clinicLogoUrl" placeholder="https://example.com/logo.png" />
+        <div class="muted">Pro plan için logo görüntülenir</div>
+        
+        <label>Clinic Address</label>
+        <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
+        <div class="muted">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label>Google Maps Link</label>
+        <input type="url" id="googleMapLink" placeholder="https://maps.google.com/?q=..." />
+        <div class="muted">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label>Primary Color (Hex)</label>
+        <input type="text" id="primaryColor" placeholder="#2563EB" pattern="#[0-9A-Fa-f]{6}" />
+        
+        <label>Secondary Color (Hex)</label>
+        <input type="text" id="secondaryColor" placeholder="#10B981" pattern="#[0-9A-Fa-f]{6}" />
+        
+        <label>Welcome Message</label>
+        <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
+
+        <h2 style="margin-top: 24px;">🎁 Referral Discounts</h2>
+        <div class="muted" style="margin-bottom: 12px;">Referral sisteminde kullanılacak varsayılan indirim oranları</div>
+        <label>Davet Eden İndirim (%)</label>
+        <input type="number" id="defaultInviterDiscountPercent" placeholder="örn: 10" min="0" max="99" />
+        <div class="muted">Davet eden hasta için indirim yüzdesi (0-99)</div>
+        
+        <label>Davet Edilen İndirim (%)</label>
+        <input type="number" id="defaultInvitedDiscountPercent" placeholder="örn: 5" min="0" max="99" />
+        <div class="muted">Davet edilen hasta için indirim yüzdesi (0-99)</div>
+        
+        <button type="submit" style="margin-top: 16px;">💾 Save Settings</button>
+      </form>
+      <div id="status"></div>
+    </div>
+  </div>
+
+<script>
+  // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
+
+  const API = location.origin;
+  const $ = (id) => document.getElementById(id);
+
+  let clinicPlan = "";
+  function applyBrandingLock(plan) {
+    clinicPlan = String(plan || "").toUpperCase();
+    const brandingLocked = clinicPlan !== "PRO";
+    const brandingNotice = $("brandingNotice");
+    if (brandingNotice) brandingNotice.style.display = brandingLocked ? "block" : "none";
+    const brandingInputs = ["clinicName", "clinicLogoUrl", "clinicAddress", "googleMapLink", "primaryColor", "secondaryColor", "welcomeMessage"];
+    brandingInputs.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.disabled = brandingLocked;
+      el.style.opacity = brandingLocked ? "0.6" : "1";
+      el.style.cursor = brandingLocked ? "not-allowed" : "text";
+    });
+  }
+  async function loadClinicSettings() {
+    try {
+      // Get admin token from localStorage
+      const token = localStorage.getItem('admin_token') || '';
+      
+      if (!token) {
+        $("status").innerHTML = '<div class="status error">Admin token bulunamadı. Lütfen admin olarak giriş yapın.</div>';
+        return;
+      }
+
+      // Load clinic settings from API (uses token to identify clinic)
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errorText}`);
+      }
+      
+      const clinic = await res.json();
+      
+      // Backend returns clinic object directly, not wrapped in { ok: true, clinic: {...} }
+      const branding = clinic.branding || {};
+      clinicPlan = String(clinic.plan || clinic.subscriptionPlan || clinic.subscriptionStatus || "FREE").toUpperCase();
+      if ($("plan")) $("plan").value = clinicPlan;
+      applyBrandingLock(clinicPlan);
+
+      // Populate form
+      $("clinicName").value = branding.clinicName || clinic.name || "";
+      $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
+      $("clinicAddress").value = branding.address || clinic.address || "";
+      $("googleMapLink").value = branding.googleMapLink || clinic.googleMapsUrl || "";
+      $("primaryColor").value = branding.primaryColor || "#2563EB";
+      $("secondaryColor").value = branding.secondaryColor || "#10B981";
+      $("welcomeMessage").value = branding.welcomeMessage || "";
+      
+      // Set referral discount values (handle null/undefined)
+      const inviterDiscount = clinic.defaultInviterDiscountPercent;
+      const invitedDiscount = clinic.defaultInvitedDiscountPercent;
+      $("defaultInviterDiscountPercent").value = (inviterDiscount != null && inviterDiscount !== "") ? String(inviterDiscount) : "";
+      $("defaultInvitedDiscountPercent").value = (invitedDiscount != null && invitedDiscount !== "") ? String(invitedDiscount) : "";
+      
+      console.log("Loaded referral discounts:", { inviterDiscount, invitedDiscount });
+
+    } catch (error) {
+      console.error("Load clinic settings error:", error);
+      $("status").innerHTML = `<div class="status error">Ayarlar yüklenemedi: ${error.message}</div>`;
+    }
+  }
+
+  $("plan") && $("plan").addEventListener("change", (e) => applyBrandingLock(e.target.value));
+
+  $("clinicForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    
+    // Get admin token from localStorage
+    const token = localStorage.getItem('admin_token') || '';
+    
+    if (!token) {
+      $("status").innerHTML = '<div class="status error">Admin token bulunamadı. Lütfen admin olarak giriş yapın.</div>';
+      return;
+    }
+
+        const payload = {
+      plan: ($("plan") ? $("plan").value : (clinicPlan || "FREE")),
+      defaultInviterDiscountPercent: $("defaultInviterDiscountPercent").value.trim(),
+      defaultInvitedDiscountPercent: $("defaultInvitedDiscountPercent").value.trim(),
+    };
+    const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
+    if (!brandingLocked) {
+      payload.branding = {
+        clinicName: $("clinicName").value.trim(),
+        clinicLogoUrl: $("clinicLogoUrl").value.trim(),
+        address: $("clinicAddress").value.trim(),
+        googleMapLink: $("googleMapLink").value.trim(),
+        primaryColor: $("primaryColor").value.trim(),
+        secondaryColor: $("secondaryColor").value.trim(),
+        welcomeMessage: $("welcomeMessage").value.trim(),
+      };
+    }
+
+    try {
+      $("status").innerHTML = '<div class="status">Kaydediliyor...</div>';
+      
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      $("status").innerHTML = '<div class="status success">✅ Ayarlar kaydedildi!</div>';
+      
+    } catch (error) {
+      console.error("Save clinic settings error:", error);
+      $("status").innerHTML = `<div class="status error">Kaydetme hatası: ${error.message}</div>`;
+    }
+  });
+
+  // Load settings on page load
+  loadClinicSettings();
+</script>
+</body>
+</html>
+

@@ -1,92 +1,1182 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <title>Cliniflow Admin - Yeni Panel</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title id="pageTitle">Clinifly Admin – Dashboard</title>
+  <script src="/admin-i18n.js"></script>
   <style>
-    body {
-      font-family: system-ui, -apple-system, Arial;
-      margin: 0;
-      background: #0b0f16;
-      color: #e6eaf2;
+    :root { 
+      --bg:#111827; 
+      --card:#1f2937; 
+      --b:#374151; 
+      --p:#2563eb; 
+      --g:#16a34a; 
+      --r:#dc2626;
+      --warn:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+    }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
+    .card{ 
+      background:var(--card); 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:16px; 
+      padding:24px; 
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
+      margin-bottom:16px;
+    }
+    .banner{
+      background:#7f1d1d;
+      border:1px solid var(--r);
+      border-left:4px solid var(--r);
+      border-radius:8px;
+      padding:12px 16px;
+      margin-bottom:16px;
+      color:#fca5a5;
+    }
+    .banner h3{
+      margin:0 0 8px 0;
+      color:#fca5a5;
+      font-size:16px;
+      font-weight:700;
+    }
+    .banner.empty{
+      background:#0b1220;
+      border-color:#334155;
+      border-left-color:var(--warn);
+      color:#fef3c7;
+    }
+    .banner.empty h3{
+      color:#fef3c7;
+    }
+    .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .list{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
+    .item{ 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:12px; 
+      padding:16px; 
+      display:flex; 
+      justify-content:space-between; 
+      gap:16px; 
+      align-items:start; 
+      background:rgba(31, 41, 55, 0.5);
+      transition:all 0.2s;
+      margin-bottom:8px;
+    }
+    .item:hover{
+      background:rgba(31, 41, 55, 0.8);
+      border-color:rgba(59, 130, 246, 0.3);
+      transform:translateY(-1px);
+    }
+    .item[onclick]:hover{
+      box-shadow:0 4px 12px rgba(37,99,235,0.2);
+      border-color:var(--p);
+      cursor:pointer;
+    }
+    .item.overdue{
+      background:#3a0a0a !important;
+      border-color:#991b1b !important;
+      border-left:4px solid #ef4444 !important;
+      box-shadow:0 0 0 1px rgba(239,68,68,0.3) !important;
+    }
+    .item.overdue .item-title{
+      color:#fca5a5 !important;
+    }
+    .item.overdue .item-meta{
+      color:#fca5a5 !important;
+      opacity:0.9;
+    }
+    .item.overdue .item-date{
+      color:#fca5a5 !important;
+    }
+    .item.overdue:hover{
+      background:#4a0f0f !important;
+      box-shadow:0 2px 8px rgba(239,68,68,0.5) !important;
+      border-color:#ef4444 !important;
+    }
+    .item.overdue[onclick]:hover{
+      box-shadow:0 4px 12px rgba(239,68,68,0.6) !important;
+      border-color:#ef4444 !important;
+      transform:translateY(-1px);
+    }
+    .item-left{ flex:1; }
+    .item-title{ 
+      font-size:15px; 
+      font-weight:600; 
+      margin-bottom:4px;
+      color:#e6eaf2;
+    }
+    .item-meta{ 
+      color:var(--muted); 
+      font-size:13px; 
+      margin-top:4px;
+    }
+    .item-date{
+      font-weight:600;
+      color:#e6eaf2;
+    }
+    .status{ 
+      font-weight:700; 
+      font-size:11px; 
+      padding:4px 10px; 
+      border-radius:999px; 
+      border:1px solid var(--b);
+      text-transform:uppercase;
+      white-space:nowrap;
+    }
+    .status-planned{ 
+      background:linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.15)); 
+      border-color:rgba(59, 130, 246, 0.4); 
+      color:#93c5fd;
+      box-shadow:0 1px 3px rgba(59, 130, 246, 0.2);
+    }
+    .status.planned{ 
+      background:linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.15)); 
+      border-color:rgba(59, 130, 246, 0.4); 
+      color:#93c5fd;
+      box-shadow:0 1px 3px rgba(59, 130, 246, 0.2);
+    }
+    .status-pill{
+      display:inline-block;
+      padding:4px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:700;
+      text-transform:uppercase;
+      border:1px solid;
+    }
+    .status.done{ background:#dcfce7; border-color:#86efac; color:#166534; }
+    .status.overdue{ background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .muted{ color:var(--muted); font-size:13px; }
+    .empty-state{
+      text-align:center;
+      padding:40px 20px;
+      color:#9ca3af;
+    }
+    .empty-state-icon{
+      font-size:48px;
+      margin-bottom:12px;
+    }
+    button{ 
+      cursor:pointer; 
+      border:none; 
+      background:var(--p); 
+      color:#fff; 
+      font-weight:600; 
+      padding:10px 16px;
+      border-radius:8px;
+      font-size:14px;
+      transition:background 0.2s;
+    }
+    button:hover{ background:#1d4ed8; }
+    button.secondary{ background:#6b7280; }
+    button.secondary:hover{ background:#4b5563; }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
       display: flex;
       align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      text-align: center;
-      padding: 20px;
+      gap: 12px;
     }
-    .container {
-      max-width: 600px;
-      background: #0f1522;
-      border: 1px solid #1c2432;
-      border-radius: 16px;
-      padding: 40px;
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 16px;
-      color: #ffffff;
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
     }
-    p {
-      color: #a7b2c8;
-      margin-bottom: 20px;
-      line-height: 1.6;
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
       font-size: 16px;
-    }
-    .link-box {
-      background: #1a2640;
-      border: 2px solid #2b3a58;
-      border-radius: 12px;
-      padding: 20px;
-      margin: 24px 0;
-    }
-    .link-box a {
-      display: block;
-      color: #6aa6ff;
-      font-size: 18px;
+      color: var(--muted);
       font-weight: 600;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
       text-decoration: none;
-      margin-bottom: 8px;
-    }
-    .link-box a:hover {
-      color: #8bb5ff;
-      text-decoration: underline;
-    }
-    .muted {
-      font-size: 14px;
-      color: #6b7280;
-      margin-top: 8px;
-    }
-    .warning {
-      background: #3a1620;
-      border: 1px solid #5a2232;
+      font-weight: 500;
+      padding: 8px 12px;
       border-radius: 8px;
-      padding: 12px;
-      margin-top: 20px;
-      color: #ffd7df;
       font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .loading{
+      text-align:center;
+      padding:20px;
+      color:var(--muted);
+    }
+    .nav-badge{
+      position:absolute;
+      top:-6px;
+      right:-6px;
+      background:var(--r);
+      color:#fff;
+      border-radius:10px;
+      min-width:18px;
+      height:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      font-weight:700;
+      padding:0 4px;
+      border:2px solid var(--bg);
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>⚠️ Bu Sayfa Artık Kullanılmıyor</h1>
-    <p>
-      Eski admin panel sayfası kaldırıldı. Lütfen yeni Next.js admin panelini kullanın.
-    </p>
+  <div class="wrap">
+    <h1 id="pageHeading" data-i18n="dashboard.title">📊 Clinifly Admin – Dashboard</h1>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+    </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+    </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link active" data-i18n="dashboard.nav.dashboard">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink" data-i18n="dashboard.nav.patients">
+          Patients
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" id="chatNavLink" data-i18n="dashboard.nav.chat">
+          Chat
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary" data-i18n="dashboard.nav.login">Logout</a>
+      </div>
+    </nav>
+    <div id="clinicInfo" style="margin-bottom:20px; padding:16px; background:var(--card); border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:12px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div id="clinicName" style="font-weight:700; font-size:18px; color:#ffffff;">—</div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span id="clinicStatus" class="status-pill" style="display:none;"></span>
+          <span id="clinicCode" style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:0.5px;">—</span>
+        </div>
+      </div>
+    </div>
 
-    <div class="link-box">
-      <strong style="color: #e6eaf2; display: block; margin-bottom: 12px;">Yeni Admin Panel:</strong>
-      <a href="http://localhost:3000" target="_blank">http://localhost:3000</a>
-      <a href="http://localhost:3000/patients" target="_blank">http://localhost:3000/patients (Hasta Listesi)</a>
-      <div class="muted">Yukarıdaki linklere tıklayarak yeni admin panele gidebilirsiniz.</div>
-  </div>
+    <div id="overdueBanner" style="display:none;"></div>
 
-    <div class="warning">
-      <strong>Not:</strong> Eğer yeni admin panel açılmıyorsa, terminal'de <code>npm run dev</code> komutunun çalıştığından emin olun.
+    <div class="card" style="margin-bottom:16px;">
+      <h2 style="margin:0 0 20px; font-size:18px;">📊 Clinic Oral Health Average</h2>
+      <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center; justify-content:center;">
+        <div style="text-align:center; min-width:120px;">
+          <div style="color:var(--muted); font-size:12px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">Before</div>
+          <div id="clinicBeforeAvg" style="font-size:32px; font-weight:700; color:#e6eaf2; line-height:1.2;">—</div>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:8px; min-width:100px;">
+          <div style="font-size:24px; color:var(--g);">→</div>
+          <div id="clinicImprovement" style="font-size:16px; font-weight:700; color:var(--g); padding:4px 12px; background:rgba(22, 163, 74, 0.15); border-radius:8px;">—</div>
+        </div>
+        <div style="text-align:center; min-width:120px;">
+          <div style="color:var(--muted); font-size:12px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">After</div>
+          <div id="clinicAfterAvg" style="font-size:32px; font-weight:700; color:#e6eaf2; line-height:1.2;">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="upcomingTitle" data-i18n="dashboard.upcoming.title">📅 Upcoming / Next Actions</h2>
+      <div id="timelineSummary" style="display:none; margin-bottom:20px;">
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div class="summary-badge summary-badge-overdue" style="padding:8px 14px; background:rgba(220, 38, 38, 0.15); border:1px solid rgba(220, 38, 38, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">⚠️</span>
+            <span style="font-size:13px; font-weight:600; color:#fca5a5;">Overdue:</span>
+            <span id="overdueCount" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+          </div>
+          <div class="summary-badge summary-badge-today" style="padding:8px 14px; background:rgba(37, 99, 235, 0.15); border:1px solid rgba(37, 99, 235, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">📅</span>
+            <span style="font-size:13px; font-weight:600; color:#93c5fd;">Today:</span>
+            <span id="todayPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">patients</span>
+            <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
+            <span id="todayEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">events</span>
+          </div>
+          <div class="summary-badge summary-badge-tomorrow" style="padding:8px 14px; background:rgba(139, 92, 246, 0.15); border:1px solid rgba(139, 92, 246, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">📅</span>
+            <span style="font-size:13px; font-weight:600; color:#c4b5fd;">Tomorrow:</span>
+            <span id="tomorrowPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">patients</span>
+            <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
+            <span id="tomorrowEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">events</span>
+          </div>
+        </div>
+      </div>
+      <div id="upcomingSubtitle" class="muted" style="margin-bottom:12px;" data-i18n="dashboard.upcoming.subtitle">
+        Önümüzdeki 14 gün içindeki event'ler (bugün hariç)
+      </div>
+      <div id="upcomingList" class="loading" data-i18n="common.loading">Yükleniyor...</div>
     </div>
   </div>
+
+<script>
+  // If a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
+
+  const API = location.origin;
+  function applyTokenFromUrl() {
+    try {
+      const url = new URL(location.href);
+      const token = (url.searchParams.get("token") || "").trim();
+      if (!token) return;
+      localStorage.setItem("admin_token", token);
+      url.searchParams.delete("token");
+      history.replaceState({}, "", url.toString());
+    } catch {}
+  }
+  function getAdminToken() {
+    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+  }
+  function adminHeaders(extra = {}) {
+    const token = getAdminToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...extra,
+    };
+  }
+  async function loadClinicBadge() {
+    const el = document.getElementById("clinicBadge");
+    if (!el) return;
+    const token = getAdminToken();
+    if (!token) {
+      el.innerHTML = i18n.t("dashboard.clinicBadge.noToken");
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const code = (data.clinicCode || data.code || "-").toString();
+      const name = (data.name || "-").toString();
+      const status = (data.status || "-").toString();
+      el.innerHTML = i18n.t("dashboard.clinicBadge.clinicInfo", { name, code, status });
+      const navbarClinicName = document.getElementById("navbarClinicName");
+      if (navbarClinicName) {
+        navbarClinicName.textContent = name || "Clinic";
+      }
+      const clearLink = document.getElementById("clearTokenLink");
+      if (clearLink) {
+        clearLink.addEventListener("click", (e) => {
+          e.preventDefault();
+          try {
+            localStorage.removeItem("admin_token");
+            localStorage.removeItem("selected_patient_id");
+            localStorage.removeItem("selected_patient_name");
+          } catch {}
+          location.href = "/admin-register.html";
+        });
+      }
+    } catch (e) {
+      el.textContent = i18n.t("dashboard.clinicBadge.clinicNotFound");
+    }
+  }
+
+  function formatDate(dateStr, timeStr) {
+    if (!dateStr) return "—";
+    const date = new Date(dateStr + (timeStr ? `T${timeStr}:00` : "T00:00:00"));
+    if (isNaN(date.getTime())) return dateStr;
+    
+    const lang = i18n.getLang();
+    const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const options = { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      weekday: 'short'
+    };
+    const dateFormatted = date.toLocaleDateString(locale, options);
+    return timeStr ? `${dateFormatted} ${timeStr}` : dateFormatted;
+  }
+
+  function formatRelativeDate(dateStr) {
+    if (!dateStr) return "—";
+    const date = new Date(dateStr + "T00:00:00");
+    if (isNaN(date.getTime())) return dateStr;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(date);
+    eventDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = eventDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return i18n.t("dashboard.upcoming.today");
+    if (diffDays === 1) return i18n.t("dashboard.upcoming.tomorrow");
+    if (diffDays === 2) return i18n.t("dashboard.upcoming.dayAfterTomorrow");
+    if (diffDays > 0 && diffDays <= 7) return i18n.t("dashboard.upcoming.daysLater", { count: diffDays });
+    if (diffDays > 7) return i18n.t("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) });
+    return formatDate(dateStr);
+  }
+
+  function getEventIcon(type, eventType) {
+    const t = String(type || "").toUpperCase();
+    const et = String(eventType || "").toUpperCase();
+    
+    if (t === "FLIGHT" || et === "FLIGHT") return "✈️";
+    if (t === "HOTEL" || et === "HOTEL") return "🏨";
+    if (t === "AIRPORT_PICKUP" || et === "AIRPORT_PICKUP") return "🚗";
+    if (t === "TREATMENT" || et === "TREATMENT") return "🦷";
+    if (t === "CONSULT" || et === "CONSULT") return "💬";
+    if (t === "FOLLOWUP" || et === "FOLLOWUP") return "📋";
+    if (t === "LAB" || et === "LAB") return "🔬";
+    if (t === "HEALTH" || t === "HEALTH_FORM" || et === "HEALTH") return "";
+    return "📅";
+  }
+
+  function getEventTypeLabel(type) {
+    const labels = {
+      "TRAVEL_EVENT": "Seyahat Etkinliği",
+      "FLIGHT": "Uçuş",
+      "HOTEL": "Otel",
+      "AIRPORT_PICKUP": "Havalimanı Karşılama",
+      "TREATMENT": "Treatment",
+      "CONSULT": "Consultation",
+      "FOLLOWUP": "Follow-up",
+      "LAB": "Lab / Scan",
+      "HEALTH": "General Check-up"
+    };
+    return labels[type] || type;
+  }
+
+  function renderOverdueBanner(overdue) {
+    const bannerEl = document.getElementById("overdueBanner");
+    if (!bannerEl) return;
+    
+    // Filter out completed, cancelled, or past events that are actually completed
+    const activeOverdue = Array.isArray(overdue) 
+      ? overdue.filter(evt => {
+          const status = String(evt.status || "").toUpperCase();
+          const isCompleted = status === "DONE" || status === "COMPLETED";
+          const isCancelled = status === "CANCELLED";
+          
+          // Also check if date is in the past (double check)
+          let isPast = false;
+          if (evt.date || evt.timestamp) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const eventDate = evt.timestamp 
+              ? new Date(evt.timestamp)
+              : new Date(evt.date);
+            if (!isNaN(eventDate.getTime())) {
+              eventDate.setHours(0, 0, 0, 0);
+              isPast = eventDate < today;
+            }
+          }
+          
+          // Only show if not completed, not cancelled, and actually past
+          return !isCompleted && !isCancelled && isPast;
+        })
+      : [];
+    
+    // Hide banner if no overdue items or all are completed
+    if (!activeOverdue || activeOverdue.length === 0) {
+      bannerEl.style.display = "none";
+      return;
+    }
+
+    bannerEl.className = "banner";
+    bannerEl.innerHTML = `
+      <h3>${i18n.t("dashboard.upcoming.overdue", { count: activeOverdue.length })}</h3>
+      <div style="font-size:14px; color:#7f1d1d;">
+        ${i18n.t("dashboard.upcoming.overdueDesc", { count: activeOverdue.length })}
+      </div>
+    `;
+    bannerEl.style.display = "block";
+  }
+
+  function getEventTargetUrl(evt) {
+    if (!evt.patientId) return null;
+    
+    const type = String(evt.type || "").toUpperCase();
+    const eventType = String(evt.eventType || "").toUpperCase();
+    const patientId = evt.patientId;
+    
+    // Travel-related events
+    if (type === "FLIGHT" || type === "HOTEL" || type === "AIRPORT_PICKUP" || type === "TRAVEL_EVENT") {
+      return `/admin-travel.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+    
+    // Treatment-related events
+    if (type === "TREATMENT" || type === "CONSULT" || type === "FOLLOWUP" || type === "LAB" || 
+        eventType === "TREATMENT" || eventType === "CONSULT" || eventType === "FOLLOWUP" || eventType === "LAB") {
+      let url = `/admin-treatment.html?patientId=${encodeURIComponent(patientId)}`;
+      // Add toothId to URL if available
+      if (evt.toothId) {
+        url += `&toothId=${encodeURIComponent(evt.toothId)}`;
+      }
+      // Add procedureId to URL if available (for direct navigation to specific procedure)
+      if (evt.procedureId) {
+        url += `&procedureId=${encodeURIComponent(evt.procedureId)}`;
+      }
+      return url;
+    }
+    
+    // Health form events
+    if (type === "HEALTH" || type === "HEALTH_FORM") {
+      return `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+    
+    return null;
+  }
+
+  // Cache for patient names
+  let patientNameCache = {};
+
+  async function loadPatientNames(patientIds) {
+    if (!patientIds || patientIds.length === 0) return;
+    
+    // Filter out already cached patient IDs
+    const uncachedIds = [...new Set(patientIds)].filter(id => id && !patientNameCache[id]);
+    if (uncachedIds.length === 0) return;
+
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      
+      const r = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!r.ok) return;
+      
+      const data = await r.json();
+      if (!data.ok || !Array.isArray(data.patients)) return;
+      
+      // Cache patient names
+      data.patients.forEach(patient => {
+        const pid = patient.patientId || patient.patient_id;
+        if (pid) {
+          patientNameCache[pid] = patient.fullName || patient.name || pid;
+        }
+      });
+    } catch (error) {
+      console.error("Load patient names error:", error);
+    }
+  }
+
+  function getPatientDisplayName(patientId) {
+    if (!patientId) return "";
+    const name = patientNameCache[patientId] || null;
+    if (name && name !== patientId) {
+      return `${name} • ${patientId}`;
+    }
+    return patientId;
+  }
+
+  async function renderUpcomingList(upcoming, patientMap = {}) {
+    const listEl = document.getElementById("upcomingList");
+    
+    if (!upcoming || upcoming.length === 0) {
+      listEl.className = "empty-state";
+      listEl.innerHTML = `
+        <div class="empty-state-icon">📭</div>
+        <div>${i18n.t("dashboard.upcoming.empty")}</div>
+      `;
+      return;
+    }
+
+    // Load patient names if needed
+    const patientIds = [...new Set(upcoming.map(evt => evt.patientId).filter(Boolean))];
+    await loadPatientNames(patientIds);
+
+    listEl.className = "list";
+    listEl.innerHTML = upcoming.map((evt, index) => {
+      const isCompleted = evt.status === "DONE" || evt.status === "COMPLETED";
+      const statusClass = isCompleted ? "done" : "planned";
+      const statusText = isCompleted 
+        ? i18n.t("dashboard.upcoming.status.done") 
+        : i18n.t("dashboard.upcoming.status.planned");
+      
+      // Check if overdue (date is in the past and not completed)
+      let isOverdue = false;
+      if (!isCompleted) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let eventDate = null;
+        
+        // Try timestamp first, then date
+        if (evt.timestamp) {
+          eventDate = new Date(evt.timestamp);
+        } else if (evt.date) {
+          eventDate = new Date(evt.date);
+        }
+        
+        if (eventDate && !isNaN(eventDate.getTime())) {
+          eventDate.setHours(0, 0, 0, 0);
+          isOverdue = eventDate < today;
+        }
+      }
+      
+      const relativeDate = formatRelativeDate(evt.date);
+      const fullDate = formatDate(evt.date, evt.time);
+      const targetUrl = getEventTargetUrl(evt);
+      const isClickable = targetUrl !== null;
+      // Escape single quotes in URL for onclick attribute
+      const escapedUrl = isClickable ? targetUrl.replace(/'/g, "\\'") : '';
+      
+      const itemClasses = `item${isOverdue ? ' overdue' : ''}`;
+      
+      // Add inline styles for overdue items to ensure visibility
+      let itemStyle = '';
+      if (isClickable) itemStyle += 'cursor: pointer;';
+      if (isOverdue) {
+        itemStyle += 'background-color: #3a0a0a !important; border-color: #dc2626 !important; border-left: 5px solid #ef4444 !important; border: 1px solid #dc2626 !important;';
+      }
+      
+      const titleStyle = isOverdue ? 'style="color: #fca5a5 !important;"' : '';
+      const metaStyle = isOverdue ? 'style="color: #fca5a5 !important; opacity: 0.9;"' : '';
+      
+      const eventIcon = getEventIcon(evt.type, evt.eventType);
+      const patientName = evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '';
+      
+      return `
+        <div class="${itemClasses}" data-event-index="${index}" style="${itemStyle}" ${isClickable ? `onclick="window.location.href='${escapedUrl}'"` : ''}>
+          <div style="display:flex; gap:12px; width:100%;">
+            <div style="min-width:90px; text-align:right; padding-top:2px;">
+              <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${relativeDate}</div>
+            </div>
+            <div style="flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="font-size:18px;">${eventIcon}</span>
+                <div class="item-title" ${titleStyle}>${evt.title || getEventTypeLabel(evt.type)}</div>
+              </div>
+              <div class="item-meta" ${metaStyle}>
+                ${patientName || ''}
+              ${evt.description ? ` • ${evt.description}` : ""}
+            </div>
+          </div>
+          <div>
+            <span class="status ${statusClass}">${statusText}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadEvents() {
+    const upcomingEl = document.getElementById("upcomingList");
+    upcomingEl.className = "loading";
+    upcomingEl.textContent = i18n.t("common.loading");
+
+    try {
+      const token = getAdminToken();
+      if (!token) {
+        throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
+      }
+      const r = await fetch(`${API}/api/admin/events`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      
+      const data = await r.json();
+      
+      if (!data.ok) {
+        throw new Error(data.error || "Unknown error");
+      }
+
+      // Hide overdue banner (now shown in timeline)
+      const bannerEl = document.getElementById("overdueBanner");
+      if (bannerEl) bannerEl.style.display = "none";
+
+      // Calculate summary statistics
+      const overdueCount = (data.overdue || []).length;
+      
+      // Get today and tomorrow events from API response
+      const todayEvents = data.today || [];
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      const tomorrowStart = tomorrow.getTime();
+      const tomorrowEnd = tomorrow.getTime() + (24 * 60 * 60 * 1000) - 1;
+      
+      // Get all events (overdue + today + upcoming) for timeline
+      const allEvents = [...(data.overdue || []), ...(data.today || []), ...(data.upcoming || [])];
+      
+      // Filter events for tomorrow
+      const tomorrowEvents = allEvents.filter(evt => {
+        const ts = evt.timestamp || (evt.date ? new Date(evt.date).getTime() : 0);
+        return ts >= tomorrowStart && ts <= tomorrowEnd;
+      });
+      
+      // Count unique patients for today and tomorrow
+      const todayPatients = new Set(todayEvents.map(evt => evt.patientId).filter(Boolean));
+      const tomorrowPatients = new Set(tomorrowEvents.map(evt => evt.patientId).filter(Boolean));
+      
+      // Update summary display
+      const summaryEl = document.getElementById("timelineSummary");
+      if (summaryEl) {
+        const overdueEl = document.getElementById("overdueCount");
+        const todayPatientsEl = document.getElementById("todayPatients");
+        const todayEventsEl = document.getElementById("todayEvents");
+        const tomorrowPatientsEl = document.getElementById("tomorrowPatients");
+        const tomorrowEventsEl = document.getElementById("tomorrowEvents");
+        
+        if (overdueEl) overdueEl.textContent = overdueCount;
+        if (todayPatientsEl) todayPatientsEl.textContent = todayPatients.size;
+        if (todayEventsEl) todayEventsEl.textContent = todayEvents.length;
+        if (tomorrowPatientsEl) tomorrowPatientsEl.textContent = tomorrowPatients.size;
+        if (tomorrowEventsEl) tomorrowEventsEl.textContent = tomorrowEvents.length;
+        summaryEl.style.display = "block";
+      }
+
+      // Sort by timestamp (oldest first)
+      allEvents.sort((a, b) => {
+        const tsA = a.timestamp || (a.date ? new Date(a.date).getTime() : 0);
+        const tsB = b.timestamp || (b.date ? new Date(b.date).getTime() : 0);
+        return tsA - tsB;
+      });
+
+      // Render timeline (will load patient names if needed)
+      await renderUpcomingList(allEvents);
+
+    } catch (error) {
+      const upcomingEl = document.getElementById("upcomingList");
+      upcomingEl.className = "empty-state";
+      upcomingEl.innerHTML = `
+        <div style="color:var(--r);">
+          <strong>${i18n.t("common.error")}:</strong> ${error.message || i18n.t("common.loading")}
+        </div>
+      `;
+      console.error("Load events error:", error);
+    }
+  }
+  
+  // Language change handler
+  window.onLanguageChange = function() {
+    // Update page title
+    const titleEl = document.getElementById("pageTitle");
+    const headingEl = document.getElementById("pageHeading");
+    const upcomingTitleEl = document.getElementById("upcomingTitle");
+    const upcomingSubtitleEl = document.getElementById("upcomingSubtitle");
+    if (titleEl) titleEl.textContent = i18n.t("dashboard.title");
+    if (headingEl) headingEl.textContent = i18n.t("dashboard.title");
+    if (upcomingTitleEl) upcomingTitleEl.textContent = i18n.t("dashboard.upcoming.title");
+    if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = i18n.t("dashboard.upcoming.subtitle");
+    
+    // Reload clinic badge and events
+    loadClinicBadge();
+    loadEvents();
+  };
+
+  // Apply token from URL if provided (helps switching clinics)
+  applyTokenFromUrl();
+  
+  // Wait for i18n to be ready
+  if (typeof i18n !== 'undefined') {
+    loadClinicBadge();
+    // Load badges immediately (independent of events)
+    loadAllBadges();
+    // Load events after a short delay to avoid token/API conflicts
+    setTimeout(() => {
+    loadEvents();
+    }, 500);
+  } else {
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        loadClinicBadge();
+        // Load badges immediately (independent of events)
+        loadAllBadges();
+        // Load events after a short delay to avoid token/API conflicts
+        setTimeout(() => {
+        loadEvents();
+        }, 500);
+      }, 100);
+    });
+  }
+
+  // Load clinic oral health averages
+  async function loadClinicOralHealthAverages() {
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      
+      const res = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      
+      if (!data.ok || !Array.isArray(data.patients)) return;
+      
+      const patients = data.patients;
+      
+      // Calculate averages
+      let totalBefore = 0;
+      let beforeCount = 0;
+      let totalAfter = 0;
+      let afterCount = 0;
+      
+      patients.forEach(p => {
+        if (p.beforeScore !== null && p.beforeScore !== undefined) {
+          totalBefore += p.beforeScore;
+          beforeCount++;
+        }
+        if (p.afterScore !== null && p.afterScore !== undefined) {
+          totalAfter += p.afterScore;
+          afterCount++;
+        }
+      });
+      
+      const beforeAvg = beforeCount > 0 ? Math.round((totalBefore / beforeCount) * 10) / 10 : null;
+      const afterAvg = afterCount > 0 ? Math.round((totalAfter / afterCount) * 10) / 10 : null;
+      const improvement = (beforeAvg !== null && afterAvg !== null) ? Math.round((afterAvg - beforeAvg) * 10) / 10 : null;
+      
+      // Update UI with animation
+      const beforeEl = document.getElementById("clinicBeforeAvg");
+      const afterEl = document.getElementById("clinicAfterAvg");
+      const improvementEl = document.getElementById("clinicImprovement");
+      
+      if (beforeEl) beforeEl.textContent = beforeAvg !== null ? `${beforeAvg}%` : "—";
+      if (afterEl) afterEl.textContent = afterAvg !== null ? `${afterAvg}%` : "—";
+      
+      if (improvementEl) {
+        if (improvement !== null) {
+          const sign = improvement >= 0 ? '+' : '';
+          const color = improvement >= 0 ? 'var(--g)' : 'var(--r)';
+          improvementEl.textContent = `${sign}${improvement}%`;
+          improvementEl.style.color = color;
+          improvementEl.style.background = improvement >= 0 
+            ? 'rgba(22, 163, 74, 0.15)' 
+            : 'rgba(220, 38, 38, 0.15)';
+        } else {
+          improvementEl.textContent = "—";
+        }
+      }
+    } catch (error) {
+      console.error("Load clinic averages error:", error);
+    }
+  }
+
+  // Auto-refresh every 30 seconds
+  setInterval(loadEvents, 30000);
+  
+  // Load clinic averages on page load and refresh periodically
+  if (typeof i18n !== 'undefined') {
+    loadClinicOralHealthAverages();
+  } else {
+    window.addEventListener('load', () => {
+      setTimeout(loadClinicOralHealthAverages, 100);
+    });
+  }
+  setInterval(loadClinicOralHealthAverages, 60000); // Refresh every minute
+
+  // Store previous counts to detect new messages
+  let previousUnreadCount = 0;
+  let previousPendingPatients = 0;
+  let previousPendingReferrals = 0;
+
+  // Play notification sound
+  function playNotificationSound() {
+    try {
+      // Create audio context and play a simple beep sound
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800; // Frequency in Hz
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (e) {
+      console.warn("Could not play notification sound:", e);
+    }
+  }
+
+  // Load unread message count for badge
+  async function loadUnreadMessageCount() {
+    const token = getAdminToken();
+    if (!token) return;
+
+    try {
+      // Get last seen timestamp from localStorage
+      let lastSeenTimestamp = 0;
+      try {
+        const stored = localStorage.getItem('chat_last_seen_timestamp');
+        if (stored) {
+          lastSeenTimestamp = parseInt(stored, 10) || 0;
+        }
+      } catch (e) {
+        console.warn("Could not read last seen timestamp:", e);
+      }
+
+      // Get all patients
+      const patientsRes = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!patientsRes.ok) return;
+      const patientsData = await patientsRes.json();
+      if (!patientsData.ok) return;
+
+      const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+      let totalUnread = 0;
+
+      // Check unread messages for each patient
+      for (const patient of patients) {
+        const patientId = patient.patientId || patient.id;
+        if (!patientId) continue;
+
+        try {
+          const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+            headers: adminHeaders({ Accept: "application/json" }),
+          });
+          if (!messagesRes.ok) continue;
+          const messagesData = await messagesRes.json();
+          if (!messagesData.ok) continue;
+
+          const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
+          // Count unread messages (from PATIENT) that were created AFTER last seen timestamp
+          const unread = messages.filter((m) => {
+            if (!m || m.from !== "PATIENT") return false;
+            // If message has createdAt, check if it's after last seen time
+            if (m.createdAt) {
+              try {
+              const msgTimestamp = new Date(m.createdAt).getTime();
+                if (isNaN(msgTimestamp)) return true; // If invalid date, count as unread
+              return msgTimestamp > lastSeenTimestamp;
+              } catch (e) {
+                return true; // If error parsing date, count as unread
+              }
+            }
+            // If no createdAt, count it as unread (backward compatibility)
+            return true;
+          }).length;
+          totalUnread += unread;
+        } catch (e) {
+          // Skip this patient if error
+          continue;
+        }
+      }
+
+      // Check if new messages arrived (count increased)
+      if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
+        playNotificationSound();
+      }
+      previousUnreadCount = totalUnread;
+
+      // Update badge
+      const badgeEl = document.getElementById("chatBadge");
+      if (badgeEl) {
+        if (totalUnread > 0) {
+          badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+          badgeEl.style.display = "flex";
+          badgeEl.style.visibility = "visible";
+        } else {
+          badgeEl.style.display = "none";
+          badgeEl.style.visibility = "hidden";
+        }
+      } else {
+        console.warn("chatBadge element not found");
+      }
+    } catch (error) {
+      console.error("Load unread count error:", error);
+    }
+  }
+
+  // Load pending patients count for badge
+  async function loadPendingPatientsCount() {
+    const token = getAdminToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+
+      const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+      const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
+
+      // Check if new pending patients arrived
+      if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
+        playNotificationSound();
+      }
+      previousPendingPatients = pendingCount;
+
+      // Update badge
+      const badgeEl = document.getElementById("patientsBadge");
+      if (badgeEl) {
+        if (pendingCount > 0) {
+          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          badgeEl.style.display = "flex";
+          badgeEl.style.visibility = "visible";
+        } else {
+          badgeEl.style.display = "none";
+          badgeEl.style.visibility = "hidden";
+        }
+      } else {
+        console.warn("patientsBadge element not found");
+      }
+    } catch (error) {
+      console.error("Load pending patients count error:", error);
+    }
+  }
+
+  // Load pending referrals count for badge
+  async function loadPendingReferralsCount() {
+    const token = getAdminToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = Array.isArray(data.items) ? data.items : [];
+      const pendingCount = items.length;
+
+      // Check if new pending referrals arrived
+      if (pendingCount > previousPendingReferrals && previousPendingReferrals > 0) {
+        playNotificationSound();
+      }
+      previousPendingReferrals = pendingCount;
+
+      // Update badge
+      const badgeEl = document.getElementById("referralsBadge");
+      if (badgeEl) {
+        if (pendingCount > 0) {
+          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          badgeEl.style.display = "flex";
+          badgeEl.style.visibility = "visible";
+        } else {
+          badgeEl.style.display = "none";
+          badgeEl.style.visibility = "hidden";
+        }
+      } else {
+        console.warn("referralsBadge element not found");
+      }
+    } catch (error) {
+      console.error("Load pending referrals count error:", error);
+    }
+  }
+
+  // Load all badges
+  async function loadAllBadges() {
+    // Use allSettled to ensure all badges load even if one fails
+    await Promise.allSettled([
+      loadUnreadMessageCount().catch(err => {
+        console.error("Failed to load unread message count:", err);
+      }),
+      loadPendingPatientsCount().catch(err => {
+        console.error("Failed to load pending patients count:", err);
+      }),
+      loadPendingReferralsCount().catch(err => {
+        console.error("Failed to load pending referrals count:", err);
+      })
+    ]);
+  }
+
+  // Badges are loaded before events (see above)
+  // Refresh badges every 30 seconds (independent of events)
+  setInterval(loadAllBadges, 30000);
+</script>
 </body>
 </html>

@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http:; media-src 'self' https: http: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: http:; style-src 'self' 'unsafe-inline' https: http:;">
+  <title>İntraoral Fotoğraf Çekimi - Clinifly</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #000;
+      color: #fff;
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+    
+    /* Camera Container */
+    #cameraContainer {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      overflow: hidden;
+    }
+    
+    video {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    
+    /* Guide Overlay */
+    #guideOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .guide-silhouette {
+      width: 80%;
+      max-width: 400px;
+      height: 60%;
+      max-height: 300px;
+      border: 3px solid rgba(255, 255, 255, 0.5);
+      border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+      position: relative;
+      transition: border-color 0.3s;
+    }
+    
+    .guide-silhouette.aligned {
+      border-color: #4ade80;
+      box-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
+    }
+    
+    /* Countdown */
+    #countdown {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 120px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+      z-index: 20;
+      display: none;
+    }
+    
+    #countdown.active {
+      display: block;
+      animation: pulse 1s ease-in-out;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.2); }
+    }
+    
+    /* Instruction */
+    #instruction {
+      position: absolute;
+      bottom: 120px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      padding: 0 20px;
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+      z-index: 15;
+    }
+    
+    /* Status Message */
+    #statusMessage {
+      position: absolute;
+      top: 60px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      padding: 0 20px;
+      font-size: 16px;
+      font-weight: 500;
+      color: #fbbf24;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+      z-index: 15;
+      display: none;
+    }
+    
+    #statusMessage.show {
+      display: block;
+    }
+    
+    #statusMessage.error {
+      color: #f87171;
+    }
+    
+    /* Progress Indicator */
+    #progress {
+      position: absolute;
+      top: 20px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 14px;
+      color: rgba(255, 255, 255, 0.7);
+      z-index: 15;
+    }
+    
+    /* Preview Screen */
+    #previewScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      z-index: 30;
+      display: none;
+      flex-direction: column;
+    }
+    
+    #previewScreen.active {
+      display: flex;
+    }
+    
+    #previewImage {
+      flex: 1;
+      object-fit: contain;
+      width: 100%;
+      background: #000;
+    }
+    
+    .preview-buttons {
+      padding: 20px;
+      display: flex;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.9);
+    }
+    
+    .preview-btn {
+      flex: 1;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    
+    .preview-btn:active {
+      opacity: 0.7;
+    }
+    
+    .btn-continue {
+      background: #16a34a;
+      color: #fff;
+    }
+    
+    .btn-retake {
+      background: #dc2626;
+      color: #fff;
+    }
+    
+    /* Permission Screen */
+    #permissionScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      text-align: center;
+      z-index: 40;
+    }
+    
+    #permissionScreen.hidden {
+      display: none;
+    }
+    
+    .permission-icon {
+      font-size: 80px;
+      margin-bottom: 20px;
+    }
+    
+    .permission-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    
+    .permission-text {
+      font-size: 16px;
+      color: rgba(255, 255, 255, 0.8);
+      margin-bottom: 32px;
+      line-height: 1.5;
+    }
+    
+    .permission-btn {
+      padding: 16px 32px;
+      background: #2563eb !important;
+      color: #ffffff !important;
+      border: 2px solid #1d4ed8 !important;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 150px;
+      min-height: 50px;
+      display: inline-block !important;
+      text-align: center;
+      line-height: 1.5;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-appearance: none;
+      appearance: none;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .permission-btn:hover {
+      background: #1d4ed8 !important;
+      opacity: 0.9;
+    }
+    
+    .permission-btn:active {
+      background: #1e40af !important;
+      transform: scale(0.98);
+    }
+    
+    .permission-btn:focus {
+      outline: 2px solid #60a5fa;
+      outline-offset: 2px;
+    }
+    
+    /* Loading */
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      color: rgba(255, 255, 255, 0.8);
+      z-index: 50;
+    }
+  </style>
+</head>
+<body>
+  <div id="cameraContainer">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" style="display: none;"></canvas>
+    
+    <div id="guideOverlay">
+      <div id="guideSilhouette" class="guide-silhouette"></div>
+    </div>
+    
+    <div id="countdown"></div>
+    
+    <div id="progress">1 / 5</div>
+    
+    <div id="instruction">Dudaklarınızı iki elinizle açın ve dişlerinizi sıkın</div>
+    
+    <div id="statusMessage"></div>
+    
+    <div id="previewScreen">
+      <img id="previewImage" alt="Preview">
+      <div class="preview-buttons">
+        <button class="preview-btn btn-retake" onclick="retakePhoto()">Tekrar Çek</button>
+        <button class="preview-btn btn-continue" onclick="continueToNext()">Devam Et</button>
+      </div>
+    </div>
+    
+    <div id="permissionScreen">
+      <div class="permission-icon">📷</div>
+      <div class="permission-title">Kamera İzni Gerekli</div>
+      <div class="permission-text">
+        İntraoral fotoğraf çekmek için kamera erişimine ihtiyacımız var.<br>
+        Lütfen tarayıcı ayarlarından kamera iznini açın.
+      </div>
+      <button class="permission-btn" id="permissionBtn" type="button" aria-label="Kamera İzni Ver">
+        <span style="color: #ffffff !important; font-weight: 600; font-size: 16px; display: inline-block;">İzin Ver</span>
+      </button>
+      <div id="webviewError" style="display: none; margin-top: 20px; padding: 16px; background: rgba(220, 38, 38, 0.1); border-radius: 8px; color: #fca5a5; font-size: 14px; line-height: 1.6;">
+        <strong>⚠️ WebView Kamera Desteği</strong><br><br>
+        Bu uygulama içindeki WebView'de kamera erişimi şu anda desteklenmiyor.<br><br>
+        <strong>Çözüm:</strong><br>
+        1. Uygulamanın ana kamera özelliğini kullanın<br>
+        2. Veya bu sayfayı tarayıcıda açarak deneyin
+      </div>
+    </div>
+    
+    <div id="loading" style="display: none;">Yükleniyor...</div>
+  </div>
+
+  <script type="module">
+    // Import MediaPipe Face Mesh (using CDN)
+    import { FaceMesh } from 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js';
+    import { Camera } from 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js';
+    
+    // Make available globally
+    window.FaceMesh = FaceMesh;
+    window.Camera = Camera;
+  </script>
+  
+  <script>
+    // MediaPipe Face Mesh setup
+    let faceMesh = null;
+    let camera = null;
+    let isFaceMeshReady = false;
+    
+    // Wait for MediaPipe to load
+    async function waitForMediaPipe() {
+      let attempts = 0;
+      while (attempts < 50 && (!window.FaceMesh || !window.Camera)) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      return !!(window.FaceMesh && window.Camera);
+    }
+    
+    // Initialize MediaPipe Face Mesh
+    async function initFaceMesh() {
+      try {
+        // Wait for MediaPipe modules to load
+        const isLoaded = await waitForMediaPipe();
+        if (!isLoaded) {
+          console.warn('[FaceMesh] MediaPipe modules not loaded, using fallback detection');
+          isFaceMeshReady = false;
+          return;
+        }
+        
+        faceMesh = new window.FaceMesh({
+          locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+          }
+        });
+        
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: true,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        
+        faceMesh.onResults((results) => {
+          if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            handleFaceDetection(results.multiFaceLandmarks[0]);
+          } else {
+            // No face detected
+            handleNoFace();
+          }
+        });
+        
+        isFaceMeshReady = true;
+        console.log('[FaceMesh] MediaPipe Face Mesh initialized');
+      } catch (error) {
+        console.error('[FaceMesh] Initialization failed:', error);
+        // Fallback to simplified detection
+        isFaceMeshReady = false;
+      }
+    }
+    
+    // Handle face detection results
+    function handleFaceDetection(landmarks) {
+      if (previewScreen.classList.contains('active')) {
+        return; // Don't check during preview
+      }
+      
+      // Key landmarks for mouth detection:
+      // 13: Right corner of mouth
+      // 14: Left corner of mouth
+      // 12: Top lip center
+      // 15: Bottom lip center
+      // 324: Upper lip top
+      // 78: Lower lip bottom
+      
+      // Use correct MediaPipe Face Mesh landmark indices
+      const mouthRight = landmarks[61]; // Right corner of mouth
+      const mouthLeft = landmarks[291]; // Left corner of mouth
+      const upperLip = landmarks[13]; // Upper lip center
+      const lowerLip = landmarks[14]; // Lower lip center
+      const noseTip = landmarks[1];
+      const chin = landmarks[0];
+      
+      // Calculate mouth opening
+      const mouthWidth = Math.abs(mouthRight.x - mouthLeft.x);
+      const mouthHeight = Math.abs(upperLip.y - lowerLip.y);
+      const mouthOpenRatio = mouthHeight / mouthWidth;
+      
+      // Calculate face center and size
+      const faceMinX = Math.min(...landmarks.map(l => l.x));
+      const faceMaxX = Math.max(...landmarks.map(l => l.x));
+      const faceMinY = Math.min(...landmarks.map(l => l.y));
+      const faceMaxY = Math.max(...landmarks.map(l => l.y));
+      
+      const faceWidth = faceMaxX - faceMinX;
+      const faceHeight = faceMaxY - faceMinY;
+      const faceCenterX = (faceMinX + faceMaxX) / 2;
+      const faceCenterY = (faceMinY + faceMaxY) / 2;
+      
+      // Check alignment based on current step
+      const step = PHOTO_SEQUENCE[currentStep];
+      let aligned = false;
+      
+      if (step && !previewScreen.classList.contains('active')) {
+        // Check if mouth is open enough (threshold: 0.25 ratio - adjustable)
+        const isMouthOpen = mouthOpenRatio > 0.25;
+        
+        // Check if face is centered (x between 0.25 and 0.75, y between 0.25 and 0.75)
+        const isCentered = faceCenterX > 0.25 && faceCenterX < 0.75 && faceCenterY > 0.25 && faceCenterY < 0.75;
+        
+        // Check if face is large enough (not too far, not too close)
+        const isGoodDistance = faceWidth > 0.15 && faceWidth < 0.85 && faceHeight > 0.15 && faceHeight < 0.85;
+        
+        // Calculate face rotation using nose and chin alignment
+        const faceRotation = calculateFaceRotation(landmarks);
+        
+        // Alignment requirements based on current step
+        if (step.guide === 'front') {
+          // Front view: mouth open, centered, face straight
+          aligned = isMouthOpen && isCentered && isGoodDistance && Math.abs(faceRotation) < 15;
+        } else if (step.guide === 'right') {
+          // Right side: mouth open, face rotated right (15-45 degrees)
+          aligned = isMouthOpen && faceRotation < -15 && faceRotation > -45 && isGoodDistance;
+        } else if (step.guide === 'left') {
+          // Left side: mouth open, face rotated left (15-45 degrees)
+          aligned = isMouthOpen && faceRotation > 15 && faceRotation < 45 && isGoodDistance;
+        } else if (step.guide === 'upper') {
+          // Upper arch: mouth open wide, head tilted up (chin lower than nose)
+          const headTilt = chin.y - noseTip.y;
+          aligned = isMouthOpen && mouthOpenRatio > 0.35 && headTilt > 0.05 && isGoodDistance;
+        } else if (step.guide === 'lower') {
+          // Lower arch: mouth open wide, head tilted down (chin higher than nose)
+          const headTilt = chin.y - noseTip.y;
+          aligned = isMouthOpen && mouthOpenRatio > 0.35 && headTilt < -0.05 && isGoodDistance;
+        }
+      }
+      
+      // Update alignment state
+      if (aligned && !isAligned) {
+        isAligned = true;
+        guideSilhouette.classList.add('aligned');
+        vibrate([100]); // Light haptic feedback
+        
+        // Start countdown when aligned
+        if (!countdownInterval) {
+          startCountdown();
+        }
+      } else if (!aligned && isAligned) {
+        // Alignment lost
+        isAligned = false;
+        guideSilhouette.classList.remove('aligned');
+        if (countdownInterval) {
+          cancelCountdown();
+          showStatusMessage('Pozisyon bozuldu', true);
+        }
+      }
+    }
+    
+    // Calculate face rotation angle (yaw)
+    function calculateFaceRotation(landmarks) {
+      // Use eye positions for rotation calculation
+      // MediaPipe Face Mesh landmarks:
+      // 33: Left eye outer corner
+      // 263: Right eye outer corner
+      // 362: Left eye inner corner
+      // 133: Right eye inner corner
+      
+      const leftEyeOuter = landmarks[33];
+      const rightEyeOuter = landmarks[263];
+      const leftEyeInner = landmarks[362];
+      const rightEyeInner = landmarks[133];
+      
+      // Calculate eye center positions
+      const leftEyeCenterX = (leftEyeOuter.x + leftEyeInner.x) / 2;
+      const rightEyeCenterX = (rightEyeOuter.x + rightEyeInner.x) / 2;
+      const leftEyeCenterY = (leftEyeOuter.y + leftEyeInner.y) / 2;
+      const rightEyeCenterY = (rightEyeOuter.y + rightEyeInner.y) / 2;
+      
+      // Calculate horizontal difference (rotation indicator)
+      const eyeDiffX = rightEyeCenterX - leftEyeCenterX;
+      const eyeDiffY = Math.abs(rightEyeCenterY - leftEyeCenterY);
+      
+      // Calculate rotation angle in degrees
+      // Positive = rotated left, Negative = rotated right
+      const rotation = Math.atan2(eyeDiffY, Math.abs(eyeDiffX)) * (180 / Math.PI);
+      
+      // Determine direction (left or right)
+      if (rightEyeCenterX < leftEyeCenterX) {
+        // Face rotated right
+        return -rotation;
+      } else {
+        // Face rotated left
+        return rotation;
+      }
+    }
+    
+    // Handle no face detected
+    function handleNoFace() {
+      if (previewScreen.classList.contains('active')) {
+        return;
+      }
+      
+      if (isAligned) {
+        isAligned = false;
+        guideSilhouette.classList.remove('aligned');
+        if (countdownInterval) {
+          cancelCountdown();
+          showStatusMessage('Yüz tespit edilemedi', true);
+        }
+      }
+    }
+    
+    // Configuration
+    const PHOTO_SEQUENCE = [
+      {
+        step: 1,
+        instruction: "Dudaklarınızı iki elinizle açın ve dişlerinizi sıkın",
+        countdown: 3,
+        guide: "front"
+      },
+      {
+        step: 2,
+        instruction: "Ağzınızı sağa doğru açın",
+        countdown: 4,
+        guide: "right"
+      },
+      {
+        step: 3,
+        instruction: "Ağzınızı sola doğru açın",
+        countdown: 4,
+        guide: "left"
+      },
+      {
+        step: 4,
+        instruction: "Telefonu biraz yukarı kaldırın, dil aşağıda kalsın",
+        countdown: 5,
+        guide: "upper"
+      },
+      {
+        step: 5,
+        instruction: "Telefonu biraz aşağı indirin, dili yukarı çekin",
+        countdown: 5,
+        guide: "lower"
+      }
+    ];
+    
+    let currentStep = 0;
+    let capturedPhotos = [];
+    let stream = null;
+    let countdownInterval = null;
+    let alignmentCheckInterval = null;
+    let isAligned = false;
+    
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const guideOverlay = document.getElementById('guideOverlay');
+    const guideSilhouette = document.getElementById('guideSilhouette');
+    const countdownEl = document.getElementById('countdown');
+    const instructionEl = document.getElementById('instruction');
+    const statusMessageEl = document.getElementById('statusMessage');
+    const progressEl = document.getElementById('progress');
+    const previewScreen = document.getElementById('previewScreen');
+    const previewImage = document.getElementById('previewImage');
+    const permissionScreen = document.getElementById('permissionScreen');
+    const loadingEl = document.getElementById('loading');
+    
+    // Get URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const patientId = urlParams.get('patientId');
+    const chatId = urlParams.get('chatId');
+    
+    // Initialize
+    async function init() {
+      console.log('[CAMERA] Initializing intraoral camera...');
+      console.log('[CAMERA] Patient ID:', patientId);
+      console.log('[CAMERA] Chat ID:', chatId);
+      
+      if (!patientId) {
+        showError('Hasta ID bulunamadı');
+        return;
+      }
+      
+      // Check if permission screen should be shown
+      const hasPermissionScreen = document.getElementById('permissionScreen');
+      console.log('[CAMERA] Permission screen element:', hasPermissionScreen ? 'found' : 'not found');
+      
+      try {
+        await startCamera();
+        setupAlignmentDetection();
+        startCurrentStep();
+      } catch (error) {
+        console.error('[CAMERA] Init error:', error);
+        const errorName = error?.name || '';
+        if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+          // Permission screen will be shown by startCamera
+          console.log('[CAMERA] Permission denied, showing permission screen');
+        } else {
+          showError('Kamera başlatılamadı: ' + (error?.message || 'Bilinmeyen hata'));
+        }
+      }
+    }
+    
+    // Start camera
+    async function startCamera() {
+      try {
+        // Check if getUserMedia is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.error('[CAMERA] getUserMedia is not available');
+          console.error('[CAMERA] navigator.mediaDevices:', navigator.mediaDevices);
+          console.error('[CAMERA] navigator:', navigator);
+          
+          // Try alternative API (older browsers)
+          const getUserMedia = navigator.getUserMedia || 
+                              navigator.webkitGetUserMedia || 
+                              navigator.mozGetUserMedia || 
+                              navigator.msGetUserMedia;
+          
+          if (!getUserMedia) {
+            throw new Error('getUserMedia API is not supported in this browser/WebView');
+          }
+          
+          // Fallback to promise-based wrapper for older API
+          return new Promise((resolve, reject) => {
+            getUserMedia.call(navigator, {
+              video: { facingMode: 'user' },
+              audio: false
+            }, (stream) => {
+              resolve(stream);
+            }, (error) => {
+              reject(error);
+            });
+          }).then((mediaStream) => {
+            stream = mediaStream;
+            video.srcObject = stream;
+            permissionScreen.classList.add('hidden');
+            
+            // Wait for video to be ready
+            return new Promise((resolve) => {
+              video.onloadedmetadata = () => {
+                video.play();
+                resolve();
+              };
+            });
+          }).then(() => {
+            // Setup canvas size
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          });
+        }
+        
+        // Request front-facing camera with constraints
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'user', // Front camera
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+        
+        video.srcObject = stream;
+        permissionScreen.classList.add('hidden');
+        
+        // Wait for video to be ready
+        await new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            video.play();
+            resolve();
+          };
+        });
+        
+        // Setup canvas size
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+      } catch (error) {
+        console.error('Camera error:', error);
+        console.error('Camera error name:', error?.name);
+        console.error('Camera error message:', error?.message);
+        console.error('Camera error stack:', error?.stack);
+        
+        const errorName = error?.name || '';
+        const errorMessage = error?.message || String(error) || 'Bilinmeyen hata';
+        
+        if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+          console.log('[CAMERA] Permission denied, showing permission screen');
+          if (permissionScreen) {
+            permissionScreen.classList.remove('hidden');
+          }
+        } else if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+          showError('Kamera bulunamadı. Lütfen cihazınızda bir kamera olduğundan emin olun.');
+        } else if (errorName === 'NotReadableError' || errorName === 'TrackStartError') {
+          showError('Kamera başka bir uygulama tarafından kullanılıyor olabilir.');
+        } else if (errorName === 'OverconstrainedError' || errorName === 'ConstraintNotSatisfiedError') {
+          // Try again with different constraints
+          console.log('[CAMERA] Constraints not satisfied, trying with basic constraints');
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'user' },
+              audio: false
+            });
+            video.srcObject = stream;
+            await video.play();
+            
+            // Setup canvas size
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            return;
+          } catch (retryError) {
+            console.error('[CAMERA] Retry failed:', retryError);
+            showError('Kamera başlatılamadı: ' + (retryError?.message || errorMessage));
+          }
+        } else {
+          showError('Kamera erişilemiyor: ' + errorMessage);
+        }
+        throw error;
+      }
+    }
+    
+    // Request camera permission
+    async function requestCameraPermission() {
+      console.log('[CAMERA] Requesting camera permission...');
+      try {
+        // Hide permission screen first
+        if (permissionScreen) {
+          permissionScreen.classList.add('hidden');
+        }
+        if (loadingEl) {
+          loadingEl.style.display = 'block';
+          loadingEl.textContent = 'Kamera başlatılıyor...';
+        }
+        
+        await startCamera();
+        setupAlignmentDetection();
+        startCurrentStep();
+        
+        if (loadingEl) {
+          loadingEl.style.display = 'none';
+        }
+      } catch (error) {
+        console.error('[CAMERA] Permission request error:', error);
+        console.error('[CAMERA] Permission error name:', error?.name);
+        console.error('[CAMERA] Permission error message:', error?.message);
+        console.error('[CAMERA] Permission error stack:', error?.stack);
+        console.error('[CAMERA] Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        
+        if (loadingEl) {
+          loadingEl.style.display = 'none';
+        }
+        if (permissionScreen) {
+          permissionScreen.classList.remove('hidden');
+        }
+        
+        const errorName = error?.name || '';
+        const errorMessage = error?.message || String(error) || 'Bilinmeyen hata';
+        
+        // Check if getUserMedia is not supported at all
+        const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ||
+                                 !!(navigator.getUserMedia) ||
+                                 !!(navigator.webkitGetUserMedia) ||
+                                 !!(navigator.mozGetUserMedia);
+        
+        if (!hasGetUserMedia || errorMessage.includes('not supported') || errorMessage.includes('undefined is not an object')) {
+          showError('Bu WebView\'de kamera erişimi desteklenmiyor.');
+          
+          // Show a message to use native camera
+          const permissionTextEl = document.querySelector('#permissionScreen .permission-text');
+          const webviewErrorEl = document.getElementById('webviewError');
+          if (permissionTextEl) {
+            permissionTextEl.innerHTML = `
+              <strong>WebView'de kamera erişimi desteklenmiyor</strong><br><br>
+              Lütfen fotoğraf çekmek için uygulamanın ana kamera özelliğini kullanın.<br>
+              Ya da tarayıcıda bu sayfayı açarak deneyin.
+            `;
+          }
+          if (webviewErrorEl) {
+            webviewErrorEl.style.display = 'block';
+          }
+          
+          // Hide the permission button since it won't work
+          const permissionBtn = document.getElementById('permissionBtn');
+          if (permissionBtn) {
+            permissionBtn.style.display = 'none';
+          }
+        } else if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+          showError('Kamera izni reddedildi. Lütfen uygulama ayarlarından kamera iznini açın.');
+        } else if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+          showError('Kamera bulunamadı. Lütfen cihazınızda bir kamera olduğundan emin olun.');
+        } else if (errorName === 'NotReadableError' || errorName === 'TrackStartError') {
+          showError('Kamera başka bir uygulama tarafından kullanılıyor olabilir.');
+        } else {
+          showError('Kamera başlatılamadı: ' + errorMessage);
+        }
+      }
+    }
+    
+    // Setup alignment detection using MediaPipe Face Mesh
+    function setupAlignmentDetection() {
+      // MediaPipe Face Mesh handles detection automatically via onResults callback
+      // If Face Mesh is not available, fallback to simplified detection
+      if (!isFaceMeshReady || !faceMesh) {
+        console.warn('[FaceMesh] Using simplified alignment detection');
+        alignmentCheckInterval = setInterval(() => {
+          checkAlignmentFallback();
+        }, 500);
+      }
+    }
+    
+    // Fallback alignment detection (if MediaPipe is not available)
+    function checkAlignmentFallback() {
+      if (previewScreen.classList.contains('active')) {
+        return;
+      }
+      
+      const elapsed = Date.now() - (window.stepStartTime || Date.now());
+      
+      // Check lighting
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, 100, 100);
+        const imageData = ctx.getImageData(0, 0, 100, 100);
+        const data = imageData.data;
+        let brightness = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          brightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
+        }
+        brightness = brightness / (data.length / 4);
+        
+        if (brightness < 50) {
+          showStatusMessage('Daha aydınlık bir yere geçin', true);
+          isAligned = false;
+          guideSilhouette.classList.remove('aligned');
+          if (countdownInterval) {
+            cancelCountdown();
+          }
+          return;
+        }
+        
+        hideStatusMessage();
+      }
+      
+      // Simplified: Assume aligned after 2 seconds
+      if (elapsed > 2000) {
+        if (!isAligned) {
+          isAligned = true;
+          guideSilhouette.classList.add('aligned');
+          vibrate([100]);
+          
+          if (!countdownInterval) {
+            startCountdown();
+          }
+        }
+      }
+    }
+    
+    // Start current step
+    function startCurrentStep() {
+      if (currentStep >= PHOTO_SEQUENCE.length) {
+        // All photos taken, upload and return
+        uploadAndReturn();
+        return;
+      }
+      
+      const step = PHOTO_SEQUENCE[currentStep];
+      window.stepStartTime = Date.now();
+      isAligned = false;
+      guideSilhouette.classList.remove('aligned');
+      
+      // Update UI
+      instructionEl.textContent = step.instruction;
+      progressEl.textContent = `${step.step} / ${PHOTO_SEQUENCE.length}`;
+      previewScreen.classList.remove('active');
+      hideStatusMessage();
+      
+      // Update guide based on step
+      updateGuideForStep(step.guide);
+    }
+    
+    // Update guide silhouette based on step
+    function updateGuideForStep(guideType) {
+      const silhouette = guideSilhouette;
+      
+      // Reset styles
+      silhouette.style.borderRadius = '';
+      silhouette.style.transform = '';
+      
+      switch (guideType) {
+        case 'front':
+          silhouette.style.borderRadius = '50% 50% 50% 50% / 60% 60% 40% 40%';
+          break;
+        case 'right':
+          silhouette.style.borderRadius = '60% 40% 40% 60% / 50% 50% 50% 50%';
+          silhouette.style.transform = 'rotate(-15deg)';
+          break;
+        case 'left':
+          silhouette.style.borderRadius = '40% 60% 60% 40% / 50% 50% 50% 50%';
+          silhouette.style.transform = 'rotate(15deg)';
+          break;
+        case 'upper':
+          silhouette.style.borderRadius = '50% 50% 0% 0% / 60% 60% 0% 0%';
+          break;
+        case 'lower':
+          silhouette.style.borderRadius = '0% 0% 50% 50% / 0% 0% 60% 60%';
+          break;
+      }
+    }
+    
+    // Start countdown
+    function startCountdown() {
+      const step = PHOTO_SEQUENCE[currentStep];
+      let count = step.countdown;
+      
+      countdownEl.textContent = count;
+      countdownEl.classList.add('active');
+      
+      countdownInterval = setInterval(() => {
+        count--;
+        
+        if (count > 0) {
+          countdownEl.textContent = count;
+          vibrate([50]); // Light feedback for each countdown
+          
+          // Check if still aligned
+          if (!isAligned) {
+            cancelCountdown();
+            showStatusMessage('Pozisyon bozuldu', true);
+          }
+        } else {
+          clearInterval(countdownInterval);
+          countdownInterval = null;
+          capturePhoto();
+        }
+      }, 1000);
+    }
+    
+    // Cancel countdown
+    function cancelCountdown() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+      countdownEl.classList.remove('active');
+      countdownEl.textContent = '';
+    }
+    
+    // Capture photo
+    function capturePhoto() {
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to blob
+      canvas.toBlob((blob) => {
+        const imageUrl = URL.createObjectURL(blob);
+        previewImage.src = imageUrl;
+        previewScreen.classList.add('active');
+        countdownEl.classList.remove('active');
+        
+        // Store captured photo
+        capturedPhotos.push({
+          step: currentStep + 1,
+          blob: blob,
+          imageUrl: imageUrl
+        });
+        
+        // Stop alignment check
+        if (alignmentCheckInterval) {
+          clearInterval(alignmentCheckInterval);
+          alignmentCheckInterval = null;
+        }
+      }, 'image/jpeg', 0.95);
+    }
+    
+    // Retake photo
+    function retakePhoto() {
+      previewScreen.classList.remove('active');
+      isAligned = false;
+      guideSilhouette.classList.remove('aligned');
+      window.stepStartTime = Date.now();
+      
+      // Remove last captured photo
+      if (capturedPhotos.length > currentStep) {
+        URL.revokeObjectURL(capturedPhotos[currentStep].imageUrl);
+        capturedPhotos.splice(currentStep, 1);
+      }
+      
+      // Restart alignment detection
+      setupAlignmentDetection();
+    }
+    
+    // Continue to next step
+    function continueToNext() {
+      currentStep++;
+      previewScreen.classList.remove('active');
+      
+      if (currentStep < PHOTO_SEQUENCE.length) {
+        startCurrentStep();
+        setupAlignmentDetection();
+      } else {
+        // All photos taken
+        uploadAndReturn();
+      }
+    }
+    
+    // Upload photos and return to chat
+    async function uploadAndReturn() {
+      loadingEl.style.display = 'block';
+      loadingEl.textContent = 'Fotoğraflar yükleniyor...';
+      
+      try {
+        // Get token from localStorage or URL
+        const token = localStorage.getItem('patient_token') || urlParams.get('token') || '';
+        
+        if (!token) {
+          throw new Error('Token bulunamadı. Lütfen tekrar giriş yapın.');
+        }
+        
+        if (!patientId) {
+          throw new Error('Hasta ID bulunamadı');
+        }
+        
+        // Upload each photo separately (as chat API expects single uploads)
+        const uploadPromises = capturedPhotos.map(async (photo, index) => {
+          const formData = new FormData();
+          formData.append('patientId', patientId);
+          formData.append('isImage', 'true');
+          formData.append('files', photo.blob, `intraoral_${index + 1}.jpg`);
+          
+          const response = await fetch(`/api/chat/upload`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+            body: formData
+          });
+          
+          const result = await response.json();
+          if (!result.ok) {
+            throw new Error(result.error || 'Upload failed');
+          }
+          return result;
+        });
+        
+        // Wait for all uploads to complete
+        await Promise.all(uploadPromises);
+        
+        // Return to chat with success message
+        // Close camera window and return to chat (if opened in new window)
+        if (window.opener) {
+          // Opened in new window - close and return
+          window.opener.focus();
+          window.close();
+        } else {
+          // Same window - redirect to chat
+          const referrer = document.referrer;
+          if (referrer && referrer.includes('chat')) {
+            window.location.href = referrer;
+          } else {
+            // Default: go to chat page
+            window.location.href = `/chat.html?patientId=${encodeURIComponent(patientId)}`;
+          }
+        }
+        
+        // Show success message (stored in URL or localStorage)
+        setTimeout(() => {
+          const chatUrl = window.opener ? referrer : window.location.href;
+          if (chatUrl) {
+            const url = new URL(chatUrl);
+            url.searchParams.set('message', 'Fotoğraflar başarıyla gönderildi');
+            if (window.opener) {
+              window.opener.location.href = url.toString();
+            } else {
+              window.location.href = url.toString();
+            }
+          }
+        }, 100);
+      } catch (error) {
+        console.error('Upload error:', error);
+        showError('Fotoğraflar yüklenemedi. Lütfen tekrar deneyin: ' + error.message);
+        loadingEl.style.display = 'none';
+        loadingEl.textContent = '';
+      }
+    }
+    
+    // Utility functions
+    function vibrate(pattern) {
+      if ('vibrate' in navigator) {
+        navigator.vibrate(pattern);
+      }
+    }
+    
+    function showStatusMessage(message, isError = false) {
+      statusMessageEl.textContent = message;
+      statusMessageEl.classList.add('show');
+      if (isError) {
+        statusMessageEl.classList.add('error');
+      } else {
+        statusMessageEl.classList.remove('error');
+      }
+    }
+    
+    function hideStatusMessage() {
+      statusMessageEl.classList.remove('show');
+    }
+    
+    function showError(message) {
+      statusMessageEl.textContent = message;
+      statusMessageEl.classList.add('show', 'error');
+    }
+    
+    // Make requestCameraPermission globally available
+    window.requestCameraPermission = requestCameraPermission;
+    
+    // Setup permission button event listener
+    function setupPermissionButton() {
+      const permissionBtn = document.getElementById('permissionBtn');
+      if (permissionBtn) {
+        // Get the span inside button, or create one
+        let span = permissionBtn.querySelector('span');
+        if (!span) {
+          span = document.createElement('span');
+          permissionBtn.appendChild(span);
+        }
+        
+        // Ensure button text is set
+        if (!span.textContent || span.textContent.trim() === '') {
+          span.textContent = 'İzin Ver';
+          console.log('[CAMERA] Button text was empty, setting text to "İzin Ver"');
+        }
+        
+        // Ensure span has proper styles
+        span.style.color = '#ffffff';
+        span.style.fontWeight = '600';
+        span.style.fontSize = '16px';
+        span.style.display = 'inline-block';
+        span.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        
+        // Ensure button has proper styles
+        permissionBtn.style.display = 'inline-block';
+        permissionBtn.style.color = '#ffffff';
+        permissionBtn.style.backgroundColor = '#2563eb';
+        permissionBtn.style.border = '2px solid #1d4ed8';
+        permissionBtn.style.padding = '16px 32px';
+        permissionBtn.style.borderRadius = '12px';
+        permissionBtn.style.fontSize = '16px';
+        permissionBtn.style.fontWeight = '600';
+        permissionBtn.style.cursor = 'pointer';
+        permissionBtn.style.minWidth = '150px';
+        permissionBtn.style.minHeight = '50px';
+        permissionBtn.style.textAlign = 'center';
+        permissionBtn.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        permissionBtn.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+        
+        console.log('[CAMERA] Permission button found:', {
+          textContent: permissionBtn.textContent,
+          innerHTML: permissionBtn.innerHTML,
+          spanText: span.textContent,
+          computedColor: window.getComputedStyle(permissionBtn).color,
+          computedBg: window.getComputedStyle(permissionBtn).backgroundColor
+        });
+        
+        // Remove any existing listeners by cloning
+        const newBtn = permissionBtn.cloneNode(true);
+        if (permissionBtn.parentNode) {
+          permissionBtn.parentNode.replaceChild(newBtn, permissionBtn);
+        }
+        
+        // Ensure new button also has text
+        let newSpan = newBtn.querySelector('span');
+        if (!newSpan) {
+          newSpan = document.createElement('span');
+          newSpan.textContent = 'İzin Ver';
+          newSpan.style.color = '#ffffff';
+          newSpan.style.fontWeight = '600';
+          newSpan.style.fontSize = '16px';
+          newSpan.style.display = 'inline-block';
+          newBtn.appendChild(newSpan);
+        }
+        
+        // Re-apply styles to new button
+        newBtn.style.display = 'inline-block';
+        newBtn.style.color = '#ffffff';
+        newBtn.style.backgroundColor = '#2563eb';
+        newBtn.style.border = '2px solid #1d4ed8';
+        newBtn.style.padding = '16px 32px';
+        newBtn.style.borderRadius = '12px';
+        newBtn.style.fontSize = '16px';
+        newBtn.style.fontWeight = '600';
+        newBtn.style.cursor = 'pointer';
+        newBtn.style.minWidth = '150px';
+        newBtn.style.minHeight = '50px';
+        newBtn.style.textAlign = 'center';
+        newBtn.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        newBtn.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+        
+        // Add click event listener
+        newBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('[CAMERA] Permission button clicked');
+          requestCameraPermission();
+        });
+        
+        // Also make it available via onclick for compatibility
+        newBtn.onclick = function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('[CAMERA] Permission button onclick triggered');
+          requestCameraPermission();
+        };
+        
+        // Touch event for mobile
+        newBtn.addEventListener('touchend', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('[CAMERA] Permission button touched');
+          requestCameraPermission();
+        });
+        
+        console.log('[CAMERA] Permission button event listener added');
+      } else {
+        console.warn('[CAMERA] Permission button not found');
+      }
+    }
+    
+    // Setup button when page loads
+    window.addEventListener('load', function() {
+      setupPermissionButton();
+    });
+    
+    // Also try immediately (in case DOM is already ready)
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      setTimeout(setupPermissionButton, 100);
+    }
+    
+    // DOMContentLoaded fallback
+    document.addEventListener('DOMContentLoaded', function() {
+      setupPermissionButton();
+    });
+    
+    // Cleanup on exit
+    window.addEventListener('beforeunload', () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      if (camera) {
+        camera.stop();
+      }
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+      if (alignmentCheckInterval) {
+        clearInterval(alignmentCheckInterval);
+      }
+    });
+    
+    // Initialize when page loads
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>

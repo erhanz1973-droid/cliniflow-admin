@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Push Notification Example - Hasta Uygulaması</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+      margin: 10px 5px;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+    .status {
+      padding: 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .status.success {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    .status.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+    .status.info {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+  </style>
+</head>
+<body>
+  <h1>📱 Push Notification Test</h1>
+  
+  <div class="card">
+    <h2>Push Notification Ayarları</h2>
+    <p>Bu sayfa push notification'ları test etmek için kullanılabilir.</p>
+    
+    <div>
+      <label>Patient ID:</label>
+      <input type="text" id="patientIdInput" placeholder="p_123456" style="width: 200px; padding: 8px; margin: 10px;">
+    </div>
+    
+    <div id="statusContainer"></div>
+    
+    <button id="initPushBtn" onclick="handleInitializePush()">
+      Push Notification'ı Aktif Et
+    </button>
+    
+    <button id="checkStatusBtn" onclick="handleCheckStatus()">
+      Durumu Kontrol Et
+    </button>
+  </div>
+  
+  <div class="card">
+    <h3>Destek Durumu</h3>
+    <div id="supportStatus"></div>
+  </div>
+
+  <script src="/push-notification.js"></script>
+  <script>
+    // Check support status on load
+    window.addEventListener('load', () => {
+      const supported = isPushNotificationSupported();
+      const statusDiv = document.getElementById('supportStatus');
+      
+      if (supported) {
+        statusDiv.innerHTML = `
+          <div class="status success">
+            ✅ Push Notifications destekleniyor
+          </div>
+          <p>Notification Permission: <strong>${Notification.permission}</strong></p>
+        `;
+      } else {
+        statusDiv.innerHTML = `
+          <div class="status error">
+            ❌ Push Notifications desteklenmiyor
+          </div>
+        `;
+      }
+    });
+    
+    function showStatus(message, type = 'info') {
+      const container = document.getElementById('statusContainer');
+      container.innerHTML = `<div class="status ${type}">${message}</div>`;
+    }
+    
+    async function handleInitializePush() {
+      const patientId = document.getElementById('patientIdInput').value.trim();
+      
+      if (!patientId) {
+        showStatus('⚠️ Lütfen Patient ID girin', 'error');
+        return;
+      }
+      
+      const btn = document.getElementById('initPushBtn');
+      btn.disabled = true;
+      btn.textContent = 'Aktif ediliyor...';
+      
+      try {
+        const success = await initializePushNotifications(patientId);
+        if (success) {
+          showStatus('✅ Push Notifications başarıyla aktif edildi!', 'success');
+        } else {
+          showStatus('⚠️ Push Notifications aktif edilemedi. İzin vermeniz gerekebilir.', 'error');
+        }
+      } catch (error) {
+        showStatus(`❌ Hata: ${error.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Push Notification\'ı Aktif Et';
+      }
+    }
+    
+    async function handleCheckStatus() {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+        
+        if (subscription) {
+          showStatus(`
+            ✅ Push Notification aktif
+            <br>Endpoint: ${subscription.endpoint.substring(0, 50)}...
+          `, 'success');
+        } else {
+          showStatus('⚠️ Push Notification aktif değil', 'info');
+        }
+      } catch (error) {
+        showStatus(`❌ Hata: ${error.message}`, 'error');
+      }
+    }
+  </script>
+</body>
+</html>

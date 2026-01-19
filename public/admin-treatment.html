@@ -1,0 +1,1846 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"/>
+  <title>🦷 Treatment - Clinifly Admin</title>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    body { font-family: system-ui; background:#111827; color:#e5e7eb; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; background:#1f2937; border-radius: 16px; }
+    h1 { margin: 0 0 20px; font-size: 24px; font-weight: 700; }
+    .muted { opacity:.75; font-size: 13px; }
+    label { display:block; margin-top: 10px; font-weight: 600; }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #374151;
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2563eb;
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 16px;
+      color: #a7b2c8;
+      font-weight: 600;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: #a7b2c8;
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: #2563eb;
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: #a7b2c8;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #a7b2c8;
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .row{ 
+      display:flex; 
+      gap:10px; 
+      flex-wrap:wrap; 
+      align-items:center; 
+    }
+    .card { margin-top: 14px; padding: 20px; border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:16px; background:#1f2937; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    label{ 
+      font-size:12px; 
+      color:#e6eaf2; 
+      display:block; 
+      margin-bottom:6px; 
+      font-weight:600;
+    }
+    input, textarea, button, select {
+      width:100%; margin-top:6px; padding:10px 12px;
+      border-radius:8px; border:1px solid #1f2937; background:#1f2937; color:#e5e7eb;
+    }
+    button { cursor:pointer; background:#2563eb; border:none; }
+    button:hover { background:#1d4ed8; }
+    button:disabled{ opacity:0.5; cursor:not-allowed; }
+    button.secondary{ background:#111827; }
+    button.ghost{ background:#0b1220; color:#e6eaf2; border:1px solid var(--b); }
+    button.danger{ background:var(--r); }
+    .pill{ 
+      display:inline-flex; 
+      padding:6px 10px; 
+      border-radius:999px; 
+      background:#eef2ff; 
+      color:#3730a3; 
+      font-weight:700; 
+      font-size:12px; 
+    }
+    #selTooth.pill {
+      background:#fce7f3;
+      color:#be185d;
+      border:1px solid #be185d;
+    }
+    .gridWrap{ 
+      overflow-x:auto; 
+      -webkit-overflow-scrolling:touch; 
+      padding-bottom:6px; 
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(8, minmax(44px, 1fr));
+      gap:8px;
+      min-width: 420px;
+    }
+    .tooth{
+      user-select:none;
+      text-align:center;
+      padding:12px 0;
+      border-radius:12px;
+      border:2px solid var(--b);
+      background:#e2e8f0;
+      color:#0f172a;
+      font-weight:800;
+      cursor:pointer;
+      transition:all 0.2s;
+      font-size:14px;
+      min-height:48px;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      position:relative;
+    }
+    .tooth:active{ transform:scale(0.95); }
+    .tooth.active{ border-color:#be185d; background:#f9a8d4; color:#111827; }
+    .tooth.has{ border-color:var(--g); background:#bbf7d0; color:#111827; }
+    .tooth.badge::before{
+      content: attr(data-count);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      position:absolute;
+      top:4px;
+      right:4px;
+      min-width:18px;
+      height:18px;
+      padding:0 6px;
+      border-radius:999px;
+      background:#111827;
+      color:#fff;
+      font-size:11px;
+      font-weight:800;
+    }
+    .two{ 
+      display:grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap:10px; 
+    }
+    @media (max-width: 840px){ 
+      .two{ grid-template-columns: 1fr; } 
+      .grid {
+        grid-template-columns: repeat(8, minmax(36px, 1fr));
+        gap:6px;
+        min-width: 320px;
+      }
+      .tooth {
+        padding:10px 0;
+        font-size:12px;
+        min-height:44px;
+      }
+    }
+    .list{ 
+      margin-top:10px; 
+      display:flex; 
+      flex-direction:column; 
+      gap:8px; 
+    }
+    .item{ 
+      border:1px solid var(--b); 
+      border-radius:12px; 
+      padding:10px; 
+      display:flex; 
+      justify-content:space-between; 
+      gap:10px; 
+      align-items:center; 
+      background:#fff; 
+    }
+    .item b{ font-size:14px; color:#111827; }
+    .item small{ 
+      display:block; 
+      color:#111827; 
+      opacity:0.75;
+      font-weight:600;
+      margin-top:4px;
+      font-size:12px;
+    }
+    .item.editing{ align-items:flex-start; }
+    .edit-fields{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .edit-fields input[type="text"]{ min-width:160px; }
+    .edit-fields input[type="date"]{ min-width:160px; }
+    .btn-save{ background:#166534; color:#fff; }
+    .status{ 
+      font-weight:800; 
+      font-size:12px; 
+      padding:6px 10px; 
+      border-radius:999px; 
+      border:1px solid var(--b); 
+      white-space:nowrap;
+    }
+    .ok{ background:#dcfce7; border-color:#86efac; color:#065f46; }
+    .planned{ background:#dbeafe; border-color:#93c5fd; color:#1e40af; }
+    .warn{ background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .hr{ height:1px; background:var(--b); margin:10px 0; }
+    .err{ color:var(--r); font-weight:700; }
+    .okmsg{ color:var(--g); font-weight:700; }
+    @keyframes blink {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(1.05); }
+    }
+    .err.blink {
+      animation: blink 0.6s ease-in-out infinite;
+    }
+    .patient-info {
+      background:#e0f2fe;
+      border:1px solid #7dd3fc;
+      padding:10px;
+      border-radius:8px;
+      margin-bottom:12px;
+    }
+    .patient-info strong {
+      display:block;
+      margin-bottom:4px;
+      color:#0f172a;
+      font-weight:700;
+    }
+    .patient-info .muted {
+      color:#1e293b;
+      font-weight:600;
+    }
+    .loading {
+      text-align:center;
+      padding:20px;
+      color:#6b7280;
+    }
+    .empty-state {
+      text-align:center;
+      padding:40px 20px;
+      color:#6b7280;
+    }
+    .empty-state-icon {
+      font-size:48px;
+      margin-bottom:12px;
+    }
+  </style>
+</head>
+  <body>
+  <div class="wrap">
+    <h1>🦷 Clinifly Admin – Treatment</h1>
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link">Patients</a>
+        <a href="/admin-treatment.html" class="nav-link active">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link">Chat</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+      </div>
+    </nav>
+
+    <div class="card" style="margin-bottom:12px;">
+      <label>Hasta Adı (Seç)</label>
+      <select id="patientSelect">
+        <option value="">— Hasta seç —</option>
+      </select>
+      <div class="muted" style="margin-top:4px;">Hasta listesinden Treatment'a basınca otomatik seçilir. Buradan hasta değiştirince otomatik yüklenir.</div>
+      <input id="patientIdHidden" type="hidden" value="" />
+    </div>
+
+    <div id="patientInfo" class="patient-info" style="display:none;">
+      <strong id="patientName">—</strong>
+      <span class="muted" id="patientId">—</span>
+    </div>
+
+    <div id="msg" class="muted" style="margin-top:8px;"></div>
+
+    <div id="loading" class="loading" style="display:none;">Yükleniyor...</div>
+
+    <div id="content" style="display:none;">
+      <div class="two" style="margin-top:12px;">
+        <div class="card">
+          <div class="row" style="justify-content:space-between;">
+            <b>Üst Çene</b>
+            <span class="pill">FDI 11–18 / 21–28</span>
+          </div>
+          <div class="gridWrap" style="margin-top:10px;">
+            <div class="grid" id="upperRow1"></div>
+            <div style="height:8px;"></div>
+            <div class="grid" id="upperRow2"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between;">
+            <b>Alt Çene</b>
+            <span class="pill">FDI 31–38 / 41–48</span>
+          </div>
+          <div class="gridWrap" style="margin-top:10px;">
+            <div class="grid" id="lowerRow1"></div>
+            <div style="height:8px;"></div>
+            <div class="grid" id="lowerRow2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between; flex-wrap:wrap;">
+          <div style="flex:1; min-width:200px;">
+            <b>Seçili Diş: </b><span id="selTooth" class="pill">—</span>
+            <div class="muted" id="selToothHint" style="margin-top:4px;">Dişe tıkla, işlem ekle.</div>
+          </div>
+          <button class="ghost" onclick="clearSelection()" style="width:auto; min-width:120px;">Seçimi Temizle</button>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="row" style="flex-wrap:wrap;">
+          <div style="flex:1; min-width:200px;">
+            <label>İşlem Türü</label>
+            <select id="procType" style="width:100%">
+              <option value="">Yükleniyor...</option>
+            </select>
+          </div>
+
+          <div style="flex:1; min-width:200px;">
+            <label>Status</label>
+            <select id="procStatus" style="width:100%">
+              <option value="PLANNED">PLANNED</option>
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="COMPLETED">COMPLETED</option>
+              <option value="CANCELLED">CANCELLED</option>
+            </select>
+          </div>
+
+          <div style="flex:1; min-width:200px;">
+            <label>Tarih</label>
+            <input id="procDate" type="date" style="width:100%"/>
+          </div>
+
+          <div style="flex:1; min-width:200px;">
+            <label>&nbsp;</label>
+            <button id="btnAddProcedure" style="width:100%; background:var(--g);" onclick="addProcedure()">+ Prosedur Ekle</button>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <b>Bu dişteki işlemler</b>
+        <div class="list" id="procList"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between; align-items:flex-start;">
+          <div>
+            <b>🦷 Treatment Events (Takvim)</b>
+            <div class="muted" style="margin-top:4px;">Not: Event'ler <b>travel.events</b> altında saklanır.</div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:160px;">
+            <label>Tarih</label>
+            <input id="te_date" type="date" style="width:100%"/>
+          </div>
+          <div style="flex:1; min-width:140px;">
+            <label>Saat</label>
+            <input id="te_time" type="time" style="width:100%"/>
+          </div>
+          <div style="flex:1; min-width:180px;">
+            <label>Tip</label>
+            <select id="te_type" style="width:100%">
+              <option value="TREATMENT">Treatment</option>
+              <option value="CONSULT">Consultation</option>
+              <option value="FOLLOWUP">Follow-up</option>
+              <option value="LAB">Lab / Scan</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:220px;">
+            <label>Başlık</label>
+            <input id="te_title" placeholder="Implant Day 1" style="width:100%"/>
+          </div>
+          <div style="flex:1; min-width:220px;">
+            <label>Açıklama (ops.)</label>
+            <input id="te_desc" placeholder="CT scan + implant placement" style="width:100%"/>
+          </div>
+          <div style="min-width:180px;">
+            <label>&nbsp;</label>
+            <button class="secondary" id="btnAddEvent" style="width:100%;" onclick="addTreatmentEvent()">➕ Event Ekle</button>
+          </div>
+        </div>
+
+        <div class="hr"></div>
+
+        <b>Event listesi</b>
+        <div class="gridWrap" style="margin-top:10px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Tarih/Saat</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Tip</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);">Başlık</th>
+                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b); width:120px;"></th>
+              </tr>
+            </thead>
+            <tbody id="teEvBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="emptyState" class="empty-state" style="display:none;">
+      <div class="empty-state-icon">🦷</div>
+      <div><strong>Henüz treatment kaydı yok</strong></div>
+      <div class="muted" style="margin-top:8px;">Treatment'lar yüklendiğinde burada görünecek.</div>
+    </div>
+  </div>
+
+<script>
+  // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
+
+  const API = location.origin;
+  const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
+  let PROCEDURE_DEFS = []; // from /api/procedures
+  let TYPE_TO_CATEGORY = {}; // { [type]: category }
+  let EXTRACTION_TYPES = new Set(["EXTRACTION", "SURGICAL_EXTRACTION"]);
+
+  function getAdminToken(){
+    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+  }
+
+  function adminHeaders(extra = {}){
+    const token = getAdminToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}`, "x-actor": "admin" } : {}),
+      ...extra,
+    };
+  }
+
+  const U1 = ["11","12","13","14","15","16","17","18"];
+  const U2 = ["21","22","23","24","25","26","27","28"];
+  const L1 = ["31","32","33","34","35","36","37","38"];
+  const L2 = ["41","42","43","44","45","46","47","48"];
+
+  let SELECTED_TOOTH = null;
+  let DATA = { patientId:"", teeth:[] };
+  let CURRENT_PATIENT_ID = null;
+  let IS_ADDING_PROCEDURE = false;
+  let TRAVEL_EVENTS = [];
+  let EDITING_PROC = null; // { toothId, procedureId }
+
+  const elMsg = document.getElementById("msg");
+  const elLoading = document.getElementById("loading");
+  const elContent = document.getElementById("content");
+  const elEmptyState = document.getElementById("emptyState");
+  const elPatientInfo = document.getElementById("patientInfo");
+  console.log('[SCRIPT START] JavaScript code is running');
+  
+  const elPatientName = document.getElementById("patientName");
+  const elPatientId = document.getElementById("patientId");
+  const elSelTooth = document.getElementById("selTooth");
+  const elProcList = document.getElementById("procList");
+  
+  console.log('[SCRIPT START] DOM elements:', {
+    patientName: !!elPatientName,
+    patientId: !!elPatientId,
+    selTooth: !!elSelTooth,
+    procList: !!elProcList
+  });
+
+  // Get patientId from URL
+  function getPatientIdFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('patientId') || '';
+  }
+
+  function getPatientIdFromUrlOrStorage() {
+    const params = new URLSearchParams(window.location.search);
+    const urlPid = params.get('patientId') || '';
+    const storagePid = localStorage.getItem('selected_patient_id') || '';
+    return urlPid || storagePid;
+  }
+
+  function setPatientIdAndUrl(patientId) {
+    const elPatientIdHidden = document.getElementById("patientIdHidden");
+    const elPatientSelect = document.getElementById("patientSelect");
+    if (elPatientIdHidden) elPatientIdHidden.value = patientId;
+    if (elPatientSelect) elPatientSelect.value = patientId;
+    const url = new URL(window.location);
+    url.searchParams.set('patientId', patientId);
+    window.history.replaceState({}, '', url);
+  }
+
+  async function loadPatientOptions() {
+    const elPatientSelect = document.getElementById("patientSelect");
+    if (!elPatientSelect) return;
+    
+    try {
+      const res = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.ok && Array.isArray(json.patients)) {
+          elPatientSelect.innerHTML = '<option value="">— Hasta seç —</option>';
+          json.patients.forEach(p => {
+            const pid = p.patientId || p.patient_id || p.id || "";
+            const name = p.fullName || p.name || pid;
+            const opt = document.createElement("option");
+            opt.value = pid;
+            opt.textContent = `${name} (${pid})`;
+            elPatientSelect.appendChild(opt);
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Load patient options error:', e);
+    }
+  }
+
+  function setMsg(text, kind="muted"){
+    elMsg.className = kind === "ok" ? "okmsg" : (kind==="err" ? "err" : "muted");
+    elMsg.textContent = text || "";
+  }
+
+  function toothKey(id){ return String(id||"").trim(); }
+
+  function normalizeStatusUI(s){
+    const raw = String(s || "PLANNED").trim().toUpperCase();
+    if (raw === "DONE") return "COMPLETED";
+    if (raw === "IN_PROGRESS") return "ACTIVE";
+    if (STATUS_ORDER.includes(raw)) return raw;
+    return "PLANNED";
+  }
+
+  function isToothLockedUI(tooth){
+    const procs = tooth?.procedures || [];
+    return procs.some((p) => normalizeStatusUI(p?.status) === "COMPLETED" && EXTRACTION_TYPES.has(String(p?.type||"").toUpperCase()));
+  }
+
+  function hasActiveConflictUI(tooth, category, excludeProcedureId){
+    const procs = tooth?.procedures || [];
+    const ex = String(excludeProcedureId || "");
+    return procs.some((p) => {
+      const pid = String(p?.procedureId || p?.id || "");
+      if (ex && pid === ex) return false;
+      return normalizeStatusUI(p?.status) === "ACTIVE" && TYPE_TO_CATEGORY[String(p?.type||"").toUpperCase()] === category;
+    });
+  }
+
+  function makeProcedureId(){
+    try {
+      if (crypto?.randomUUID) return crypto.randomUUID();
+    } catch {}
+    return `proc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  }
+
+  async function loadProcedureDefs(){
+    try {
+      const r = await fetch(`${API}/api/procedures`, { headers: { Accept: "application/json" } });
+      const j = await r.json().catch(()=>null);
+      if (!r.ok || !j?.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      PROCEDURE_DEFS = Array.isArray(j.types) ? j.types : [];
+      TYPE_TO_CATEGORY = {};
+      PROCEDURE_DEFS.forEach((d) => { TYPE_TO_CATEGORY[String(d.type).toUpperCase()] = d.category; });
+      EXTRACTION_TYPES = new Set(Array.isArray(j.extractionTypes) ? j.extractionTypes : ["EXTRACTION", "SURGICAL_EXTRACTION"]);
+
+      // populate procType select
+      const sel = document.getElementById("procType");
+      if (sel) {
+        sel.innerHTML = "";
+        const byCat = {};
+        PROCEDURE_DEFS.forEach((d) => {
+          const cat = d.category || "OTHER";
+          byCat[cat] = byCat[cat] || [];
+          byCat[cat].push(d);
+        });
+        Object.keys(byCat).forEach((cat) => {
+          const og = document.createElement("optgroup");
+          og.label = cat;
+          byCat[cat].forEach((d) => {
+            const opt = document.createElement("option");
+            opt.value = String(d.type).toUpperCase();
+            opt.textContent = d.label || d.type;
+            og.appendChild(opt);
+          });
+          sel.appendChild(og);
+        });
+      }
+    } catch (e) {
+      console.error("[loadProcedureDefs] failed:", e);
+      // fallback minimal map so UI still works
+      PROCEDURE_DEFS = [];
+      TYPE_TO_CATEGORY = {
+        CROWN: "PROSTHETIC",
+        BRIDGE_UNIT: "PROSTHETIC",
+        FILLING: "RESTORATIVE",
+        ROOT_CANAL_TREATMENT: "ENDODONTIC",
+        EXTRACTION: "SURGICAL",
+      };
+    }
+  }
+
+  function findTooth(toothId){
+    toothId = toothKey(toothId);
+    return (DATA.teeth || []).find(t => toothKey(t.toothId) === toothId);
+  }
+
+  function ensureTooth(toothId){
+    toothId = toothKey(toothId);
+    let t = findTooth(toothId);
+    if (!t){
+      DATA.teeth = DATA.teeth || [];
+      DATA.teeth.push({ toothId, procedures: [] });
+      t = findTooth(toothId);
+    }
+    t.procedures = t.procedures || [];
+    return t;
+  }
+
+  function renderRow(elId, arr){
+    const el = document.getElementById(elId);
+    el.innerHTML = "";
+    arr.forEach(id => {
+      const d = document.createElement("div");
+      d.className = "tooth";
+      d.textContent = id;
+      d.onclick = () => selectTooth(id);
+      el.appendChild(d);
+    });
+  }
+
+  function refreshBadgeAndColors(){
+    const all = document.querySelectorAll(".tooth");
+    console.log('[refreshBadgeAndColors] Total teeth elements:', all.length);
+    console.log('[refreshBadgeAndColors] DATA.teeth:', DATA.teeth);
+    all.forEach(el => {
+      const id = toothKey(el.textContent);
+      const t = findTooth(id);
+      const count = (t?.procedures || []).length;
+      if (count > 0) {
+        console.log(`[refreshBadgeAndColors] Tooth ${id} has ${count} procedures`);
+      }
+
+      el.classList.remove("has","badge","active");
+      el.removeAttribute("data-count");
+
+      if (count > 0){
+        el.classList.add("has","badge");
+        el.setAttribute("data-count", String(count));
+      }
+      if (SELECTED_TOOTH && id === SELECTED_TOOTH){
+        el.classList.add("active");
+      }
+    });
+  }
+
+  function selectTooth(id){
+    SELECTED_TOOTH = toothKey(id);
+    elSelTooth.textContent = SELECTED_TOOTH;
+    const t = ensureTooth(SELECTED_TOOTH);
+    const locked = isToothLockedUI(t);
+    const hint = document.getElementById("selToothHint");
+    if (hint) {
+      hint.textContent = locked
+        ? "⛔ Bu diş çekilmiş (locked). Yeni işlem eklenemez. Sadece geçmiş görülebilir."
+        : "Dişe tıkla, işlem ekle.";
+    }
+    renderSelectedToothList();
+    refreshBadgeAndColors();
+  }
+
+  function clearSelection(){
+    SELECTED_TOOTH = null;
+    elSelTooth.textContent = "—";
+    elProcList.innerHTML = "";
+    refreshBadgeAndColors();
+  }
+
+  function fmtDate(ts){
+    if (!ts) return "—";
+    if (typeof ts === "string" && /^\d{4}-\d{2}-\d{2}$/.test(ts)) return ts;
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "—";
+    return d.toISOString().slice(0,10);
+  }
+
+  function normalizeEvents(ev){
+    if (!Array.isArray(ev)) return [];
+    return ev
+      .map((e) => ({
+        id: String(e?.id || ""),
+        date: String(e?.date || ""),
+        time: String(e?.time || ""),
+        type: String(e?.type || "TREATMENT"),
+        title: String(e?.title || ""),
+        desc: String(e?.desc || ""),
+      }))
+      .filter((e) => e.id && e.date && e.title);
+  }
+
+  function renderTreatmentEvents(){
+    const body = document.getElementById("teEvBody");
+    if (!body) return;
+    body.innerHTML = "";
+
+    const ev = Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [];
+    if (ev.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="muted" colspan="4" style="padding:10px;">Event yok.</td>`;
+      body.appendChild(tr);
+      return;
+    }
+
+    const sorted = [...ev].sort((a,b) => {
+      const ta = Date.parse(`${a.date}T${a.time || "00:00"}:00`) || 0;
+      const tb = Date.parse(`${b.date}T${b.time || "00:00"}:00`) || 0;
+      return ta - tb;
+    });
+
+    sorted.forEach((e) => {
+      const dt = `${e.date || "-"} ${e.time || ""}`.trim();
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="muted" style="padding:10px; border-top:1px solid var(--b);">${dt}</td>
+        <td style="padding:10px; border-top:1px solid var(--b);">${e.type || "TREATMENT"}</td>
+        <td style="padding:10px; border-top:1px solid var(--b);">
+          <b>${e.title || "-"}</b>
+          ${e.desc ? `<div class="muted" style="margin-top:4px;">${e.desc}</div>` : ``}
+        </td>
+        <td style="padding:10px; border-top:1px solid var(--b); width:120px;">
+          <button class="danger" style="width:100%;" onclick="removeTreatmentEvent('${e.id}')">Sil</button>
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+  }
+
+  async function loadTreatmentEvents(patientId){
+    try {
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/travel`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      const j = await r.json().catch(()=>null);
+      if (!r.ok) {
+        const err = j?.error || `${r.status}`;
+        setMsg(`Event'ler yüklenemedi: ${err}`, "err");
+        TRAVEL_EVENTS = [];
+        renderTreatmentEvents();
+        return;
+      }
+      TRAVEL_EVENTS = normalizeEvents(j?.events);
+      renderTreatmentEvents();
+    } catch (e) {
+      console.error("[TreatmentEvents] load error:", e);
+      TRAVEL_EVENTS = [];
+      renderTreatmentEvents();
+    }
+  }
+
+  async function saveTreatmentEvents(patientId){
+    const payload = { events: Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [] };
+    const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/travel`, {
+      method: "POST",
+      headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json().catch(()=>null);
+    if (!r.ok) {
+      const err = j?.error || `${r.status}`;
+      throw new Error(err);
+    }
+    const travel = j?.travel || j;
+    TRAVEL_EVENTS = normalizeEvents(travel?.events);
+    renderTreatmentEvents();
+  }
+
+  async function addTreatmentEvent(){
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) return setMsg("Patient ID bulunamadı.", "err");
+
+    const date = String(document.getElementById("te_date")?.value || "");
+    const time = String(document.getElementById("te_time")?.value || "");
+    const type = String(document.getElementById("te_type")?.value || "TREATMENT");
+    const title = String(document.getElementById("te_title")?.value || "").trim();
+    const desc = String(document.getElementById("te_desc")?.value || "").trim();
+
+    if (!date || !title) {
+      return setMsg("Event için en az: tarih ve başlık gerekli.", "err");
+    }
+
+    const e = { id: String(Date.now()), date, time, type, title, desc };
+    TRAVEL_EVENTS = Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [];
+    TRAVEL_EVENTS.push(e);
+
+    try {
+      setMsg("Event kaydediliyor...");
+      await saveTreatmentEvents(pid);
+      setMsg("Event eklendi ✅", "ok");
+      document.getElementById("te_title").value = "";
+      document.getElementById("te_desc").value = "";
+    } catch (err) {
+      console.error("[TreatmentEvents] save error:", err);
+      setMsg("Event kaydedilemedi: " + (err?.message || String(err)), "err");
+    }
+  }
+
+  async function removeTreatmentEvent(id){
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) return setMsg("Patient ID bulunamadı.", "err");
+    const ok = confirm("Bu event silinsin mi?");
+    if (!ok) return;
+    TRAVEL_EVENTS = (Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : []).filter(e => String(e.id) !== String(id));
+    try {
+      setMsg("Event siliniyor...");
+      await saveTreatmentEvents(pid);
+      setMsg("Event silindi ✅", "ok");
+    } catch (err) {
+      console.error("[TreatmentEvents] delete error:", err);
+      setMsg("Event silinemedi: " + (err?.message || String(err)), "err");
+    }
+  }
+
+  function renderSelectedToothList(){
+    elProcList.innerHTML = "";
+    if (!SELECTED_TOOTH) {
+      const div = document.createElement("div");
+      div.className = "muted";
+      div.textContent = "Diş seçmek için yukarıdaki diş haritasından bir dişe tıklayın.";
+      elProcList.appendChild(div);
+      return;
+    }
+
+    const t = ensureTooth(SELECTED_TOOTH);
+    const procs = t.procedures || [];
+    if (procs.length === 0){
+      const div = document.createElement("div");
+      div.className = "muted";
+      div.textContent = "Bu dişte henüz işlem yok.";
+      elProcList.appendChild(div);
+      return;
+    }
+
+    procs
+      .slice()
+      .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+      .forEach(p => {
+        console.log('[renderSelectedToothList] Rendering procedure:', p.id, p.type);
+        
+        const row = document.createElement("div");
+        row.className = "item";
+        // Add procedure ID as data attribute for URL navigation
+        const procId = p.id || p.procedureId || '';
+        if (procId) {
+          row.setAttribute('data-procedure-id', procId);
+        }
+        const left = document.createElement("div");
+        const st = normalizeStatusUI(p.status||"PLANNED");
+        const stClass = st === "COMPLETED" ? "status ok" : (st === "ACTIVE" ? "status planned" : "status planned");
+        const toothDisplay = SELECTED_TOOTH ? `Diş ${SELECTED_TOOTH} • ` : '';
+        const isEditing = !!(EDITING_PROC && EDITING_PROC.toothId === SELECTED_TOOTH && EDITING_PROC.procedureId === p.id);
+        left.innerHTML = `<b>${toothDisplay}${p.type || "PROC"}</b>
+          <small>Tarih: ${fmtDate(p.scheduledAt)} • Oluş: ${fmtDate(p.createdAt)}</small>`;
+
+        const right = document.createElement("div");
+        right.style.display = "flex";
+        right.style.gap = "8px";
+        right.style.alignItems = "center";
+        right.style.flexWrap = "nowrap";
+        
+        const badge = document.createElement("span");
+        badge.className = stClass;
+        badge.textContent = st;
+        // Make badge clickable to toggle status
+        badge.style.cursor = "pointer";
+        badge.style.userSelect = "none";
+        badge.title = "Status'ü değiştirmek için tıklayın (PLANNED → ACTIVE → COMPLETED → CANCELLED → PLANNED)";
+        badge.onclick = (e) => {
+          e.stopPropagation();
+          toggleProcedureStatus(p.id, SELECTED_TOOTH);
+        };
+        right.appendChild(badge);
+
+        const statusSelect = document.createElement("select");
+        statusSelect.className = "ghost";
+        statusSelect.style.width = "auto";
+        statusSelect.style.padding = "6px 12px";
+        statusSelect.style.fontSize = "12px";
+        statusSelect.style.minWidth = "auto";
+        statusSelect.style.flexShrink = "0";
+        statusSelect.style.whiteSpace = "nowrap";
+        statusSelect.style.background = "#0b1220";
+        statusSelect.style.color = "#e6eaf2";
+        statusSelect.style.border = "1px solid var(--b)";
+        statusSelect.title = "Status seç";
+        
+        const statuses = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
+        statuses.forEach(s => {
+          const opt = document.createElement("option");
+          opt.value = s;
+          opt.textContent = s;
+          if (s === st) opt.selected = true;
+          statusSelect.appendChild(opt);
+        });
+        
+        statusSelect.onchange = async (e) => {
+          e.stopPropagation();
+          const newStatus = statusSelect.value;
+          if (newStatus === st) return; // No change
+          await changeProcedureStatus(p.id, SELECTED_TOOTH, newStatus);
+        };
+        right.appendChild(statusSelect);
+
+        if (isEditing) {
+          row.classList.add("editing");
+          right.style.flexWrap = "wrap";
+
+          const fields = document.createElement("div");
+          fields.className = "edit-fields";
+
+          const typeInput = document.createElement("input");
+          typeInput.type = "text";
+          typeInput.placeholder = "İşlem tipi";
+          typeInput.value = String(p.type || "");
+
+          const dateInput = document.createElement("input");
+          dateInput.type = "date";
+          const rawDate = p.scheduledAt;
+          if (typeof rawDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+            dateInput.value = rawDate;
+          } else if (rawDate) {
+            try {
+              const d = new Date(rawDate);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, "0");
+              const dd = String(d.getDate()).padStart(2, "0");
+              dateInput.value = `${y}-${m}-${dd}`;
+            } catch {}
+          }
+          dateInput.onfocus = function(){ this.showPicker && this.showPicker(); };
+          dateInput.onclick = function(){ this.showPicker && this.showPicker(); };
+
+          const saveBtn = document.createElement("button");
+          saveBtn.textContent = "Kaydet";
+          saveBtn.className = "btn-save";
+          saveBtn.style.width = "auto";
+          saveBtn.style.padding = "6px 12px";
+          saveBtn.style.fontSize = "12px";
+          saveBtn.style.minWidth = "auto";
+          saveBtn.style.flexShrink = "0";
+          saveBtn.style.whiteSpace = "nowrap";
+          saveBtn.onclick = async (e) => {
+            e.stopPropagation();
+            await saveProcedureInlineEdit(p.id, SELECTED_TOOTH, typeInput.value, dateInput.value);
+          };
+
+          const cancelBtn = document.createElement("button");
+          cancelBtn.textContent = "İptal";
+          cancelBtn.className = "ghost";
+          cancelBtn.style.width = "auto";
+          cancelBtn.style.padding = "6px 12px";
+          cancelBtn.style.fontSize = "12px";
+          cancelBtn.style.minWidth = "auto";
+          cancelBtn.style.flexShrink = "0";
+          cancelBtn.style.whiteSpace = "nowrap";
+          cancelBtn.onclick = (e) => {
+            e.stopPropagation();
+            EDITING_PROC = null;
+            renderSelectedToothList();
+          };
+
+          fields.appendChild(typeInput);
+          fields.appendChild(dateInput);
+          fields.appendChild(saveBtn);
+          fields.appendChild(cancelBtn);
+          right.appendChild(fields);
+        } else {
+          const editBtn = document.createElement("button");
+          editBtn.textContent = "Düzenle";
+          editBtn.className = "ghost";
+          editBtn.style.width = "auto";
+          editBtn.style.padding = "6px 12px";
+          editBtn.style.fontSize = "12px";
+          editBtn.style.minWidth = "auto";
+          editBtn.style.flexShrink = "0";
+          editBtn.style.whiteSpace = "nowrap";
+          editBtn.title = "Satır içinde düzenle";
+          editBtn.onclick = (e) => {
+            e.stopPropagation();
+            EDITING_PROC = { toothId: SELECTED_TOOTH, procedureId: p.id };
+            renderSelectedToothList();
+          };
+          right.appendChild(editBtn);
+        }
+
+        row.appendChild(left);
+        row.appendChild(right);
+        elProcList.appendChild(row);
+      });
+  }
+
+  async function saveProcedureInlineEdit(procedureId, toothId, newTypeRaw, newDateStr){
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) return setMsg("Patient ID bulunamadı.", "err");
+    if (!procedureId || !toothId) return setMsg("Procedure/Tooth ID bulunamadı.", "err");
+
+    const tooth = findTooth(toothId);
+    const proc = tooth?.procedures?.find(p => p.id === procedureId);
+    if (!proc) return setMsg("Procedure bulunamadı.", "err");
+
+    const newType = String(newTypeRaw || "").trim().toUpperCase() || String(proc.type || "").toUpperCase() || "";
+    const newScheduledAt = (newDateStr && String(newDateStr).trim()) ? String(newDateStr).trim() : null;
+    const cat = TYPE_TO_CATEGORY[newType] || TYPE_TO_CATEGORY[String(proc.type||"").toUpperCase()];
+    if (!cat) return setMsg("Geçersiz işlem türü.", "err");
+    if (normalizeStatusUI(proc.status) === "ACTIVE" && hasActiveConflictUI(tooth, cat, procedureId)) {
+      return setMsg(`Bu dişte ${cat} kategorisinde zaten ACTIVE işlem var.`, "err");
+    }
+
+    const prev = { type: proc.type, scheduledAt: proc.scheduledAt };
+    proc.type = newType;
+    proc.scheduledAt = newScheduledAt;
+
+    try {
+      setMsg("Procedure güncelleniyor...");
+      const payload = {
+        toothId: toothId,
+        procedure: {
+          id: procedureId,
+          procedureId: procedureId,
+          type: proc.type,
+          category: cat,
+          status: normalizeStatusUI(proc.status || "PLANNED"),
+          createdAt: proc.createdAt,
+          date: proc.scheduledAt,
+          scheduledAt: proc.scheduledAt
+        }
+      };
+
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type":"application/json" }),
+        body: JSON.stringify(payload)
+      });
+
+      const j = await r.json().catch(()=>null);
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        proc.type = prev.type;
+        proc.scheduledAt = prev.scheduledAt;
+        setMsg(`Procedure güncelleme başarısız: ${err}`, "err");
+        return;
+      }
+
+      await loadTreatments(pid);
+      EDITING_PROC = null;
+      setMsg("Procedure güncellendi ✅", "ok");
+      renderSelectedToothList();
+      refreshBadgeAndColors();
+    } catch(e) {
+      console.error("[saveProcedureInlineEdit] error:", e);
+      proc.type = prev.type;
+      proc.scheduledAt = prev.scheduledAt;
+      setMsg("Procedure güncelleme hatası: " + e.message, "err");
+      renderSelectedToothList();
+    }
+  }
+
+  // Change procedure status to a specific status
+  async function changeProcedureStatus(procedureId, toothId, newStatus) {
+    if (!procedureId || !toothId || !newStatus) {
+      setMsg("Procedure ID, Tooth ID veya Status bulunamadı.", "err");
+      return;
+    }
+
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) {
+      setMsg("Patient ID bulunamadı.", "err");
+      return;
+    }
+
+    // Find the procedure in DATA
+    const tooth = findTooth(toothId);
+    if (!tooth || !tooth.procedures) {
+      setMsg("Diş veya procedure bulunamadı.", "err");
+      return;
+    }
+
+    const proc = tooth.procedures.find(p => p.id === procedureId);
+    if (!proc) {
+      setMsg("Procedure bulunamadı.", "err");
+      return;
+    }
+
+    const currentStatus = normalizeStatusUI(proc.status || "PLANNED");
+    const normalizedNewStatus = normalizeStatusUI(newStatus);
+
+    if (currentStatus === normalizedNewStatus) {
+      return; // No change needed
+    }
+
+    // Enforce: only one ACTIVE per category
+    const cat = TYPE_TO_CATEGORY[String(proc.type||"").toUpperCase()];
+    if (normalizedNewStatus === "ACTIVE" && cat && hasActiveConflictUI(tooth, cat, procedureId)) {
+      setMsg(`Bu dişte ${cat} kategorisinde zaten ACTIVE işlem var.`, "err");
+      return;
+    }
+
+    console.log(`[changeProcedureStatus] Changing status from ${currentStatus} to ${normalizedNewStatus} for procedure ${procedureId}`);
+
+    // Update local data
+    proc.status = normalizedNewStatus;
+
+    // Update on server
+    try {
+      setMsg("Status güncelleniyor...");
+      
+      const payload = {
+        toothId: toothId,
+        procedure: {
+          procedureId: procedureId,
+          id: procedureId,
+          type: proc.type,
+          category: TYPE_TO_CATEGORY[String(proc.type||"").toUpperCase()] || proc.category,
+          status: normalizedNewStatus,
+          createdAt: proc.createdAt,
+          date: proc.date ?? proc.scheduledAt,
+          scheduledAt: proc.scheduledAt
+        }
+      };
+      
+      console.log('[changeProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
+      
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type":"application/json" }),
+        body: JSON.stringify(payload)
+      });
+
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Status güncelleme başarısız: ${err}`, "err");
+        // Revert local change
+        proc.status = currentStatus;
+        return;
+      }
+
+      // Server'dan güncel veriyi al
+      await loadTreatments(pid);
+      
+      setMsg(`Status ${normalizedNewStatus} olarak güncellendi ✅`, "ok");
+      renderSelectedToothList();
+      refreshBadgeAndColors();
+    } catch(e) {
+      console.error('Change status error:', e);
+      setMsg("Status güncelleme hatası: " + e.message, "err");
+      // Revert local change
+      proc.status = currentStatus;
+      renderSelectedToothList();
+    }
+  }
+
+  // Toggle procedure status: PLANNED -> ACTIVE -> COMPLETED -> CANCELLED -> PLANNED
+  async function toggleProcedureStatus(procedureId, toothId) {
+    if (!procedureId || !toothId) {
+      setMsg("Procedure ID veya Tooth ID bulunamadı.", "err");
+      return;
+    }
+
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) {
+      setMsg("Patient ID bulunamadı.", "err");
+      return;
+    }
+
+    // Find the procedure in DATA
+    const tooth = findTooth(toothId);
+    if (!tooth || !tooth.procedures) {
+      setMsg("Diş veya procedure bulunamadı.", "err");
+      return;
+    }
+
+    const proc = tooth.procedures.find(p => p.id === procedureId);
+    if (!proc) {
+      setMsg("Procedure bulunamadı.", "err");
+      return;
+    }
+
+    // Get current status and determine next status
+    const currentStatus = normalizeStatusUI(proc.status || "PLANNED");
+    const idx = STATUS_ORDER.indexOf(currentStatus);
+    const nextStatus = STATUS_ORDER[(idx >= 0 ? idx + 1 : 0) % STATUS_ORDER.length];
+
+    // Enforce: only one ACTIVE per category
+    const cat = TYPE_TO_CATEGORY[String(proc.type||"").toUpperCase()];
+    if (nextStatus === "ACTIVE" && cat && hasActiveConflictUI(tooth, cat, procedureId)) {
+      setMsg(`Bu dişte ${cat} kategorisinde zaten ACTIVE işlem var.`, "err");
+      return;
+    }
+
+    console.log(`[toggleProcedureStatus] Changing status from ${currentStatus} to ${nextStatus} for procedure ${procedureId}`);
+
+    // Update local data
+    proc.status = nextStatus;
+
+    // Update on server
+    try {
+      setMsg("Status güncelleniyor...");
+      
+      const payload = {
+        toothId: toothId,
+        procedure: {
+          procedureId: procedureId,
+          id: procedureId,
+          type: proc.type,
+          category: TYPE_TO_CATEGORY[String(proc.type||"").toUpperCase()] || proc.category,
+          status: nextStatus,
+          createdAt: proc.createdAt,
+          date: proc.date ?? proc.scheduledAt,
+          scheduledAt: proc.scheduledAt
+        }
+      };
+      
+      console.log('[toggleProcedureStatus] Sending to server:', JSON.stringify(payload, null, 2));
+      
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type":"application/json" }),
+        body: JSON.stringify(payload)
+      });
+
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Status güncelleme başarısız: ${err}`, "err");
+        // Revert local change
+        proc.status = currentStatus;
+        return;
+      }
+
+      // Server'dan güncel veriyi al
+      await loadTreatments(pid);
+      
+      setMsg(`Status ${nextStatus} olarak güncellendi ✅`, "ok");
+      renderSelectedToothList();
+      refreshBadgeAndColors();
+    } catch(e) {
+      console.error('Toggle status error:', e);
+      setMsg("Status güncelleme hatası: " + e.message, "err");
+      // Revert local change
+      proc.status = currentStatus;
+      renderSelectedToothList();
+    }
+  }
+
+  // No-pop-up editor: switch the row into inline edit mode
+  function editProcedure(procedureId, toothId) {
+    EDITING_PROC = { toothId, procedureId };
+    renderSelectedToothList();
+  }
+
+  async function loadPatientInfo(patientId) {
+    try {
+      const res = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      
+      if (res.ok) {
+        const json = await res.json();
+        if (json.ok && Array.isArray(json.patients)) {
+          const patient = json.patients.find(p => (p.patientId || p.patient_id) === patientId);
+          if (patient) {
+            elPatientName.textContent = patient.fullName || patient.name || patientId;
+            elPatientId.textContent = `ID: ${patientId}`;
+            elPatientInfo.style.display = 'block';
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Load patient info error:', e);
+    }
+    // Fallback
+    elPatientName.textContent = patientId;
+    elPatientId.textContent = `ID: ${patientId}`;
+    elPatientInfo.style.display = 'block';
+  }
+
+  async function loadTreatments(patientId){
+    if (!patientId) {
+      setMsg("Patient ID bulunamadı. URL'de ?patientId= parametresi olmalı.", "err");
+      elLoading.style.display = 'none';
+      elContent.style.display = 'none';
+      elEmptyState.style.display = 'block';
+      return;
+    }
+
+    CURRENT_PATIENT_ID = patientId;
+    elLoading.style.display = 'block';
+    elContent.style.display = 'none';
+    elEmptyState.style.display = 'none';
+
+    try{
+      setMsg("Treatments yükleniyor...");
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatments`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Yüklenemedi: ${err}`, "err");
+        elLoading.style.display = 'none';
+        elContent.style.display = 'none';
+        elEmptyState.style.display = 'block';
+        return;
+      }
+
+      // GET endpoint returns data directly: { teeth: [...], patientId: "..." }
+      // POST endpoint may return: { ok: true, treatments: { teeth: [...], patientId: "..." } }
+      console.log('[loadTreatments] Response:', j);
+      if (j?.treatments) {
+        // Response from POST endpoint with treatments wrapper
+        DATA = j.treatments;
+        console.log('[loadTreatments] Using j.treatments, DATA:', DATA);
+      } else {
+        // GET endpoint returns data directly
+      DATA = j || { patientId: patientId, teeth: [] };
+        console.log('[loadTreatments] Using j directly, DATA:', DATA);
+      }
+      
+      // Ensure DATA structure is correct
+      if (!DATA.patientId) {
+        DATA.patientId = patientId;
+      }
+      if (!Array.isArray(DATA.teeth)) {
+        DATA.teeth = [];
+      }
+      console.log('[loadTreatments] Final DATA.teeth:', DATA.teeth);
+      
+      elLoading.style.display = 'none';
+      
+      if (DATA.teeth.length === 0 && (!DATA.teeth || DATA.teeth.length === 0)) {
+        elContent.style.display = 'block';
+        setMsg("Henüz treatment kaydı yok. Diş seçip işlem ekleyebilirsiniz.", "muted");
+      } else {
+        elContent.style.display = 'block';
+        setMsg(`${DATA.teeth.length} dişte toplam ${DATA.teeth.reduce((sum, t) => sum + (t.procedures?.length || 0), 0)} işlem yüklendi.`, "ok");
+      }
+      
+      clearSelection();
+    }catch(e){
+      console.error('Load treatments error:', e);
+      setMsg("Yükleme hatası: " + e.message, "err");
+      elLoading.style.display = 'none';
+      elContent.style.display = 'none';
+      elEmptyState.style.display = 'block';
+    }
+  }
+
+  // Procedure ekle ve direkt server'a kaydet
+  async function addProcedure(){
+    console.log('[addProcedure] Function called');
+    const btn = document.getElementById("btnAddProcedure");
+    if (!btn) {
+      console.error('[addProcedure] Button not found!');
+      return;
+    }
+    if (btn.disabled) {
+      console.log('[addProcedure] Button disabled, returning');
+      return; // Prevent duplicate calls
+    }
+    
+    if (!SELECTED_TOOTH) {
+      setMsg("⚠️ Önce diş seçin", "err");
+      // Yanıp sönme animasyonu ekle
+      if (elMsg) {
+        elMsg.classList.add("blink");
+        // 3 saniye sonra animasyonu durdur
+        setTimeout(() => {
+          if (elMsg) elMsg.classList.remove("blink");
+        }, 3000);
+      }
+      return;
+    }
+    const tooth = ensureTooth(SELECTED_TOOTH);
+    if (isToothLockedUI(tooth)) {
+      return setMsg("Bu diş çekilmiş (locked). Yeni işlem eklenemez.", "err");
+    }
+
+    const type = document.getElementById("procType").value;
+    const status = document.getElementById("procStatus").value;
+    const date = document.getElementById("procDate").value;
+    if (!type) return setMsg("İşlem türü seç.", "err");
+    if (!date) return setMsg("Tarih seç.", "err");
+    const normType = String(type).toUpperCase();
+    const normStatus = normalizeStatusUI(status);
+    const category = TYPE_TO_CATEGORY[normType];
+    if (!category) return setMsg("Geçersiz işlem türü.", "err");
+    if (normStatus === "ACTIVE" && hasActiveConflictUI(tooth, category, null)) {
+      return setMsg(`Bu dişte ${category} kategorisinde zaten ACTIVE işlem var.`, "err");
+    }
+
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) return setMsg("Patient ID bulunamadı.", "err");
+
+    // Disable button to prevent duplicate calls
+    btn.disabled = true;
+    
+    try {
+    const createdAt = Date.now();
+      const procedureId = makeProcedureId();
+
+      // Server'a kaydet
+      setMsg("Kaydediliyor...");
+
+    const payload = {
+      toothId: SELECTED_TOOTH,
+        procedure: {
+          procedureId,
+          type: normType,
+          category,
+          status: normStatus,
+          createdAt,
+          date: date,
+          scheduledAt: date
+        }
+      };
+      
+      console.log('[addProcedure] Sending to server:', JSON.stringify(payload, null, 2));
+      
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type":"application/json" }),
+        body: JSON.stringify(payload)
+      });
+
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Kaydetme başarısız: ${err}`, "err");
+        return;
+      }
+
+      // Server'dan güncel veriyi al
+        await loadTreatments(pid);
+      
+      setMsg("Procedure kaydedildi ✅", "ok");
+        renderSelectedToothList();
+        refreshBadgeAndColors();
+      
+      // Clear form
+        document.getElementById("procDate").value = "";
+    } catch(e) {
+      console.error('Add procedure error:', e);
+      setMsg("Kaydetme hatası: " + e.message, "err");
+    } finally {
+      // Re-enable button after a short delay
+      setTimeout(() => {
+        btn.disabled = false;
+      }, 500);
+    }
+  }
+
+  // Tüm local procedure'ları server'a kaydet
+  async function saveAllProcedures(){
+    console.log('[saveAllProcedures] Function called');
+    const btn = document.getElementById("btnSaveProcedures");
+    if (!btn) {
+      console.error('[saveAllProcedures] Button not found!');
+        return;
+      }
+    if (btn.disabled) {
+      console.log('[saveAllProcedures] Button disabled, returning');
+      return; // Prevent duplicate calls
+    }
+    
+    // Prevent duplicate calls
+    if (IS_ADDING_PROCEDURE) {
+      console.log('[saveAllProcedures] Already processing, ignoring duplicate call');
+      return;
+    }
+    
+    const pid = CURRENT_PATIENT_ID;
+    if (!pid) return setMsg("Patient ID bulunamadı.", "err");
+
+    if (!DATA.teeth || DATA.teeth.length === 0) {
+      return setMsg("Kaydedilecek procedure yok.", "err");
+    }
+
+    // Disable both buttons to prevent conflicts
+    btn.disabled = true;
+    const btnAdd = document.getElementById("btnAddProcedure");
+    if (btnAdd) btnAdd.disabled = true;
+    IS_ADDING_PROCEDURE = true;
+
+    try{
+      setMsg("Kaydediliyor...");
+      
+      // Önce tüm local procedure'ları topla (DATA değişmeden önce)
+      const localProcedures = [];
+      for (const tooth of DATA.teeth) {
+        if (!tooth.procedures || tooth.procedures.length === 0) continue;
+        
+        for (const proc of tooth.procedures) {
+          // Sadece local procedure'ları kaydet (id'si local_ ile başlayanlar)
+          if (proc.id && proc.id.startsWith('local_')) {
+            // scheduledAt değerini kontrol et - null veya undefined ise atlama
+            console.log(`[saveAllProcedures] Processing procedure:`, {
+              id: proc.id,
+              type: proc.type,
+              toothId: tooth.toothId,
+              scheduledAt_raw: proc.scheduledAt,
+              scheduledAt_type: typeof proc.scheduledAt,
+              scheduledAt_isNumber: typeof proc.scheduledAt === 'number',
+              scheduledAt_gt0: proc.scheduledAt > 0,
+              scheduledAt_isNaN: isNaN(proc.scheduledAt),
+              fullProcedure: proc
+            });
+            
+            const scheduledAt = proc.scheduledAt && typeof proc.scheduledAt === 'number' && !isNaN(proc.scheduledAt) && proc.scheduledAt > 0 ? proc.scheduledAt : null;
+            
+            if (!scheduledAt) {
+              console.error(`[saveAllProcedures] WARNING: scheduledAt is null for procedure ${proc.id}`, {
+                scheduledAt_raw: proc.scheduledAt,
+                scheduledAt_type: typeof proc.scheduledAt,
+                scheduledAt_isNumber: typeof proc.scheduledAt === 'number',
+                scheduledAt_gt0: proc.scheduledAt > 0,
+                scheduledAt_isNaN: isNaN(proc.scheduledAt)
+              });
+            }
+            
+            console.log(`[saveAllProcedures] Procedure ${proc.id}: scheduledAt=${proc.scheduledAt}, final=${scheduledAt}`);
+            localProcedures.push({
+              toothId: tooth.toothId,
+              procedure: {
+                type: proc.type,
+                status: proc.status,
+                createdAt: proc.createdAt,
+                scheduledAt: scheduledAt
+              }
+            });
+          }
+        }
+      }
+
+      if (localProcedures.length === 0) {
+        setMsg("Kaydedilecek local procedure yok.", "muted");
+        IS_ADDING_PROCEDURE = false;
+        btn.disabled = false;
+        return;
+      }
+
+      // Tüm local procedure'ları server'a kaydet
+      let successCount = 0;
+      let errorCount = 0;
+      const errors = [];
+      
+      for (const item of localProcedures) {
+        console.log('[saveAllProcedures] Sending to server:', JSON.stringify(item, null, 2));
+        // Debug: scheduledAt değerini kontrol et
+        if (!item.procedure.scheduledAt) {
+          console.error('[saveAllProcedures] WARNING: scheduledAt is null', {
+            procedureType: item.procedure.type,
+            toothId: item.toothId,
+            procedure: item.procedure
+          });
+        } else {
+          console.log('[saveAllProcedures] scheduledAt is valid:', {
+            procedureType: item.procedure.type,
+            toothId: item.toothId,
+            scheduledAt: item.procedure.scheduledAt,
+            scheduledAtDate: new Date(item.procedure.scheduledAt).toISOString()
+          });
+        }
+        
+        try {
+          const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+            method: "POST",
+            headers: adminHeaders({ "Content-Type":"application/json" }),
+            body: JSON.stringify(item)
+          });
+
+          const j = await r.json().catch(()=>null);
+
+          if (!r.ok){
+            const err = j?.error || `${r.status}`;
+            console.error(`[saveAllProcedures] Failed to save procedure for tooth ${item.toothId}:`, err);
+            errorCount++;
+            errors.push(`Diş ${item.toothId}: ${err}`);
+            // Continue with next procedure instead of returning
+            continue;
+          }
+          
+          successCount++;
+        } catch (e) {
+          console.error(`[saveAllProcedures] Error saving procedure for tooth ${item.toothId}:`, e);
+          errorCount++;
+          errors.push(`Diş ${item.toothId}: ${e.message}`);
+          // Continue with next procedure
+          continue;
+        }
+      }
+      
+      if (errorCount > 0) {
+        console.warn(`[saveAllProcedures] ${errorCount} procedure failed to save:`, errors);
+        setMsg(`${successCount} kaydedildi, ${errorCount} hata: ${errors.join(', ')}`, "err");
+      }
+
+      // Tüm local procedure'lar kaydedildi, server'dan güncel veriyi al
+      await loadTreatments(pid);
+      
+      // Local procedure'ların temizlendiğini doğrula
+      const remainingLocal = [];
+      for (const tooth of DATA.teeth) {
+        if (!tooth.procedures || tooth.procedures.length === 0) continue;
+        for (const proc of tooth.procedures) {
+          if (proc.id && proc.id.startsWith('local_')) {
+            remainingLocal.push({ toothId: tooth.toothId, procId: proc.id });
+          }
+        }
+      }
+      
+      if (remainingLocal.length > 0) {
+        console.warn('[saveAllProcedures] Remaining local procedures after loadTreatments:', remainingLocal);
+        // Local procedure'ları manuel olarak temizle
+        for (const tooth of DATA.teeth) {
+          if (tooth.procedures) {
+            tooth.procedures = tooth.procedures.filter(proc => !proc.id || !proc.id.startsWith('local_'));
+          }
+        }
+      }
+      
+      setMsg("Tüm procedure'lar kaydedildi ✅", "ok");
+      renderSelectedToothList();
+      refreshBadgeAndColors();
+    }catch(e){
+      console.error('Save procedures error:', e);
+      setMsg("Kaydetme hatası: " + e.message, "err");
+    }finally{
+      IS_ADDING_PROCEDURE = false;
+      // Re-enable both buttons
+      btn.disabled = false;
+      if (btnAdd) btnAdd.disabled = false;
+    }
+  }
+
+  // Initialize
+  async function init() {
+    // Load patient options first
+    await loadPatientOptions();
+
+    // Render tooth grid
+    renderRow("upperRow1", U1);
+    renderRow("upperRow2", U2);
+    renderRow("lowerRow1", L1);
+    renderRow("lowerRow2", L2);
+    
+    // Get patient ID from URL or storage
+    const initialPid = getPatientIdFromUrlOrStorage();
+    
+    // Get toothId from URL if available
+    const params = new URLSearchParams(window.location.search);
+    const urlToothId = params.get('toothId');
+    
+    if (initialPid) {
+      setPatientIdAndUrl(initialPid);
+      await loadProcedureDefs();
+      loadPatientInfo(initialPid);
+      await loadTreatments(initialPid);
+      loadTreatmentEvents(initialPid);
+      
+      // If toothId is in URL, select that tooth after treatments are loaded
+      const urlProcedureId = params.get('procedureId');
+      
+      if (urlToothId) {
+        // Small delay to ensure rendering is complete
+        setTimeout(() => {
+          selectTooth(urlToothId);
+          // Scroll to selected tooth procedures if available
+          const procListEl = document.getElementById("procList");
+          if (procListEl) {
+            procListEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            // If procedureId is in URL, highlight that procedure
+            if (urlProcedureId) {
+              setTimeout(() => {
+                const procItems = procListEl.querySelectorAll('.item');
+                procItems.forEach(item => {
+                  const procId = item.getAttribute('data-procedure-id');
+                  if (procId === urlProcedureId) {
+                    // Highlight the procedure (flash effect)
+                    item.style.transition = 'background-color 0.3s';
+                    item.style.backgroundColor = '#fffacd';
+                    setTimeout(() => {
+                      item.style.backgroundColor = '';
+                    }, 2000);
+                    // Scroll to procedure
+                    item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                });
+              }, 500);
+            }
+          }
+        }, 300);
+      }
+    } else {
+      setMsg("URL'de patientId parametresi bulunamadı. Örnek: /admin-treatment.html?patientId=p123", "err");
+      elLoading.style.display = 'none';
+      elContent.style.display = 'none';
+      elEmptyState.style.display = 'block';
+    }
+    
+    // Initial empty state
+    renderSelectedToothList();
+
+    // Setup patient select listener
+    const elPatientSelect = document.getElementById("patientSelect");
+    if (elPatientSelect) {
+      elPatientSelect.addEventListener("change", async () => {
+        const pid = elPatientSelect.value;
+        if (!pid) return;
+        setPatientIdAndUrl(pid);
+        await loadProcedureDefs();
+        loadPatientInfo(pid);
+        await loadTreatments(pid);
+        loadTreatmentEvents(pid);
+        // Clear tooth selection when patient changes
+        clearSelection();
+      });
+    }
+  }
+
+  // Load clinic name
+  async function loadClinicName() {
+    const token = getAdminToken();
+    if (!token) return;
+    try {
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: adminHeaders({ 'Accept': 'application/json' })
+      });
+      if (res.ok) {
+        const clinic = await res.json();
+        const name = clinic.branding?.clinicName || clinic.name || 'Clinic';
+        
+        // Update navbar clinic name
+        const navbarClinicName = document.getElementById('navbarClinicName');
+        if (navbarClinicName) {
+          navbarClinicName.textContent = name;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load clinic name:', error);
+      const navbarClinicName = document.getElementById('navbarClinicName');
+      if (navbarClinicName) {
+        navbarClinicName.textContent = 'Clinic';
+      }
+    }
+  }
+
+  // Run on page load
+  console.log('[PAGE LOAD] Admin treatment page loaded');
+  init();
+  loadClinicName();
+  console.log('[PAGE LOAD] Init function completed');
+</script>
+</body>
+</html>
+

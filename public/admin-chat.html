@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chat - Clinifly Admin</title>
+  <style>
+    :root { --bg:#111827; --card:#1f2937; --b:#374151; --p:#2563eb; --g:#16a34a; --r:#dc2626; --y:#f59e0b; --muted:#a7b2c8; }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid #1f2937; padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .nav-badge{
+      position:absolute;
+      top:-4px;
+      right:-4px;
+      background:var(--r);
+      color:#fff;
+      border-radius:10px;
+      min-width:18px;
+      height:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      font-weight:700;
+      padding:0 4px;
+      border:2px solid var(--bg);
+    }
+    .card{ background:var(--card); border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:16px; padding:24px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .chat-container{ display:grid; grid-template-columns:300px 1fr; gap:20px; height:calc(100vh - 200px); min-height:600px; max-height:800px; }
+    .patient-list{ overflow-y:auto; max-height:100%; }
+    .patient-item{ padding:12px; border-bottom:1px solid var(--b); cursor:pointer; transition:background 0.2s; position:relative; }
+    .patient-item:hover{ background:#0b1220; }
+    .patient-item.active{ background:#0b1220; border-left:3px solid #2563eb; }
+    .patient-item.unread{ background:rgba(37, 99, 235, 0.05); }
+    .patient-name{ font-weight:600; font-size:14px; margin-bottom:4px; color:#ffffff; position:relative; display:inline-block; }
+    .patient-phone{ font-size:12px; color:#a7b2c8; margin-bottom:4px; }
+    .patient-preview{ font-size:12px; color:var(--muted); line-height:1.4; margin-top:4px; display:flex; align-items:center; gap:8px; }
+    .unread-indicator{ width:8px; height:8px; border-radius:50%; background:var(--p); flex-shrink:0; }
+    .patient-badge{
+      position:absolute;
+      top:-4px;
+      right:-20px;
+      background:var(--r);
+      color:#fff;
+      border-radius:10px;
+      min-width:18px;
+      height:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      font-weight:700;
+      padding:0 4px;
+      border:2px solid #020617;
+    }
+    .chat-area{ display:flex; flex-direction:column; border:1px solid #1f2937; border-radius:8px; background:#020617; height:100%; max-height:100%; overflow:hidden; }
+    .chat-header{ padding:16px; border-bottom:1px solid #1f2937; background:#0b1220; flex-shrink:0; }
+    .chat-messages{ flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; min-height:0; }
+    .message{ max-width:70%; padding:12px 16px; border-radius:12px; font-size:14px; line-height:1.5; }
+    .message.from-CLINIC{ background:var(--p); color:#fff; align-self:flex-end; }
+    .message.from-PATIENT{ background:#0b1220; color:#e6eaf2; align-self:flex-start; border:1px solid #1f2937; }
+    .message-time{ font-size:11px; color:var(--muted); margin-top:4px; }
+    .chat-input-area{ padding:16px; border-top:1px solid var(--b); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .chat-input{ flex:1; padding:12px; border:1px solid #1f2937; border-radius:8px; font-size:14px; background:#1f2937; color:#e6eaf2; }
+    button{ padding:8px 16px; border-radius:8px; border:none; cursor:pointer; font-size:14px; font-weight:600; transition:opacity 0.2s; }
+    button:hover{ opacity:0.9; }
+    button:disabled{ opacity:0.5; cursor:not-allowed; }
+    .btn-primary{ background:var(--p); color:#fff; }
+    .btn-secondary{ background:#0b1220; color:#e6eaf2; border:1px solid #1f2937; }
+    .upload-help{ margin-top:8px; font-size:12px; color:var(--muted); }
+    .loading{ text-align:center; padding:40px; color:var(--muted); }
+    .error{ background:#7f1d1d; border:1px solid #dc2626; color:#fca5a5; padding:12px; border-radius:8px; margin-bottom:16px; }
+    .empty{ text-align:center; padding:60px 20px; color:var(--muted); }
+
+    body{ background:var(--bg); color:#e6eaf2; }
+    .empty-icon{ font-size:48px; margin-bottom:12px; opacity:0.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>💬 Clinifly Admin – Chat</h1>
+    </header>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink">
+          Patients
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link active" id="chatNavLink">
+          Chat
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+      </div>
+    </nav>
+
+    <div id="errorMsg" class="error" style="display:none;"></div>
+
+    <div class="card">
+      <div class="chat-container">
+        <div class="patient-list card">
+          <h2 style="margin:0 0 16px 0; font-size:16px; font-weight:600;">Hastalar</h2>
+          <div id="patientList">
+            <div class="loading">Yükleniyor...</div>
+          </div>
+        </div>
+
+        <div class="chat-area">
+          <div class="chat-header">
+            <div id="selectedPatientInfo" style="display:none;">
+              <strong id="selectedPatientName"></strong>
+              <div style="font-size:12px; color:#6b7280; margin-top:4px;" id="selectedPatientPhone"></div>
+            </div>
+            <div id="noPatientSelected" class="empty">
+              <div class="empty-icon">👈</div>
+              <div>Hasta seçin</div>
+            </div>
+          </div>
+          
+          <div id="chatMessages" class="chat-messages" style="display:none;">
+            <!-- Messages will be loaded here -->
+          </div>
+
+          <div id="chatInputArea" class="chat-input-area" style="display:none;">
+            <input type="text" id="messageInput" class="chat-input" placeholder="Mesaj yazın..." />
+            <button class="btn-primary" onclick="sendMessage()">Gönder</button>
+            <button class="btn-secondary" onclick="triggerImageUpload()">📷 Fotoğraf</button>
+            <button class="btn-secondary" onclick="triggerFileUpload()">📎 Dosya</button>
+            <input id="imageInput" type="file" accept="image/jpeg,image/png,image/heic,image/heif" style="display:none;" />
+            <input id="fileInput" type="file" accept="application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip" style="display:none;" />
+            <span id="uploadStatus" class="muted" style="display:none;"></span>
+          </div>
+          <div id="uploadHelp" class="upload-help" style="display:none;">
+            Desteklenen formatlar: JPG, PNG, HEIC (max 10MB) • PDF/DOC/DOCX/TXT/XLS/XLSX (max 20MB) • ZIP (max 50MB)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+    (function bindNavTravelLink() {
+      try {
+        const pid = String(localStorage.getItem('selected_patient_id') || '').trim();
+        if (!pid) return;
+        const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+        if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+      } catch {}
+    })();
+
+    const API_BASE = window.API_BASE || 'http://127.0.0.1:5050';
+    let selectedPatientId = null;
+    let selectedPatientName = null;
+    let clinicName = null;
+    let refreshInterval = null;
+    
+    function getAdminToken() {
+      return localStorage.getItem('admin_token') || '';
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    async function loadPatients() {
+      const token = getAdminToken();
+      if (!token) {
+        showError('❌ Admin token bulunamadı. Lütfen önce giriş yapın.');
+        document.getElementById('patientList').innerHTML = '<div class="empty">Admin token gerekli</div>';
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/patients`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            showError('❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.');
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const json = await res.json();
+        if (!json.ok) {
+          throw new Error(json.error || 'Bilinmeyen hata');
+        }
+
+        const patients = Array.isArray(json.list) ? json.list : (Array.isArray(json.patients) ? json.patients : []);
+        
+        // Load unread counts and last message times for each patient
+        const patientsWithUnread = await Promise.all(patients.map(async (patient) => {
+          const patientId = patient.patientId || patient.id;
+          let unreadCount = 0;
+          let lastMessageTime = 0;
+          let lastMessagePreview = '';
+          let messages = [];
+          
+          if (patientId) {
+            try {
+              let lastSeenTimestamp = 0;
+              try {
+                const stored = localStorage.getItem('chat_last_seen_timestamp');
+                if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
+              } catch (e) {}
+              
+              const messagesRes = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Accept': 'application/json'
+                }
+              });
+              
+              if (messagesRes.ok) {
+                const messagesData = await messagesRes.json();
+                if (messagesData.ok && Array.isArray(messagesData.messages)) {
+                  messages = messagesData.messages;
+                  
+                  // Count unread messages (from PATIENT) that were created AFTER last seen timestamp
+                  unreadCount = messages.filter((m) => {
+                    if (m.from !== "PATIENT") return false;
+                    if (m.createdAt) {
+                      const msgTimestamp = new Date(m.createdAt).getTime();
+                      return msgTimestamp > lastSeenTimestamp;
+                    }
+                    return true;
+                  }).length;
+                  
+                  // Find last message time (most recent message timestamp)
+                  if (messages.length > 0) {
+                    messages.forEach(m => {
+                      if (m.createdAt) {
+                        const msgTimestamp = new Date(m.createdAt).getTime();
+                        if (msgTimestamp > lastMessageTime) {
+                          lastMessageTime = msgTimestamp;
+                        }
+                      }
+                    });
+                    
+                    // Get last message preview
+                    const lastMsg = messages[messages.length - 1];
+                    if (lastMsg.text) {
+                      lastMessagePreview = lastMsg.text.substring(0, 50);
+                      if (lastMsg.text.length > 50) lastMessagePreview += '...';
+                    } else if (lastMsg.attachment) {
+                      if (lastMsg.attachment.fileType === 'image') {
+                        lastMessagePreview = '📷 Photo';
+                      } else {
+                        lastMessagePreview = '📎 File';
+                      }
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn(`Failed to load messages for patient ${patientId}:`, e);
+            }
+          }
+          
+          return {
+            ...patient,
+            unreadCount,
+            lastMessageTime,
+            lastMessagePreview
+          };
+        }));
+        
+        // Sort by last message time (most recent first), then by unread count
+        patientsWithUnread.sort((a, b) => {
+          // First sort by last message time (most recent first)
+          if (b.lastMessageTime !== a.lastMessageTime) {
+            return b.lastMessageTime - a.lastMessageTime;
+          }
+          // Then by unread count (more unread first)
+          return b.unreadCount - a.unreadCount;
+        });
+        
+        renderPatients(patientsWithUnread);
+        
+        // After rendering, restore active state if a patient is selected
+        if (selectedPatientId) {
+          // Find the patient from the list and select it
+          const patient = patients.find(p => {
+            const pid = p.patientId || p.patient_id || '';
+            return pid === selectedPatientId;
+          });
+          
+          if (patient) {
+            const name = patient.name || patient.fullName || 'İsimsiz';
+            const phone = patient.phone || '-';
+            selectPatient(selectedPatientId, name, phone);
+          } else {
+            // Just restore active state visually
+            const items = document.querySelectorAll('.patient-item');
+            items.forEach(item => {
+              if (item.getAttribute('data-patient-id') === selectedPatientId) {
+                item.classList.add('active');
+              }
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Load patients error:', error);
+        showError('❌ Hasta listesi yüklenemedi: ' + error.message);
+        document.getElementById('patientList').innerHTML = '<div class="empty">Hata: ' + escapeHtml(error.message) + '</div>';
+      }
+    }
+
+    function renderPatients(patients) {
+      const container = document.getElementById('patientList');
+      if (patients.length === 0) {
+        container.innerHTML = '<div class="empty">Henüz hasta yok</div>';
+        return;
+      }
+
+      container.innerHTML = patients.map(p => {
+        const patientId = p.patientId || p.patient_id || '';
+        const name = p.name || p.fullName || 'İsimsiz';
+        const phone = p.phone || '-';
+        const isActive = selectedPatientId === patientId;
+        const unreadCount = p.unreadCount || 0;
+        const lastPreview = p.lastMessagePreview || '';
+        const hasUnread = unreadCount > 0;
+        const escapedPatientId = escapeHtml(patientId);
+        const escapedName = escapeHtml(name);
+        const escapedPhone = escapeHtml(phone);
+        const escapedPreview = escapeHtml(lastPreview);
+        
+        return `
+          <div class="patient-item ${isActive ? 'active' : ''} ${hasUnread ? 'unread' : ''}" data-patient-id="${escapedPatientId}" onclick="selectPatient('${escapedPatientId}', '${escapedName}', '${escapedPhone}')">
+            <div class="patient-name">
+              ${escapedName}
+              ${unreadCount > 0 ? `<span class="patient-badge">${unreadCount > 99 ? '99+' : unreadCount}</span>` : ''}
+            </div>
+            <div class="patient-phone">${escapedPhone}</div>
+            ${lastPreview ? `
+              <div class="patient-preview">
+                ${hasUnread ? '<span class="unread-indicator"></span>' : ''}
+                <span style="flex:1;">${escapedPreview}</span>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function selectPatient(patientId, name, phone) {
+      selectedPatientId = patientId;
+      selectedPatientName = name;
+      document.getElementById('selectedPatientName').textContent = name;
+      document.getElementById('selectedPatientPhone').textContent = phone;
+      document.getElementById('selectedPatientInfo').style.display = 'block';
+      document.getElementById('noPatientSelected').style.display = 'none';
+      document.getElementById('chatMessages').style.display = 'flex';
+      document.getElementById('chatInputArea').style.display = 'flex';
+      document.getElementById('uploadHelp').style.display = 'block';
+      
+      // Update active state in patient list
+      const items = document.querySelectorAll('.patient-item');
+      items.forEach(item => {
+        item.classList.remove('active');
+        if (item.getAttribute('data-patient-id') === patientId) {
+          item.classList.add('active');
+        }
+      });
+      
+      loadMessages(true); // forceScroll when selecting a patient
+      startAutoRefresh();
+    }
+
+    async function loadMessages(forceScroll = false) {
+      if (!selectedPatientId) return;
+
+      const token = getAdminToken();
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(selectedPatientId)}/messages`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            showError('❌ Yetkilendirme hatası');
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const json = await res.json();
+        if (!json.ok) {
+          throw new Error(json.error || 'Mesajlar yüklenemedi');
+        }
+
+        const messages = Array.isArray(json.messages) ? json.messages : [];
+        renderMessages(messages, forceScroll);
+      } catch (error) {
+        console.error('Load messages error:', error);
+        showError('❌ Mesajlar yüklenemedi: ' + error.message);
+      }
+    }
+
+    function renderMessages(messages, forceScroll = false) {
+      const container = document.getElementById('chatMessages');
+      if (messages.length === 0) {
+        container.innerHTML = '<div class="empty"><div class="empty-icon">💬</div><div>Henüz mesaj yok</div></div>';
+        return;
+      }
+
+      // Save scroll position before rendering
+      const wasNearBottom = forceScroll || (container.scrollHeight - container.scrollTop - container.clientHeight) <= 100;
+
+      // Find the index of the last CLINIC message
+      let lastClinicIndex = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if ((messages[i].from || 'CLINIC') === 'CLINIC') {
+          lastClinicIndex = i;
+          break;
+        }
+      }
+
+      container.innerHTML = messages.map((msg, index) => {
+        const from = msg.from || 'CLINIC';
+        const text = msg.text || '';
+        const time = msg.createdAt ? new Date(msg.createdAt).toLocaleString('tr-TR') : '';
+        const attachment = msg.attachment || null;
+        const type = String(msg.type || (attachment?.fileType || "text")).toLowerCase();
+
+        let attachmentHtml = '';
+        if (attachment && (type === 'image' || attachment.fileType === 'image')) {
+          const url = escapeHtml(attachment.url || '');
+          const name = escapeHtml(attachment.name || 'Fotoğraf');
+          const tags = attachment.tags || null;
+          
+          // Build tags HTML - clinic name, date, Before/After, Doctor review
+          let tagsHtml = '';
+          if (tags) {
+            const displayClinicName = clinicName || 'Klinik';
+            const captureDate = tags.captureDate || (tags.captureTimestamp ? new Date(tags.captureTimestamp).toLocaleDateString('tr-TR', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric'
+            }) : '');
+            const comparisonStatus = tags.comparisonStatus || '';
+            const doctorReview = tags.doctorReview || tags.clinicNote || null;
+            
+            tagsHtml = `
+              <div class="photo-tags" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                <span class="photo-tag">Clinifly • ${escapeHtml(displayClinicName)}</span>
+                ${captureDate ? `<span class="photo-tag">${escapeHtml(captureDate)}</span>` : ''}
+                ${comparisonStatus && (comparisonStatus === 'Before' || comparisonStatus === 'After') ? `
+                  <span class="photo-tag photo-tag-comparison" style="background:rgba(139, 92, 246, 0.2); border-color:rgba(139, 92, 246, 0.4); color:#c4b5fd;">
+                    ${escapeHtml(comparisonStatus)}
+                  </span>
+                ` : ''}
+                ${doctorReview ? `
+                  <span class="photo-tag photo-tag-review" style="background:rgba(245, 158, 11, 0.2); border-color:rgba(245, 158, 11, 0.4); color:#fcd34d;">
+                    👨‍⚕️ Doctor Review
+                  </span>
+                ` : ''}
+              </div>
+            `;
+          }
+          
+          attachmentHtml = `
+            <div style="margin-top:8px;">
+              <a href="${url}" target="_blank" rel="noopener" download style="display:inline-block;">
+                <img src="${url}" alt="${name}" style="max-width:220px; border-radius:8px; display:block;" />
+              </a>
+              ${tagsHtml}
+              <div class="message-time">📷 ${name} • <a href="${url}" target="_blank" rel="noopener" download style="color:inherit; text-decoration:underline;">İndir</a></div>
+            </div>
+          `;
+        } else if (attachment) {
+          const url = escapeHtml(attachment.url || '');
+          const name = escapeHtml(attachment.name || 'Dosya');
+          const size = attachment.size ? ` • ${formatFileSize(attachment.size)}` : '';
+          const icon = getAttachmentIcon(attachment);
+          const isZip = String(attachment.fileType || "").toLowerCase() === "zip" || name.endsWith(".zip") || String(attachment.mimeType || "").toLowerCase().includes("zip");
+          attachmentHtml = `
+            <div style="margin-top:8px;">
+              <a href="${url}" target="_blank" rel="noopener" ${isZip ? "download" : ""} style="color:inherit; text-decoration:underline;">${icon} ${name}${size}</a>
+            </div>
+          `;
+        }
+        
+        // CTA button removed - should not appear in admin messages
+        let ctaButton = '';
+        
+        // Show patient name for PATIENT messages
+        const patientNameDisplay = from === 'PATIENT' && selectedPatientName 
+          ? `<div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:4px;">${escapeHtml(selectedPatientName)}</div>` 
+          : '';
+        
+        return `
+          <div class="message from-${from}">
+            ${patientNameDisplay}
+            ${text ? `<div>${escapeHtml(text)}</div>` : ''}
+            ${attachmentHtml}
+            ${ctaButton}
+            ${time ? `<div class="message-time">${escapeHtml(time)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      // Scroll to bottom only if:
+      // 1. forceScroll is true (user just sent a message), OR
+      // 2. User was already at or near the bottom before rendering
+      // This prevents jumping to bottom when user is scrolling up to read old messages
+      if (forceScroll || wasNearBottom) {
+        // User is at or near bottom, or just sent a message - scroll to show new messages
+        container.scrollTop = container.scrollHeight;
+      }
+      // If user is scrolling up, don't force scroll - let them read old messages
+    }
+
+    async function sendMessage() {
+      if (!selectedPatientId) {
+        showError('❌ Lütfen önce hasta seçin');
+        return;
+      }
+
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const token = getAdminToken();
+      if (!token) {
+        showError('❌ Admin token bulunamadı');
+        return;
+      }
+
+      const sendBtn = input.nextElementSibling;
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Gönderiliyor...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(selectedPatientId)}/messages/admin`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            text: text
+          })
+        });
+
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          throw new Error(json.error || 'Mesaj gönderilemedi');
+        }
+
+        input.value = '';
+        // After sending a message, always scroll to bottom to show the sent message
+        loadMessages(true); // forceScroll = true
+        // Reload patients list to update sorting (most recent first)
+        setTimeout(() => loadPatients().catch(e => console.warn('Failed to reload patients:', e)), 500);
+      } catch (error) {
+        console.error('Send message error:', error);
+        showError('❌ Mesaj gönderilemedi: ' + error.message);
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Gönder';
+      }
+    }
+
+    function triggerImageUpload() {
+      if (!selectedPatientId) {
+        showError('❌ Lütfen önce hasta seçin');
+        return;
+      }
+      document.getElementById('imageInput')?.click();
+    }
+
+    function triggerFileUpload() {
+      if (!selectedPatientId) {
+        showError('❌ Lütfen önce hasta seçin');
+        return;
+      }
+      document.getElementById('fileInput')?.click();
+    }
+
+    async function uploadFile(file, isImage) {
+      const token = getAdminToken();
+      if (!token) {
+        showError('❌ Admin token bulunamadı');
+        return;
+      }
+      
+      if (!selectedPatientId) {
+        showError('❌ Lütfen önce bir hasta seçin');
+        return;
+      }
+      
+      console.log('[ADMIN CHAT] Upload file:', { 
+        fileName: file?.name, 
+        fileSize: file?.size, 
+        fileType: file?.type,
+        isImage,
+        patientId: selectedPatientId 
+      });
+      
+      const uploadStatus = document.getElementById('uploadStatus');
+
+      const fileName = file?.name || "";
+      const fileExt = fileName.includes(".") ? "." + fileName.split(".").pop().toLowerCase() : "";
+      const mimeType = file?.type || "";
+      const size = file?.size || 0;
+      const forbiddenExts = [".rar", ".exe", ".apk", ".dmg", ".bat", ".sh"];
+      const allowedImageMimes = ["image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif"];
+      const allowedImageExts = [".jpg", ".jpeg", ".png", ".heic", ".heif"];
+      const allowedDocMimes = [
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/plain",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/zip",
+        "application/x-zip-compressed",
+      ];
+      const allowedDocExts = [".pdf", ".doc", ".docx", ".txt", ".xls", ".xlsx", ".zip"];
+
+      if (forbiddenExts.includes(fileExt)) {
+        showError(`❌ Bu dosya tipi desteklenmiyor: ${fileExt}. RAR ve çalıştırılabilir dosyalar yasaktır.`);
+        return;
+      }
+
+      if (!mimeType) {
+        showError("❌ Dosya tipi belirlenemedi. Lütfen farklı bir dosya deneyin.");
+        return;
+      }
+
+      if (isImage) {
+        if (!allowedImageMimes.includes(mimeType) || !allowedImageExts.includes(fileExt)) {
+          showError("❌ Desteklenen formatlar: JPG, PNG, HEIC – Max 10MB");
+          return;
+        }
+        if (size > 10 * 1024 * 1024) {
+          showError("❌ Fotoğraf boyutu 10MB'dan küçük olmalıdır.");
+          return;
+        }
+      } else {
+        if (!allowedDocMimes.includes(mimeType) || !allowedDocExts.includes(fileExt)) {
+          showError("❌ Desteklenen formatlar: PDF, DOC/DOCX, TXT, XLS/XLSX, ZIP");
+          return;
+        }
+        const isZip = fileExt === ".zip" || mimeType === "application/zip" || mimeType === "application/x-zip-compressed";
+        if (isZip && size > 50 * 1024 * 1024) {
+          showError("❌ ZIP dosyası 50MB'dan küçük olmalıdır.");
+          return;
+        }
+        if (!isZip && size > 20 * 1024 * 1024) {
+          showError("❌ Doküman 20MB'dan küçük olmalıdır.");
+          return;
+        }
+      }
+
+      const formData = new FormData();
+      formData.append("files", file);
+      formData.append("patientId", selectedPatientId);
+      if (isImage) formData.append("isImage", "true");
+
+      console.log('[ADMIN CHAT] FormData prepared:', {
+        hasFile: !!file,
+        patientId: selectedPatientId,
+        isImage
+      });
+
+      try {
+        if (uploadStatus) {
+          uploadStatus.textContent = "Gönderiliyor...";
+          uploadStatus.style.display = "inline";
+        }
+        
+        console.log('[ADMIN CHAT] Sending to:', `${API_BASE}/api/admin/chat/upload`);
+        
+        // Use admin-specific upload endpoint
+        const res = await fetch(`${API_BASE}/api/admin/chat/upload`, {
+          method: "POST",
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            // Don't set Content-Type, let browser set it automatically for FormData
+          },
+          body: formData,
+        });
+
+        console.log('[ADMIN CHAT] Upload response:', {
+          status: res.status,
+          statusText: res.statusText,
+          ok: res.ok
+        });
+
+        const json = await res.json().catch((e) => {
+          console.error('[ADMIN CHAT] JSON parse error:', e);
+          return { ok: false, error: 'response_parse_error' };
+        });
+        
+        console.log('[ADMIN CHAT] Upload response JSON:', json);
+        
+        if (!res.ok || !json.ok) {
+          const errorMsg = json.message || json.error || `HTTP ${res.status}`;
+          console.error('[ADMIN CHAT] Upload failed:', errorMsg, json);
+          
+          // Handle token errors specifically
+          if (res.status === 401 || json.error === "invalid_token" || json.error === "unauthorized") {
+            showError('❌ Oturum süreniz dolmuş. Lütfen sayfayı yenileyip tekrar giriş yapın.');
+            // Optionally redirect to login
+            setTimeout(() => {
+              window.location.href = '/admin-register.html';
+            }, 2000);
+            return;
+          }
+          
+          throw new Error(errorMsg);
+        }
+
+        console.log('[ADMIN CHAT] Upload successful!');
+        if (uploadStatus) {
+          uploadStatus.textContent = "✓ Gönderildi";
+          uploadStatus.style.color = "#16a34a";
+          setTimeout(() => {
+            uploadStatus.textContent = "";
+            uploadStatus.style.display = "none";
+            uploadStatus.style.color = "";
+          }, 2000);
+        }
+        loadMessages(true); // forceScroll after file upload
+        // Reload patients list to update sorting (most recent first)
+        setTimeout(() => loadPatients().catch(e => console.warn('Failed to reload patients:', e)), 500);
+      } catch (error) {
+        console.error('[ADMIN CHAT] Upload file error:', error);
+        const errorMsg = error.message || error.toString() || 'Bilinmeyen hata';
+        showError('❌ Dosya gönderilemedi: ' + errorMsg);
+        if (uploadStatus) {
+          uploadStatus.textContent = "✗ Hata";
+          uploadStatus.style.color = "#dc2626";
+        }
+      } finally {
+        // Keep status visible for a bit to show success/error
+        setTimeout(() => {
+          if (uploadStatus) {
+            uploadStatus.textContent = "";
+            uploadStatus.style.display = "none";
+            uploadStatus.style.color = "";
+          }
+        }, 3000);
+      }
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes && bytes !== 0) return "";
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function getAttachmentIcon(att) {
+      const mime = String(att?.mimeType || "").toLowerCase();
+      const name = String(att?.name || "").toLowerCase();
+      if (att?.fileType === "zip" || name.endsWith(".zip") || mime.includes("zip")) return "🗜️";
+      if (mime.includes("pdf") || name.endsWith(".pdf")) return "📄";
+      if (mime.includes("word") || name.endsWith(".doc") || name.endsWith(".docx")) return "📝";
+      if (mime.includes("excel") || name.endsWith(".xls") || name.endsWith(".xlsx")) return "📊";
+      if (mime.includes("text") || name.endsWith(".txt")) return "📃";
+      return "📎";
+    }
+
+    function startAutoRefresh() {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
+      refreshInterval = setInterval(() => {
+        if (selectedPatientId) {
+          loadMessages();
+        }
+      }, 3000); // Refresh every 3 seconds
+    }
+
+    // Enter key to send message
+    document.getElementById('messageInput')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    document.getElementById('imageInput')?.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) uploadFile(file, true);
+      e.target.value = '';
+    });
+
+    document.getElementById('fileInput')?.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) uploadFile(file, false);
+      e.target.value = '';
+    });
+
+    // Get patientId from URL parameter
+    function getPatientIdFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('patientId');
+    }
+
+    // Reset badge when entering chat page
+    function resetChatBadge() {
+      try {
+        // Store current timestamp as "last seen" time
+        const lastSeenTimestamp = Date.now();
+        localStorage.setItem('chat_last_seen_timestamp', String(lastSeenTimestamp));
+        console.log('[CHAT] Badge reset - last seen timestamp:', lastSeenTimestamp);
+      } catch (e) {
+        console.error('[CHAT] Error resetting badge:', e);
+      }
+    }
+
+    // Badge loading functions
+    const API = location.origin;
+    function adminHeaders(extra = {}) {
+      const token = getAdminToken();
+      return {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...extra,
+      };
+    }
+
+    let previousUnreadCount = 0;
+    let previousPendingPatients = 0;
+    let previousPendingReferrals = 0;
+
+    function playNotificationSound() {
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.3);
+      } catch (e) {
+        console.warn("Could not play notification sound:", e);
+      }
+    }
+
+    async function loadUnreadMessageCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        let lastSeenTimestamp = 0;
+        try {
+          const stored = localStorage.getItem('chat_last_seen_timestamp');
+          if (stored) lastSeenTimestamp = parseInt(stored, 10) || 0;
+        } catch (e) {}
+        const patientsRes = await fetch(`${API}/api/admin/patients`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!patientsRes.ok) return;
+        const patientsData = await patientsRes.json();
+        if (!patientsData.ok) return;
+        const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+        let totalUnread = 0;
+        for (const patient of patients) {
+          const patientId = patient.patientId || patient.id;
+          if (!patientId) continue;
+          try {
+            const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+              headers: adminHeaders({ Accept: "application/json" }),
+            });
+            if (!messagesRes.ok) continue;
+            const messagesData = await messagesRes.json();
+            if (!messagesData.ok) continue;
+            const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
+            const unread = messages.filter((m) => {
+              if (m.from !== "PATIENT") return false;
+              if (m.createdAt) {
+                const msgTimestamp = new Date(m.createdAt).getTime();
+                return msgTimestamp > lastSeenTimestamp;
+              }
+              return true;
+            }).length;
+            totalUnread += unread;
+          } catch (e) { continue; }
+        }
+        if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
+          playNotificationSound();
+        }
+        previousUnreadCount = totalUnread;
+        const badgeEl = document.getElementById("chatBadge");
+        if (badgeEl) {
+          if (totalUnread > 0) {
+            badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+        
+        // Reload patients list to update badges and sorting only if we're on chat page
+        // (to avoid infinite loop)
+        if (window.location.pathname.includes('chat')) {
+          loadPatients().catch(e => console.warn('Failed to reload patients:', e));
+        }
+      } catch (error) {
+        console.error("Load unread count error:", error);
+      }
+    }
+
+    async function loadPendingPatientsCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API}/api/admin/patients`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok) return;
+        const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+        const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
+        if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
+          playNotificationSound();
+        }
+        previousPendingPatients = pendingCount;
+        const badgeEl = document.getElementById("patientsBadge");
+        if (badgeEl) {
+          if (pendingCount > 0) {
+            badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load pending patients count error:", error);
+      }
+    }
+
+    async function loadPendingReferralsCount() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+          headers: adminHeaders({ Accept: "application/json" }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        const pendingCount = items.length;
+        if (pendingCount > previousPendingReferrals && previousPendingReferrals > 0) {
+          playNotificationSound();
+        }
+        previousPendingReferrals = pendingCount;
+        const badgeEl = document.getElementById("referralsBadge");
+        if (badgeEl) {
+          if (pendingCount > 0) {
+            badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+            badgeEl.style.display = "flex";
+          } else {
+            badgeEl.style.display = "none";
+          }
+        }
+      } catch (error) {
+        console.error("Load pending referrals count error:", error);
+      }
+    }
+
+    async function loadAllBadges() {
+      await Promise.all([
+        loadUnreadMessageCount(),
+        loadPendingPatientsCount(),
+        loadPendingReferralsCount()
+      ]);
+    }
+
+    // Load on page load
+    const urlPatientId = getPatientIdFromUrl();
+    if (urlPatientId) {
+      selectedPatientId = urlPatientId;
+    }
+    
+    // Reset badge when entering chat page
+    resetChatBadge();
+    
+    // Load clinic name
+    async function loadClinicName() {
+      const token = getAdminToken();
+      if (!token) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+        if (res.ok) {
+          const clinic = await res.json();
+          clinicName = clinic.branding?.clinicName || clinic.name || 'Klinik';
+          
+          // Update navbar clinic name
+          const navbarClinicName = document.getElementById('navbarClinicName');
+          if (navbarClinicName) {
+            navbarClinicName.textContent = clinicName;
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load clinic name:', error);
+        clinicName = 'Klinik';
+        
+        // Update navbar with fallback
+        const navbarClinicName = document.getElementById('navbarClinicName');
+        if (navbarClinicName) {
+          navbarClinicName.textContent = 'Klinik';
+        }
+      }
+    }
+    
+    loadClinicName();
+    loadPatients();
+    loadAllBadges();
+
+    // Auto-refresh badges every 30 seconds
+    setInterval(loadAllBadges, 30000);
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
+    });
+  </script>
+</body>
+</html>
+

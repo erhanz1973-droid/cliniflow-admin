@@ -4,13 +4,25 @@
   "type": "commonjs",
   "main": "index.cjs",
   "scripts": {
-    "start": "node index.cjs"
+    "start": "node index.cjs",
+    "dev": "node index.cjs",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop clinifly-admin",
+    "pm2:restart": "pm2 restart clinifly-admin",
+    "pm2:logs": "pm2 logs clinifly-admin",
+    "pm2:status": "pm2 status",
+    "deploy": "./deploy.sh"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.22.1",
     "jsonwebtoken": "^9.0.3",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.10.1",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "keywords": [],

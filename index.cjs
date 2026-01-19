@@ -1,3 +1,6 @@
+// Load environment variables from .env file
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
@@ -6,18 +9,21 @@ const crypto = require("crypto");
 const http = require("http");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const nodemailer = require("nodemailer");
+const procedures = require("./shared/procedures");
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5050;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
-const JWT_SECRET = process.env.JWT_SECRET || "cliniflow-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET || "clinifly-secret-key-change-in-production";
 const JWT_EXPIRES_IN = "30d"; // 30 days
 
 // ================== MIDDLEWARE ==================
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
-app.use(express.static(path.join(__dirname, "public"))); // /admin.html
+// Static middleware will be placed after redirect routes but before API routes
 
 // ================== STORAGE ==================
 const DATA_DIR = path.join(__dirname, "data");
@@ -31,6 +37,8 @@ const REF_EVENT_FILE = path.join(DATA_DIR, "referralEvents.json");
 const CLINIC_FILE = path.join(DATA_DIR, "clinic.json");
 const CLINICS_FILE = path.join(DATA_DIR, "clinics.json"); // Admin clinics (email/password)
 const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
+const OTP_FILE = path.join(DATA_DIR, "otps.json"); // OTP storage with hashed codes
+const PUSH_SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "pushSubscriptions.json"); // Push notification subscriptions
 
 function readJson(file, fallback) {
   try {
@@ -48,41 +56,636 @@ const now = () => Date.now();
 const rid = (p) => p + "_" + crypto.randomBytes(6).toString("hex");
 const makeToken = () => "t_" + crypto.randomBytes(10).toString("base64url");
 
+// Normalize phone number: remove +90, leading 0, spaces, and keep only digits
+function normalizePhone(phone) {
+  if (!phone) return "";
+  let cleaned = String(phone).trim().replace(/\s+/g, ""); // Remove spaces
+  cleaned = cleaned.replace(/\D/g, ""); // Keep only digits
+  
+  // Remove country code +90 or 90 prefix
+  if (cleaned.startsWith("90") && cleaned.length > 10) {
+    cleaned = cleaned.substring(2);
+  }
+  
+  // Remove leading 0
+  if (cleaned.startsWith("0")) {
+    cleaned = cleaned.substring(1);
+  }
+  
+  return cleaned;
+}
+
+const chatUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { files: 5, fileSize: 50 * 1024 * 1024 }, // 50MB max per file
+});
+
+// ================== EMAIL OTP CONFIGURATION ==================
+const SMTP_HOST = process.env.SMTP_HOST || "smtp-relay.brevo.com";
+const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
+const SMTP_USER = process.env.SMTP_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || "";
+const SMTP_FROM = process.env.SMTP_FROM || "noreply@clinifly.com";
+
+// Nodemailer transporter for Brevo SMTP
+let emailTransporter = null;
+if (SMTP_USER && SMTP_PASS) {
+  emailTransporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: false, // true for 465, false for other ports
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  });
+  console.log(`[EMAIL] SMTP configured for ${SMTP_HOST}:${SMTP_PORT}`);
+} else {
+  console.warn("[EMAIL] SMTP credentials not configured. OTP emails will not be sent.");
+}
+
+// ================== PUSH NOTIFICATIONS ==================
+let webpush = null;
+let VAPID_PUBLIC_KEY = "";
+let VAPID_PRIVATE_KEY = "";
+let VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:admin@clinifly.com";
+
+// Try to load web-push module (optional, fails gracefully if not installed)
+try {
+  webpush = require("web-push");
+  
+  // Try to read VAPID keys from environment or generate them
+  VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+  VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+  
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    // Generate VAPID keys if not provided
+    const vapidKeys = webpush.generateVAPIDKeys();
+    VAPID_PUBLIC_KEY = vapidKeys.publicKey;
+    VAPID_PRIVATE_KEY = vapidKeys.privateKey;
+    console.log("[PUSH] VAPID keys generated. Add these to your .env file:");
+    console.log(`VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}`);
+    console.log(`VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}`);
+  }
+  
+  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log("[PUSH] Push notifications configured");
+} catch (e) {
+  console.warn("[PUSH] web-push module not installed. Install with: npm install web-push");
+  console.warn("[PUSH] Push notifications will not work until web-push is installed");
+}
+
+// Helper function to send push notification to a patient
+async function sendPushNotification(patientId, title, message, options = {}) {
+  if (!webpush) {
+    console.warn("[PUSH] Cannot send notification: web-push not available");
+    return false;
+  }
+  
+  try {
+    const subscriptions = readJson(PUSH_SUBSCRIPTIONS_FILE, {});
+    const patientSubscriptions = subscriptions[patientId] || [];
+    
+    if (patientSubscriptions.length === 0) {
+      console.log(`[PUSH] No subscriptions found for patient ${patientId}`);
+      return false;
+    }
+    
+    const payload = JSON.stringify({
+      title: title || "Yeni Mesaj",
+      body: message || "Klinikten yeni bir mesaj aldınız",
+      icon: options.icon || "/icon-192x192.png",
+      badge: options.badge || "/badge-72x72.png",
+      silent: false, // CLINIC mesajları için ses açık
+      requireInteraction: false,
+      data: {
+        url: options.url || "/",
+        patientId: patientId,
+        from: "CLINIC", // Mesajın CLINIC'ten geldiğini belirt
+        ...(options.data || {})
+      }
+    });
+    
+    const results = await Promise.allSettled(
+      patientSubscriptions.map(async (subscription) => {
+        try {
+          await webpush.sendNotification(subscription, payload);
+          console.log(`[PUSH] Notification sent successfully to patient ${patientId}`);
+          return { success: true, subscription };
+        } catch (error) {
+          console.error(`[PUSH] Failed to send notification:`, error);
+          // If subscription is invalid (410), remove it
+          if (error.statusCode === 410) {
+            console.log(`[PUSH] Removing invalid subscription for patient ${patientId}`);
+            const updatedSubs = (subscriptions[patientId] || []).filter(
+              sub => JSON.stringify(sub) !== JSON.stringify(subscription)
+            );
+            subscriptions[patientId] = updatedSubs;
+            writeJson(PUSH_SUBSCRIPTIONS_FILE, subscriptions);
+          }
+          return { success: false, subscription, error };
+        }
+      })
+    );
+    
+    const successCount = results.filter(r => r.status === "fulfilled" && r.value.success).length;
+    return successCount > 0;
+  } catch (error) {
+    console.error("[PUSH] Error sending push notification:", error);
+    return false;
+  }
+}
+
+// ================== OTP SERVICE ==================
+const OTP_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const OTP_MAX_ATTEMPTS = 3;
+const OTP_LENGTH = 6;
+const TOKEN_EXPIRY_DAYS = 14; // 7-14 days as requested
+
+/**
+ * Generate a 6-digit numeric OTP
+ */
+function generateOTP() {
+  const digits = "0123456789";
+  let otp = "";
+  for (let i = 0; i < OTP_LENGTH; i++) {
+    otp += digits[Math.floor(Math.random() * 10)];
+  }
+  return otp;
+}
+
+/**
+ * Hash OTP using bcrypt for secure storage
+ */
+async function hashOTP(otp) {
+  return await bcrypt.hash(otp, 10);
+}
+
+/**
+ * Verify OTP against hashed version
+ */
+async function verifyOTP(plainOTP, hashedOTP) {
+  return await bcrypt.compare(plainOTP, hashedOTP);
+}
+
+/**
+ * Get OTPs for an email
+ */
+function getOTPsForEmail(email) {
+  const otps = readJson(OTP_FILE, {});
+  return otps[email.toLowerCase().trim()] || null;
+}
+
+/**
+ * Save OTP for an email
+ */
+async function saveOTP(email, otpCode, attempts = 0) {
+  const otps = readJson(OTP_FILE, {});
+  const emailKey = email.toLowerCase().trim();
+  const hashedOTP = await hashOTP(otpCode);
+  
+  otps[emailKey] = {
+    hashedOTP,
+    createdAt: now(),
+    expiresAt: now() + OTP_EXPIRY_MS,
+    attempts: attempts,
+    verified: false,
+  };
+  
+  writeJson(OTP_FILE, otps);
+  return otps[emailKey];
+}
+
+/**
+ * Increment OTP attempt count
+ */
+function incrementOTPAttempt(email) {
+  const otps = readJson(OTP_FILE, {});
+  const emailKey = email.toLowerCase().trim();
+  if (otps[emailKey]) {
+    otps[emailKey].attempts = (otps[emailKey].attempts || 0) + 1;
+    writeJson(OTP_FILE, otps);
+  }
+}
+
+/**
+ * Mark OTP as verified and invalidate it
+ */
+function markOTPVerified(email) {
+  const otps = readJson(OTP_FILE, {});
+  const emailKey = email.toLowerCase().trim();
+  if (otps[emailKey]) {
+    otps[emailKey].verified = true;
+    otps[emailKey].expiresAt = now(); // Immediately expire
+    writeJson(OTP_FILE, otps);
+  }
+}
+
+/**
+ * Clean up expired OTPs (optional cleanup function)
+ */
+function cleanupExpiredOTPs() {
+  const otps = readJson(OTP_FILE, {});
+  const nowTime = now();
+  let cleaned = false;
+  
+  for (const email in otps) {
+    const otpData = otps[email];
+    if (otpData.expiresAt < nowTime || otpData.verified) {
+      delete otps[email];
+      cleaned = true;
+    }
+  }
+  
+  if (cleaned) {
+    writeJson(OTP_FILE, otps);
+  }
+}
+
+/**
+ * Send OTP email using Brevo SMTP
+ */
+async function sendOTPEmail(email, otpCode) {
+  if (!emailTransporter) {
+    throw new Error("SMTP not configured");
+  }
+
+  const htmlTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clinifly - OTP Code</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    .container {
+      background-color: #ffffff;
+      border-radius: 8px;
+      padding: 30px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+      color: #2563eb;
+      margin-bottom: 10px;
+    }
+    .otp-code {
+      background-color: #f0f0f0;
+      border: 2px dashed #2563eb;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+      font-size: 32px;
+      font-weight: bold;
+      letter-spacing: 8px;
+      color: #2563eb;
+      margin: 30px 0;
+    }
+    .warning {
+      background-color: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 4px;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e5e7eb;
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">Clinifly</div>
+      <h1 style="margin: 0; color: #111827;">Email Verification Code</h1>
+    </div>
+    
+    <p>Hello,</p>
+    <p>You requested a login code for your Clinifly account. Use the code below to complete your login:</p>
+    
+    <div class="otp-code">${otpCode}</div>
+    
+    <div class="warning">
+      <strong>⚠️ Important:</strong>
+      <ul style="margin: 10px 0; padding-left: 20px;">
+        <li>This code expires in <strong>5 minutes</strong></li>
+        <li>Do not share this code with anyone</li>
+        <li>If you didn't request this code, please ignore this email</li>
+      </ul>
+    </div>
+    
+    <p>If you didn't request this code, you can safely ignore this email.</p>
+    
+    <div class="footer">
+      <p>This is an automated email. Please do not reply.</p>
+      <p>&copy; ${new Date().getFullYear()} Clinifly. All rights reserved.</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+
+  const textTemplate = `
+Clinifly - Email Verification Code
+
+Hello,
+
+You requested a login code for your Clinifly account.
+
+Your OTP code is: ${otpCode}
+
+This code expires in 5 minutes. Do not share this code with anyone.
+
+If you didn't request this code, you can safely ignore this email.
+
+---
+This is an automated email. Please do not reply.
+© ${new Date().getFullYear()} Clinifly. All rights reserved.
+  `;
+
+  const mailOptions = {
+    from: SMTP_FROM,
+    to: email,
+    subject: "Clinifly - Your Login Code",
+    text: textTemplate,
+    html: htmlTemplate,
+  };
+
+  await emailTransporter.sendMail(mailOptions);
+  console.log(`[OTP] Email sent to ${email}`);
+}
+
+// Rate limiting: track OTP requests per email
+const otpRequestRateLimit = new Map(); // email -> { count, resetAt }
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 3; // max 3 requests per minute per email
+
+function checkRateLimit(email) {
+  const emailKey = email.toLowerCase().trim();
+  const nowTime = now();
+  const limit = otpRequestRateLimit.get(emailKey);
+
+  if (!limit || limit.resetAt < nowTime) {
+    // Reset or create new limit
+    otpRequestRateLimit.set(emailKey, {
+      count: 1,
+      resetAt: nowTime + RATE_LIMIT_WINDOW_MS,
+    });
+    return true;
+  }
+
+  if (limit.count >= RATE_LIMIT_MAX_REQUESTS) {
+    return false; // Rate limit exceeded
+  }
+
+  limit.count++;
+  return true;
+}
+
+// ================== ADMIN AUTH (token-based, allows PENDING) ==================
+function requireAdminToken(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("[requireAdminToken] Missing or invalid auth header");
+      return res.status(401).json({ ok: false, error: "unauthorized", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
+    }
+
+    const token = authHeader.substring(7);
+    console.log("[requireAdminToken] Token received, length:", token.length, "starts with:", token.substring(0, 10));
+    
+    const decoded = jwt.verify(token, JWT_SECRET);
+    console.log("[requireAdminToken] Token decoded, clinicCode:", decoded.clinicCode, "clinicId:", decoded.clinicId);
+
+    // Try to find clinic by clinicId first, then by clinicCode
+    let clinic = null;
+    const clinics = readJson(CLINICS_FILE, {});
+    
+    if (decoded.clinicId) {
+      clinic = clinics[decoded.clinicId];
+    }
+    
+    // If not found by clinicId, search by clinicCode
+    if (!clinic && decoded.clinicCode) {
+      const code = String(decoded.clinicCode).toUpperCase();
+      for (const clinicId in clinics) {
+        const c = clinics[clinicId];
+        if (c) {
+          const clinicCodeToCheck = c.clinicCode || c.code;
+          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
+            clinic = c;
+            // Update decoded.clinicId for consistency
+            decoded.clinicId = clinicId;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Also check CLINIC_FILE (single clinic) as fallback
+    if (!clinic && decoded.clinicCode) {
+      const singleClinic = readJson(CLINIC_FILE, {});
+      const code = String(decoded.clinicCode).toUpperCase();
+      if (singleClinic && singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
+        clinic = singleClinic;
+      }
+    }
+    
+    if (!clinic) {
+      console.error("[requireAdminToken] Clinic not found, clinicCode:", decoded.clinicCode, "clinicId:", decoded.clinicId);
+      return res.status(401).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
+    }
+
+    req.clinicId = decoded.clinicId || null;
+    req.clinicCode = clinic.clinicCode || clinic.code;
+    req.clinicStatus = clinic.status || "PENDING";
+    console.log("[requireAdminToken] Auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
+    next();
+  } catch (error) {
+    console.error("[requireAdminToken] Auth error:", error.name, error.message);
+    if (error?.name === "JsonWebTokenError" || error?.name === "TokenExpiredError") {
+      return res.status(401).json({ ok: false, error: "invalid_token", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
+    }
+    return res.status(500).json({ ok: false, error: "auth_error", message: "Kimlik doğrulama hatası." });
+  }
+}
+
 // ================== HEALTH ==================
 app.get("/health", (req, res) => {
-  res.setHeader("X-CLINIFLOW-SERVER", "INDEX_CJS_ADMIN_V3");
+  res.setHeader("X-CLINIFLY-SERVER", "INDEX_CJS_ADMIN_V3");
   res.json({ ok: true, server: "index.cjs", time: now() });
 });
 
+// ================== DASHBOARD REDIRECTS ==================
+// Keep both UIs:
+// - Dashboard (current): /admin.html  -> public/admin.html
+// - Legacy page:         /admin-v2.html -> admin_v2.html
+app.get("/", (req, res) => res.redirect("/admin.html"));
+app.get("/admin", (req, res) => res.redirect("/admin.html"));
+app.get("/dashboard", (req, res) => res.redirect("/admin.html"));
+
+// Explicit UI entrypoints
+app.get("/admin-v2.html", (req, res) => {
+  const filePath = path.resolve(__dirname, "admin_v2.html");
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      console.error("[GET /admin-v2.html] Error:", err);
+      res.status(500).send("File not found: " + err.message);
+    }
+  });
+});
+
+app.get("/admin-v3.html", (req, res) => {
+  // Backward compatibility: /admin-v3.html now points to the same dashboard
+  res.redirect("/admin.html");
+});
+
+// ================== STATIC MIDDLEWARE (serves entire public/ directory) ==================
+// This must be placed AFTER redirect routes but BEFORE API routes
+// All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
+app.use(express.static(path.join(__dirname, "public")));
+
 // ================== REGISTER ==================
-app.post("/api/register", (req, res) => {
-  const { name = "", phone = "", referralCode = "", clinicCode = "" } = req.body || {};
+app.post("/api/register", async (req, res) => {
+  const { name = "", phone = "", email = "", referralCode = "", clinicCode = "" } = req.body || {};
+  
+  console.log(`[REGISTER] Request received:`, { 
+    name: name ? "***" : "", 
+    phone: phone ? "***" : "", 
+    email: email ? "***" : "",
+    clinicCode: clinicCode || "(empty)",
+    hasClinicCode: !!clinicCode 
+  });
+  
+  // Email is required for registration
+  if (!email || !String(email).trim()) {
+    return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
+  }
+  
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailNormalized = String(email).trim().toLowerCase();
+  if (!emailRegex.test(emailNormalized)) {
+    return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
+  }
+  
+  // Check if email already exists (before clinic validation to fail fast)
+  const patientsCheck = readJson(PAT_FILE, {});
+  for (const pid in patientsCheck) {
+    if (patientsCheck[pid].email && String(patientsCheck[pid].email).trim().toLowerCase() === emailNormalized) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "email_already_exists",
+        message: "Bu e-posta adresi ile zaten bir hesap kayıtlı." 
+      });
+    }
+  }
+  
   if (!String(phone).trim()) {
-    return res.status(400).json({ ok: false, error: "phone_required" });
+    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
   }
 
   // Validate clinic code if provided
   let validatedClinicCode = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
-    const clinic = readJson(CLINIC_FILE, {});
-    if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
-      validatedClinicCode = code;
-    } else {
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code });
+    let foundClinic = null;
+    
+    console.log(`[REGISTER] Validating clinic code: ${code}`);
+    
+    // First check CLINIC_FILE (single clinic object)
+    const singleClinic = readJson(CLINIC_FILE, {});
+    if (singleClinic && singleClinic.clinicCode) {
+      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
+      console.log(`[REGISTER] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+      if (singleClinicCode === code) {
+        foundClinic = singleClinic;
+        console.log(`[REGISTER] Found matching clinic in CLINIC_FILE`);
+      }
     }
+    
+    // Then check CLINICS_FILE (multiple clinics object)
+    if (!foundClinic) {
+      const clinics = readJson(CLINICS_FILE, {});
+      console.log(`[REGISTER] Available clinics count in CLINICS_FILE: ${Object.keys(clinics).length}`);
+      
+      // Search for clinic by clinicCode or code field
+      for (const clinicId in clinics) {
+        const clinic = clinics[clinicId];
+        if (clinic) {
+          // Check both clinicCode and code fields
+          const clinicCodeToCheck = clinic.clinicCode || clinic.code;
+          if (clinicCodeToCheck) {
+            const clinicCodeUpper = String(clinicCodeToCheck).toUpperCase();
+            console.log(`[REGISTER] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
+            if (clinicCodeUpper === code) {
+              foundClinic = clinic;
+              console.log(`[REGISTER] Found matching clinic in CLINICS_FILE: ${clinicId}`);
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    if (foundClinic) {
+      validatedClinicCode = code;
+      console.log(`[REGISTER] Using existing clinic: ${code}`);
+    } else {
+      // Clinic not found - return error
+      console.log(`[REGISTER] Clinic code "${code}" not found in CLINIC_FILE or CLINICS_FILE`);
+      return res.status(404).json({ 
+        ok: false, 
+        error: "clinic_not_found",
+        message: `Klinik kodu "${code}" bulunamadı. Lütfen geçerli bir klinik kodu girin.`
+      });
+    }
+  } else {
+    console.log(`[REGISTER] No clinic code provided or empty, validatedClinicCode will be null`);
   }
+  
+  console.log(`[REGISTER] Final validatedClinicCode: ${validatedClinicCode || "null"}`);
 
   const patientId = rid("p");
   const requestId = rid("req");
   const token = makeToken();
+
+  // Normalize phone number before saving
+  const phoneNormalized = normalizePhone(phone);
+  if (!phoneNormalized || phoneNormalized.length < 10) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "invalid_phone", 
+      message: "Geçersiz telefon numarası formatı." 
+    });
+  }
 
   // patients
   const patients = readJson(PAT_FILE, {});
   patients[patientId] = {
     patientId,
     name: String(name || ""),
-    phone: String(phone || ""),
+    phone: phoneNormalized, // Save normalized phone
+    email: emailNormalized,
     status: "PENDING",
     clinicCode: validatedClinicCode,
     createdAt: now(),
@@ -90,18 +693,14 @@ app.post("/api/register", (req, res) => {
   };
   writeJson(PAT_FILE, patients);
 
-  // tokens
-  const tokens = readJson(TOK_FILE, {});
-  tokens[token] = { patientId, role: "PENDING", createdAt: now() };
-  writeJson(TOK_FILE, tokens);
-
   // registrations (array/object safe)
   const regs = readJson(REG_FILE, {});
   const row = {
     requestId,
     patientId,
     name: String(name || ""),
-    phone: String(phone || ""),
+    phone: phoneNormalized, // Use normalized phone
+    email: emailNormalized,
     status: "PENDING",
     clinicCode: validatedClinicCode, // Add clinicCode to registration
     createdAt: now(),
@@ -177,38 +776,180 @@ app.post("/api/register", (req, res) => {
     }
   }
 
-  res.json({ ok: true, token, patientId, requestId, role: "PENDING", status: "PENDING" });
+  // Send OTP for email verification instead of returning token immediately
+  try {
+    // Clean up expired OTPs
+    cleanupExpiredOTPs();
+    
+    // Generate OTP
+    const otpCode = generateOTP();
+    
+    // Save OTP (hashed)
+    await saveOTP(emailNormalized, otpCode, 0);
+    
+    // Send email
+    if (emailTransporter) {
+      try {
+        await sendOTPEmail(emailNormalized, otpCode);
+        console.log(`[REGISTER] OTP sent to ${emailNormalized} for patient ${patientId}`);
+      } catch (emailError) {
+        console.error("[REGISTER] Failed to send OTP email:", emailError);
+        // Continue even if email fails - user can request OTP again
+      }
+    } else {
+      console.warn("[REGISTER] SMTP not configured - OTP not sent");
+    }
+    
+    // Return success without token - user must verify OTP first
+    res.json({ 
+      ok: true, 
+      message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
+      patientId, 
+      email: emailNormalized,
+      requestId, 
+      status: "PENDING",
+      requiresOTP: true,
+    });
+  } catch (otpError) {
+    console.error("[REGISTER] OTP generation error:", otpError);
+    // Still return success, but user will need to request OTP manually
+    res.json({ 
+      ok: true, 
+      message: "Kayıt başarılı. Lütfen OTP kodu talep edin.",
+      patientId, 
+      email: emailNormalized,
+      requestId, 
+      status: "PENDING",
+      requiresOTP: true,
+    });
+  }
 });
 
+// ================== PATIENT LOGIN ==================
+// Removed duplicate endpoint - using the one at line 509
+
 // ================== PATIENT REGISTER (alias) ==================
-app.post("/api/patient/register", (req, res) => {
-  const { name = "", phone = "", referralCode = "", clinicCode = "" } = req.body || {};
+app.post("/api/patient/register", async (req, res) => {
+  const { name = "", phone = "", email = "", referralCode = "", clinicCode = "" } = req.body || {};
+  
+  console.log(`[REGISTER /api/patient/register] Request received:`, { 
+    name: name ? "***" : "", 
+    phone: phone ? "***" : "", 
+    email: email ? "***" : "",
+    clinicCode: clinicCode || "(empty)",
+    hasClinicCode: !!clinicCode 
+  });
+  
+  // Email is required for registration
+  if (!email || !String(email).trim()) {
+    return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
+  }
+  
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const emailNormalized = String(email).trim().toLowerCase();
+  if (!emailRegex.test(emailNormalized)) {
+    return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
+  }
+  
+  // Check if email already exists (before clinic validation to fail fast)
+  const patientsCheckEmail = readJson(PAT_FILE, {});
+  for (const pid in patientsCheckEmail) {
+    if (patientsCheckEmail[pid].email && String(patientsCheckEmail[pid].email).trim().toLowerCase() === emailNormalized) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "email_already_exists",
+        message: "Bu e-posta adresi ile zaten bir hesap kayıtlı." 
+      });
+    }
+  }
+  
   if (!String(phone).trim()) {
-    return res.status(400).json({ ok: false, error: "phone_required" });
+    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
   }
 
   // Validate clinic code if provided
   let validatedClinicCode = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
-    const clinic = readJson(CLINIC_FILE, {});
-    if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
-      validatedClinicCode = code;
-    } else {
-      return res.status(400).json({ ok: false, error: "invalid_clinic_code", code });
+    let foundClinic = null;
+    
+    console.log(`[REGISTER /api/patient/register] Validating clinic code: ${code}`);
+    
+    // First check CLINIC_FILE (single clinic object)
+    const singleClinic = readJson(CLINIC_FILE, {});
+    if (singleClinic && singleClinic.clinicCode) {
+      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
+      console.log(`[REGISTER /api/patient/register] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+      if (singleClinicCode === code) {
+        foundClinic = singleClinic;
+        console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINIC_FILE`);
+      }
     }
+    
+    // Then check CLINICS_FILE (multiple clinics object)
+    if (!foundClinic) {
+      const clinics = readJson(CLINICS_FILE, {});
+      console.log(`[REGISTER /api/patient/register] Available clinics count in CLINICS_FILE: ${Object.keys(clinics).length}`);
+      
+      // Search for clinic by clinicCode or code field
+      for (const clinicId in clinics) {
+        const clinic = clinics[clinicId];
+        if (clinic) {
+          // Check both clinicCode and code fields
+          const clinicCodeToCheck = clinic.clinicCode || clinic.code;
+          if (clinicCodeToCheck) {
+            const clinicCodeUpper = String(clinicCodeToCheck).toUpperCase();
+            console.log(`[REGISTER /api/patient/register] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
+            if (clinicCodeUpper === code) {
+              foundClinic = clinic;
+              console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINICS_FILE: ${clinicId}`);
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    if (foundClinic) {
+      validatedClinicCode = code;
+      console.log(`[REGISTER /api/patient/register] Using existing clinic: ${code}`);
+    } else {
+      // Clinic not found - return error
+      console.log(`[REGISTER /api/patient/register] Clinic code "${code}" not found in CLINIC_FILE or CLINICS_FILE`);
+      return res.status(404).json({ 
+        ok: false, 
+        error: "clinic_not_found",
+        message: `Klinik kodu "${code}" bulunamadı. Lütfen geçerli bir klinik kodu girin.`
+      });
+    }
+  } else {
+    console.log(`[REGISTER /api/patient/register] No clinic code provided or empty, validatedClinicCode will be null`);
   }
+  
+  console.log(`[REGISTER /api/patient/register] Final validatedClinicCode: ${validatedClinicCode || "null"}`);
 
   const patientId = rid("p");
   const requestId = rid("req");
   const token = makeToken();
+
+  // Normalize phone number before saving
+  const phoneNormalized = normalizePhone(phone);
+  if (!phoneNormalized || phoneNormalized.length < 10) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "invalid_phone", 
+      message: "Geçersiz telefon numarası formatı." 
+    });
+  }
 
   // patients
   const patients = readJson(PAT_FILE, {});
   patients[patientId] = {
     patientId,
     name: String(name || ""),
-    phone: String(phone || ""),
+    phone: phoneNormalized, // Save normalized phone
+    email: emailNormalized,
     status: "PENDING",
     clinicCode: validatedClinicCode,
     createdAt: now(),
@@ -227,7 +968,8 @@ app.post("/api/patient/register", (req, res) => {
     requestId,
     patientId,
     name: String(name || ""),
-    phone: String(phone || ""),
+    phone: phoneNormalized, // Use normalized phone
+    email: emailNormalized,
     status: "PENDING",
     createdAt: now(),
     updatedAt: now(),
@@ -290,7 +1032,53 @@ app.post("/api/patient/register", (req, res) => {
     }
   }
 
-  res.json({ ok: true, token, patientId, requestId, role: "PENDING", status: "PENDING" });
+  // Send OTP for email verification instead of returning token immediately
+  try {
+    // Clean up expired OTPs
+    cleanupExpiredOTPs();
+    
+    // Generate OTP
+    const otpCode = generateOTP();
+    
+    // Save OTP (hashed)
+    await saveOTP(emailNormalized, otpCode, 0);
+    
+    // Send email
+    if (emailTransporter) {
+      try {
+        await sendOTPEmail(emailNormalized, otpCode);
+        console.log(`[REGISTER /api/patient/register] OTP sent to ${emailNormalized} for patient ${patientId}`);
+      } catch (emailError) {
+        console.error("[REGISTER /api/patient/register] Failed to send OTP email:", emailError);
+        // Continue even if email fails - user can request OTP again
+      }
+    } else {
+      console.warn("[REGISTER /api/patient/register] SMTP not configured - OTP not sent");
+    }
+    
+    // Return success without token - user must verify OTP first
+    res.json({ 
+      ok: true, 
+      message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
+      patientId, 
+      email: emailNormalized,
+      requestId, 
+      status: "PENDING",
+      requiresOTP: true,
+    });
+  } catch (otpError) {
+    console.error("[REGISTER /api/patient/register] OTP generation error:", otpError);
+    // Still return success, but user will need to request OTP manually
+    res.json({ 
+      ok: true, 
+      message: "Kayıt başarılı. Lütfen OTP kodu talep edin.",
+      patientId, 
+      email: emailNormalized,
+      requestId, 
+      status: "PENDING",
+      requiresOTP: true,
+    });
+  }
 });
 
 // ================== AUTH ==================
@@ -303,15 +1091,27 @@ function requireToken(req, res, next) {
   
   if (!finalToken) {
     console.log("[AUTH] Missing token");
-    return res.status(401).json({ ok: false, error: "missing_token" });
+    return res.status(401).json({ ok: false, error: "missing_token", message: "Token bulunamadı" });
   }
 
   const tokens = readJson(TOK_FILE, {});
   const t = tokens[finalToken];
   if (!t?.patientId) {
-    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 10)}... (not found in tokens.json)`);
+    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 20)}... (not found in tokens.json)`);
     console.log(`[AUTH] Available tokens: ${Object.keys(tokens).length} tokens`);
-    return res.status(401).json({ ok: false, error: "bad_token" });
+    console.log(`[AUTH] Token length: ${finalToken.length}, starts with: ${finalToken.substring(0, 5)}`);
+    
+    // Check if token might be a JWT (starts with eyJ)
+    if (finalToken.startsWith("eyJ")) {
+      console.log("[AUTH] Token appears to be JWT format, but requireToken only supports legacy tokens");
+      console.log("[AUTH] Patient should use /api/patient/login to get a valid token");
+    }
+    
+    return res.status(401).json({ 
+      ok: false, 
+      error: "bad_token",
+      message: "Geçersiz token. Lütfen tekrar giriş yapın."
+    });
   }
 
   req.patientId = t.patientId;
@@ -334,6 +1134,397 @@ app.get("/api/me", requireToken, (req, res) => {
   });
 });
 
+// ================== PHONE-BASED EMAIL OTP AUTHENTICATION ==================
+// POST /auth/request-otp
+// Request OTP: takes phone number, finds patient, sends OTP to patient's email
+app.post("/auth/request-otp", async (req, res) => {
+  try {
+    const { phone } = req.body || {};
+    
+    if (!phone || !String(phone).trim()) {
+      return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
+    }
+    
+    // Normalize phone number for comparison
+    const phoneNormalized = normalizePhone(phone);
+    
+    if (!phoneNormalized || phoneNormalized.length < 10) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_phone", 
+        message: "Geçersiz telefon numarası formatı." 
+      });
+    }
+    
+    // Find patient by phone number (normalize both for comparison)
+    const patients = readJson(PAT_FILE, {});
+    let foundPatient = null;
+    let foundPatientId = null;
+    let foundEmail = null;
+    
+    for (const pid in patients) {
+      const patientPhone = patients[pid].phone;
+      if (patientPhone) {
+        const normalizedPatientPhone = normalizePhone(patientPhone);
+        if (normalizedPatientPhone === phoneNormalized) {
+          foundPatient = patients[pid];
+          foundPatientId = pid;
+          foundEmail = foundPatient.email;
+          break;
+        }
+      }
+    }
+    
+    if (!foundPatient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found", 
+        message: "Bu telefon numarası ile kayıtlı hasta bulunamadı. Lütfen kayıt olun." 
+      });
+    }
+    
+    if (!foundEmail || !String(foundEmail).trim()) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "email_not_found", 
+        message: "Bu hastanın email adresi kayıtlı değil. Lütfen admin ile iletişime geçin." 
+      });
+    }
+    
+    const emailNormalized = String(foundEmail).trim().toLowerCase();
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailNormalized)) {
+      return res.status(400).json({ ok: false, error: "invalid_email", message: "Hastanın email adresi geçersiz." });
+    }
+    
+    // Check rate limit (use phone for rate limiting, but email for OTP storage)
+    if (!checkRateLimit(phoneNormalized)) {
+      return res.status(429).json({ 
+        ok: false, 
+        error: "rate_limit_exceeded", 
+        message: "Çok fazla OTP isteği. Lütfen daha sonra tekrar deneyin." 
+      });
+    }
+    
+    // Check if SMTP is configured
+    if (!emailTransporter) {
+      console.error("[OTP] SMTP not configured");
+      return res.status(500).json({ 
+        ok: false, 
+        error: "smtp_not_configured", 
+        message: "Email servisi yapılandırılmamış. Lütfen destek ile iletişime geçin." 
+      });
+    }
+    
+    // Clean up expired OTPs
+    cleanupExpiredOTPs();
+    
+    // Generate OTP
+    const otpCode = generateOTP();
+    
+    // Save OTP with phone as key (for lookup) but email for sending
+    // We'll store phone-to-email mapping in OTP data
+    const otps = readJson(OTP_FILE, {});
+    const phoneKey = `phone_${phoneNormalized}`;
+    const hashedOTP = await hashOTP(otpCode);
+    
+    otps[phoneKey] = {
+      hashedOTP,
+      email: emailNormalized, // Store email for sending
+      phone: phoneNormalized, // Store phone for lookup
+      patientId: foundPatientId,
+      createdAt: now(),
+      expiresAt: now() + OTP_EXPIRY_MS,
+      attempts: 0,
+      verified: false,
+    };
+    writeJson(OTP_FILE, otps);
+    
+    // Also save under email key for backward compatibility if needed
+    await saveOTP(emailNormalized, otpCode, 0);
+    
+    // Send email
+    try {
+      await sendOTPEmail(emailNormalized, otpCode);
+      console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
+      
+      res.json({
+        ok: true,
+        message: "OTP email adresinize gönderildi",
+        // Don't return email for security, just confirm it was sent
+        phone: phoneNormalized.replace(/(\d{3})(\d{3})(\d{4})/, "*** *** $3"), // Mask phone
+      });
+    } catch (emailError) {
+      console.error("[OTP] Failed to send email:", emailError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "email_send_failed", 
+        message: "OTP email gönderilemedi. Lütfen tekrar deneyin." 
+      });
+    }
+  } catch (error) {
+    console.error("[OTP] Request OTP error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /auth/verify-otp
+// Verify OTP: takes phone + OTP, generates JWT token
+app.post("/auth/verify-otp", async (req, res) => {
+  try {
+    const { phone, otp } = req.body || {};
+    
+    if (!phone || !String(phone).trim()) {
+      return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
+    }
+    
+    if (!otp || !String(otp).trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
+    
+    const phoneNormalized = String(phone).trim();
+    const otpCode = String(otp).trim();
+    
+    // Get OTP data by phone
+    const otps = readJson(OTP_FILE, {});
+    const phoneKey = `phone_${phoneNormalized}`;
+    let otpData = otps[phoneKey];
+    
+    // Fallback: try to find by phone in recent OTPs
+    if (!otpData) {
+      // Try to find patient first and get their email
+      const patients = readJson(PAT_FILE, {});
+      let foundPatient = null;
+      let foundEmail = null;
+      
+      for (const pid in patients) {
+        if (patients[pid].phone && String(patients[pid].phone).trim() === phoneNormalized) {
+          foundPatient = patients[pid];
+          foundEmail = foundPatient.email;
+          break;
+        }
+      }
+      
+      if (foundEmail) {
+        const emailNormalized = String(foundEmail).trim().toLowerCase();
+        otpData = getOTPsForEmail(emailNormalized);
+      }
+    }
+    
+    if (!otpData) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "otp_not_found", 
+        message: "OTP bulunamadı veya süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check if already verified
+    if (otpData.verified) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_already_used", 
+        message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check if expired
+    if (otpData.expiresAt < now()) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_expired", 
+        message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check attempts
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_max_attempts", 
+        message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Verify OTP
+    const isValid = await verifyOTP(otpCode, otpData.hashedOTP);
+    
+    if (!isValid) {
+      // Increment attempt count
+      if (phoneKey && otps[phoneKey]) {
+        otps[phoneKey].attempts = (otps[phoneKey].attempts || 0) + 1;
+        writeJson(OTP_FILE, otps);
+      } else if (otpData.email) {
+        incrementOTPAttempt(otpData.email);
+      }
+      
+      return res.status(401).json({ 
+        ok: false, 
+        error: "invalid_otp", 
+        message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    // OTP is valid - find patient by phone
+    const patients = readJson(PAT_FILE, {});
+    let foundPatient = null;
+    let foundPatientId = null;
+    
+    // Get patientId from OTP data if available
+    if (otpData.patientId) {
+      foundPatientId = otpData.patientId;
+      foundPatient = patients[foundPatientId];
+    }
+    
+    // If not found, search by phone
+    if (!foundPatient) {
+      for (const pid in patients) {
+        if (patients[pid].phone && String(patients[pid].phone).trim() === phoneNormalized) {
+          foundPatient = patients[pid];
+          foundPatientId = pid;
+          break;
+        }
+      }
+    }
+    
+    // If patient still not found, error
+    if (!foundPatient) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found", 
+        message: "Bu telefon numarası ile kayıtlı hasta bulunamadı." 
+      });
+    }
+    
+    // Mark OTP as verified (both phone and email keys if exist)
+    if (phoneKey && otps[phoneKey]) {
+      otps[phoneKey].verified = true;
+      otps[phoneKey].expiresAt = now();
+    }
+    const emailNormalized = otpData.email ? String(otpData.email).trim().toLowerCase() : (foundPatient.email ? String(foundPatient.email).trim().toLowerCase() : "");
+    if (emailNormalized) {
+      markOTPVerified(emailNormalized);
+    }
+    writeJson(OTP_FILE, otps);
+    
+    // Generate JWT token (7-14 days expiry, using 14 days)
+    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const token = jwt.sign(
+      { 
+        patientId: foundPatientId,
+        email: emailNormalized || "",
+        phone: phoneNormalized,
+        type: "patient",
+      },
+      JWT_SECRET,
+      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+    );
+    
+    // Also save token in legacy tokens.json for backward compatibility
+    const tokens = readJson(TOK_FILE, {});
+    tokens[token] = {
+      patientId: foundPatientId,
+      role: foundPatient.status || "PENDING",
+      createdAt: now(),
+      email: emailNormalized || "",
+      phone: phoneNormalized,
+    };
+    writeJson(TOK_FILE, tokens);
+    
+    console.log(`[OTP] OTP verified successfully for phone ${phoneNormalized} (patient ${foundPatientId}), token generated`);
+    
+    res.json({
+      ok: true,
+      token,
+      patientId: foundPatientId,
+      status: foundPatient.status || "PENDING",
+      name: foundPatient.name || "",
+      phone: phoneNormalized,
+      email: emailNormalized || "",
+      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
+    });
+  } catch (error) {
+    console.error("[OTP] Verify OTP error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// ================== PATIENT LOGIN ==================
+// POST /api/patient/login
+// Patient login with phone or patientId, returns token
+app.post("/api/patient/login", (req, res) => {
+  try {
+    const { phone, patientId } = req.body || {};
+    
+    if (!phone && !patientId) {
+      return res.status(400).json({ ok: false, error: "phone_or_patientId_required" });
+    }
+    
+    const patients = readJson(PAT_FILE, {});
+    const tokens = readJson(TOK_FILE, {});
+    
+    // Find patient by phone or patientId
+    let foundPatient = null;
+    let foundPatientId = null;
+    
+    if (patientId) {
+      foundPatient = patients[patientId];
+      if (foundPatient) {
+        foundPatientId = patientId;
+      }
+    }
+    
+    if (!foundPatient && phone) {
+      // Search by phone
+      for (const pid in patients) {
+        if (patients[pid].phone === String(phone).trim()) {
+          foundPatient = patients[pid];
+          foundPatientId = pid;
+          break;
+        }
+      }
+    }
+    
+    if (!foundPatient) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+    
+    // Find existing token for this patient
+    let existingToken = null;
+    for (const token in tokens) {
+      if (tokens[token]?.patientId === foundPatientId) {
+        existingToken = token;
+        break;
+      }
+    }
+    
+    // If no token exists, create a new one
+    if (!existingToken) {
+      existingToken = makeToken();
+      tokens[existingToken] = {
+        patientId: foundPatientId,
+        role: foundPatient.status || "PENDING",
+        createdAt: now()
+      };
+      writeJson(TOK_FILE, tokens);
+    }
+    
+    res.json({
+      ok: true,
+      token: existingToken,
+      patientId: foundPatientId,
+      status: foundPatient.status || "PENDING",
+      name: foundPatient.name || "",
+      phone: foundPatient.phone || "",
+    });
+  } catch (error) {
+    console.error("Patient login error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
 // ================== PATIENT ME (alias) ==================
 app.get("/api/patient/me", requireToken, (req, res) => {
   const patients = readJson(PAT_FILE, {});
@@ -344,6 +1535,59 @@ app.get("/api/patient/me", requireToken, (req, res) => {
   
   console.log(`[ME] patientId: ${req.patientId}, patient.status: ${p?.status}, token.role: ${req.role}, finalStatus: ${finalStatus}`);
 
+  const clinicCode = p?.clinicCode || p?.clinic_code || "";
+  let clinicPlan = p?.clinicPlan || "FREE";
+  
+  // Load clinic branding info (for all plans, not just PRO)
+  let branding = null;
+  if (clinicCode) {
+    try {
+      // First try CLINICS_FILE (multi-clinic system)
+      const clinics = readJson(CLINICS_FILE, {});
+      let clinic = null;
+      
+      // Find clinic by clinicCode in CLINICS_FILE
+      for (const [clinicId, clinicData] of Object.entries(clinics)) {
+        if (clinicData && (clinicData.clinicCode === clinicCode || clinicData.code === clinicCode)) {
+          clinic = clinicData;
+          break;
+        }
+      }
+      
+      // If not found in CLINICS_FILE, try CLINIC_FILE (single-clinic system)
+      if (!clinic) {
+        const singleClinic = readJson(CLINIC_FILE, {});
+        if (singleClinic && (singleClinic.clinicCode === clinicCode || !clinicCode)) {
+          clinic = singleClinic;
+        }
+      }
+      
+      if (clinic) {
+        // Get clinicPlan from clinic if not set in patient
+        if (!p?.clinicPlan) {
+          clinicPlan = clinic.plan || clinic.subscriptionPlan || clinicPlan;
+        }
+        
+        branding = {
+          clinicName: clinic.branding?.clinicName || clinic.name || "",
+          clinicLogoUrl: clinic.branding?.clinicLogoUrl || clinic.logoUrl || "",
+          address: clinic.branding?.address || clinic.address || "",
+          googleMapLink: clinic.branding?.googleMapLink || clinic.googleMapsUrl || "",
+          primaryColor: clinic.branding?.primaryColor,
+          secondaryColor: clinic.branding?.secondaryColor,
+          welcomeMessage: clinic.branding?.welcomeMessage,
+          showPoweredBy: clinic.branding?.showPoweredBy !== false,
+          phone: clinic.phone || "",
+        };
+        console.log(`[ME] Branding loaded for clinicCode: ${clinicCode}, clinicPlan: ${clinicPlan}, clinicLogoUrl: ${branding.clinicLogoUrl}, clinicName: ${branding.clinicName}`);
+      } else {
+        console.log(`[ME] Clinic not found for clinicCode: ${clinicCode}`);
+      }
+    } catch (error) {
+      console.error("[ME] Error loading clinic branding:", error);
+    }
+  }
+
   res.json({
     ok: true,
     patientId: req.patientId,
@@ -351,6 +1595,9 @@ app.get("/api/patient/me", requireToken, (req, res) => {
     status: finalStatus, // Return the final status
     name: p?.name || "",
     phone: p?.phone || "",
+    clinicCode: clinicCode,
+    clinicPlan: clinicPlan,
+    branding: branding,
   });
 });
 
@@ -360,6 +1607,33 @@ app.get("/api/admin/registrations", (req, res) => {
   const list = Array.isArray(raw) ? raw : Object.values(raw);
   list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   res.json({ ok: true, list });
+});
+
+app.get("/api/admin/patients", requireAdminToken, (req, res) => {
+  const raw = readJson(REG_FILE, {});
+  const list = Array.isArray(raw) ? raw : Object.values(raw);
+  const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
+  const filtered = clinicCode
+    ? list.filter((r) => String(r?.clinicCode || r?.clinic_code || "").trim().toUpperCase() === clinicCode)
+    : list;
+  filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  
+  // Add oral health scores to each patient
+  const patientsWithScores = filtered.map(patient => {
+    const patientId = patient.patientId || patient.id || "";
+    if (patientId) {
+      const scores = calculateOralHealthScore(patientId);
+      return {
+        ...patient,
+        beforeScore: scores.beforeScore,
+        afterScore: scores.afterScore,
+        oralHealthCompleted: scores.completed
+      };
+    }
+    return patient;
+  });
+  
+  res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores }); // Both for compatibility
 });
 
 // ================== ADMIN APPROVE ==================
@@ -621,13 +1895,28 @@ app.get("/api/patient/:patientId/travel", (req, res) => {
     editPolicy: {
       hotel: "ADMIN",
       flights: "ADMIN",
+      airportPickup: "ADMIN",
       notes: "ADMIN",
     },
   };
   
   const data = readJson(travelFile, defaultData);
+  
+  // Ensure formCompleted and formCompletedAt fields exist
+  if (data.formCompleted === undefined) {
+    // Check if form is completed (backward compatibility)
+    const hasHotel = data.hotel && data.hotel.checkIn && data.hotel.checkOut;
+    const hasOutboundFlight = Array.isArray(data.flights) && 
+      data.flights.some(f => (f.type || "OUTBOUND") === "OUTBOUND" && f.date);
+    data.formCompleted = hasHotel && hasOutboundFlight;
+    if (data.formCompleted && !data.formCompletedAt) {
+      data.formCompletedAt = data.updatedAt || now();
+    }
+  }
+  
   console.log(`[GET /travel/${patientId}] airportPickup in data:`, data?.airportPickup);
   console.log(`[GET /travel/${patientId}] data keys:`, Object.keys(data));
+  console.log(`[GET /travel/${patientId}] Form completed: ${data.formCompleted}, completedAt: ${data.formCompletedAt}`);
   res.json(data);
 });
 
@@ -663,6 +1952,12 @@ app.post("/api/patient/:patientId/travel", (req, res) => {
   
   console.log(`[POST /travel/${patientId}] airportPickupValue determined:`, JSON.stringify(airportPickupValue, null, 2));
   
+  // Debug: Check hotel and flights in req.body
+  console.log(`[POST /travel/${patientId}] req.body.hotel:`, JSON.stringify(req.body?.hotel, null, 2));
+  console.log(`[POST /travel/${patientId}] req.body.flights:`, JSON.stringify(req.body?.flights, null, 2));
+  console.log(`[POST /travel/${patientId}] existing.hotel:`, JSON.stringify(existing?.hotel, null, 2));
+  console.log(`[POST /travel/${patientId}] existing.flights:`, JSON.stringify(existing?.flights, null, 2));
+  
   const payload = {
     schemaVersion: req.body?.schemaVersion || existing.schemaVersion || 1,
     updatedAt: now(),
@@ -678,6 +1973,7 @@ app.post("/api/patient/:patientId/travel", (req, res) => {
     editPolicy: req.body?.editPolicy || existing.editPolicy || {
       hotel: "ADMIN",
       flights: "ADMIN",
+      airportPickup: "ADMIN",
       notes: "ADMIN",
     },
     events: req.body?.events !== undefined
@@ -700,15 +1996,511 @@ app.post("/api/patient/:patientId/travel", (req, res) => {
   // Payload'ı JSON string'e çevirip kontrol et
   const payloadString = JSON.stringify(payload, null, 2);
   console.log(`[POST /travel/${patientId}] Payload JSON string contains airportPickup:`, payloadString.includes('airportPickup'));
+  console.log(`[POST /travel/${patientId}] Final payload hotel:`, JSON.stringify(payload.hotel, null, 2));
+  console.log(`[POST /travel/${patientId}] Final payload flights:`, JSON.stringify(payload.flights, null, 2));
+  
+  // Check if form is completed
+  // Form is considered complete if:
+  // - Hotel has checkIn and checkOut dates
+  // - At least one outbound flight exists
+  const hasHotel = payload.hotel && payload.hotel.checkIn && payload.hotel.checkOut;
+  const hasOutboundFlight = Array.isArray(payload.flights) && 
+    payload.flights.some(f => (f.type || "OUTBOUND") === "OUTBOUND" && f.date);
+  const isFormCompleted = hasHotel && hasOutboundFlight;
+  
+  // Add form completion status
+  payload.formCompleted = isFormCompleted;
+  if (isFormCompleted && !existing.formCompletedAt) {
+    // First time completion
+    payload.formCompletedAt = now();
+  } else if (isFormCompleted && existing.formCompletedAt) {
+    // Already completed, keep original completion time
+    payload.formCompletedAt = existing.formCompletedAt;
+  } else if (!isFormCompleted) {
+    // Not completed, remove completion time
+    payload.formCompletedAt = null;
+  }
   
   writeJson(travelFile, payload);
   console.log(`[POST /travel/${patientId}] File written, verifying...`);
   const verify = readJson(travelFile, {});
   console.log(`[POST /travel/${patientId}] Verified airportPickup in file:`, verify?.airportPickup);
   console.log(`[POST /travel/${patientId}] Verified file keys:`, Object.keys(verify));
+  console.log(`[POST /travel/${patientId}] Form completed: ${isFormCompleted}, completedAt: ${payload.formCompletedAt}`);
+  
+  // Send push notification if airport pickup info was added/updated
+  const hadAirportPickup = existing?.airportPickup && 
+    (existing.airportPickup.name || existing.airportPickup.phone);
+  const hasAirportPickup = payload.airportPickup && 
+    (payload.airportPickup.name || payload.airportPickup.phone);
+  
+  // Send notification if:
+  // 1. Airport pickup info was just added (didn't exist before, exists now)
+  // 2. Or airport pickup info was updated (existed before, exists now, but changed)
+  if (hasAirportPickup && (!hadAirportPickup || JSON.stringify(existing?.airportPickup) !== JSON.stringify(payload.airportPickup))) {
+    const pickupName = payload.airportPickup.name || "Karşılayıcı";
+    const pickupPhone = payload.airportPickup.phone || "";
+    const notificationTitle = "🚗 Havalimanı Karşılama Bilgisi";
+    const notificationMessage = `Havalimanı karşılama bilgileriniz güncellendi. ${pickupName}${pickupPhone ? ` (${pickupPhone})` : ""} sizi karşılayacak.`;
+    
+    // Send push notification asynchronously (don't wait for it)
+    sendPushNotification(patientId, notificationTitle, notificationMessage, {
+      icon: "/icon-192x192.png",
+      badge: "/badge-72x72.png",
+      url: "/travel",
+      data: {
+        type: "AIRPORT_PICKUP",
+        patientId: patientId,
+        from: "CLINIC"
+      }
+    }).catch(err => {
+      console.error(`[POST /travel/${patientId}] Failed to send airport pickup notification:`, err);
+    });
+    
+    console.log(`[POST /travel/${patientId}] Airport pickup notification sent`);
+  }
   
   res.json({ ok: true, saved: true, travel: payload });
 });
+
+// ================== PATIENT HEALTH FORM ==================
+function getPatientRecordById(patientId) {
+  const patients = readJson(PAT_FILE, {});
+  if (patients[patientId]) return patients[patientId];
+  return Object.values(patients || {}).find(
+    (p) => String(p?.patientId || p?.patient_id || "").trim() === String(patientId || "").trim()
+  ) || null;
+}
+
+function ensureHealthDir() {
+  const HEALTH_DIR = path.join(DATA_DIR, "health_forms");
+  if (!fs.existsSync(HEALTH_DIR)) fs.mkdirSync(HEALTH_DIR, { recursive: true });
+  return HEALTH_DIR;
+}
+
+// GET /api/patient/:patientId/health
+app.get("/api/patient/:patientId/health", requireToken, (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+  if (req.patientId !== patientId) {
+    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+  }
+
+  const HEALTH_DIR = ensureHealthDir();
+  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+  if (!fs.existsSync(filePath)) {
+    return res.json({ ok: true, formData: null, isComplete: false });
+  }
+  const data = readJson(filePath, {});
+  return res.json({
+    ok: true,
+    formData: data.formData || {},
+    isComplete: data.isComplete || false,
+    completedAt: data.completedAt || null,
+    updatedAt: data.updatedAt || null,
+    createdAt: data.createdAt || null,
+  });
+});
+
+// POST /api/patient/:patientId/health
+app.post("/api/patient/:patientId/health", requireToken, (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+  if (req.patientId !== patientId) {
+    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+  }
+
+  const patient = getPatientRecordById(patientId);
+  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
+
+  const HEALTH_DIR = ensureHealthDir();
+  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+  const existing = readJson(filePath, {});
+
+  const formData = req.body?.formData || {};
+  const isComplete = req.body?.isComplete === true;
+  const nowTs = now();
+  const payload = {
+    patientId,
+    clinicCode: patient.clinicCode || patient.clinic_code || null,
+    formData,
+    isComplete,
+    createdAt: existing.createdAt || nowTs,
+    updatedAt: nowTs,
+    completedAt: isComplete ? (existing.completedAt || nowTs) : null,
+  };
+  writeJson(filePath, payload);
+
+  return res.json({
+    ok: true,
+    formData: payload.formData,
+    isComplete: payload.isComplete,
+    completedAt: payload.completedAt,
+    updatedAt: payload.updatedAt,
+    createdAt: payload.createdAt,
+  });
+});
+
+// PUT /api/patient/:patientId/health
+app.put("/api/patient/:patientId/health", requireToken, (req, res) => {
+  // Same behavior as POST
+  const patientId = String(req.params.patientId || "").trim();
+  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+  if (req.patientId !== patientId) {
+    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+  }
+
+  const patient = getPatientRecordById(patientId);
+  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
+
+  const HEALTH_DIR = ensureHealthDir();
+  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+  const existing = readJson(filePath, {});
+
+  const formData = req.body?.formData || {};
+  const isComplete = req.body?.isComplete === true;
+  const nowTs = now();
+  const payload = {
+    patientId,
+    clinicCode: patient.clinicCode || patient.clinic_code || null,
+    formData,
+    isComplete,
+    createdAt: existing.createdAt || nowTs,
+    updatedAt: nowTs,
+    completedAt: isComplete ? (existing.completedAt || nowTs) : null,
+  };
+  writeJson(filePath, payload);
+
+  return res.json({
+    ok: true,
+    formData: payload.formData,
+    isComplete: payload.isComplete,
+    completedAt: payload.completedAt,
+    updatedAt: payload.updatedAt,
+    createdAt: payload.createdAt,
+  });
+});
+
+// GET /api/admin/patients/:patientId/health
+app.get("/api/admin/patients/:patientId/health", requireAdminAuth, (req, res) => {
+  const patientId = String(req.params.patientId || "").trim();
+  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+  const patient = getPatientRecordById(patientId);
+  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
+  const patientClinic = String(patient.clinicCode || patient.clinic_code || "").trim().toUpperCase();
+  const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
+  if (clinicCode && patientClinic && clinicCode !== patientClinic) {
+    return res.status(403).json({ ok: false, error: "patient_not_in_clinic" });
+  }
+
+  const HEALTH_DIR = ensureHealthDir();
+  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+  if (!fs.existsSync(filePath)) {
+    return res.json({ ok: true, formData: null, isComplete: false });
+  }
+  const data = readJson(filePath, {});
+  return res.json({
+    ok: true,
+    formData: data.formData || {},
+    isComplete: data.isComplete || false,
+    completedAt: data.completedAt || null,
+    updatedAt: data.updatedAt || null,
+    createdAt: data.createdAt || null,
+  });
+});
+
+// GET /api/health-form/schema
+// Returns health form field definitions with language support (tr/en)
+// Query parameter: ?lang=tr or ?lang=en
+// Accept-Language header: Accept-Language: tr or Accept-Language: en
+// Default: tr (Turkish)
+app.get("/api/health-form/schema", (req, res) => {
+  // Get language from query parameter first, then from Accept-Language header
+  let lang = req.query.lang || "";
+  if (!lang) {
+    const acceptLang = req.headers["accept-language"] || "";
+    // Extract language from Accept-Language header (e.g., "tr-TR,tr;q=0.9" -> "tr")
+    if (acceptLang) {
+      const langMatch = acceptLang.toLowerCase().match(/^([a-z]{2})/);
+      if (langMatch) {
+        lang = langMatch[1];
+      }
+    }
+  }
+  // Default to Turkish if no language specified
+  if (!lang) lang = "tr";
+  
+  lang = lang.toLowerCase();
+  // Only support tr and en, default to tr
+  if (lang !== "en" && lang !== "tr") {
+    lang = "tr";
+  }
+  const isEnglish = lang === "en";
+  
+  // Debug logging
+  console.log(`[HEALTH-FORM-SCHEMA] Requested language: ${req.query.lang || "none"}, Accept-Language: ${req.headers["accept-language"] || "none"}, Final: ${lang}, isEnglish: ${isEnglish}`);
+  
+  // Helper function to get localized labels
+  const t = (trLabel, enLabel) => isEnglish ? enLabel : trLabel;
+  
+  res.json({
+    ok: true,
+    schema: {
+      personalInfo: {
+        title: t("Kişisel Bilgiler", "Personal Information"),
+        fields: {
+          name: { label: t("Ad Soyad", "Full Name"), type: "text", required: true },
+          birthDate: { label: t("Doğum Tarihi", "Date of Birth"), type: "date", required: true },
+          gender: { 
+            label: t("Cinsiyet", "Gender"), 
+            type: "select", 
+            options: isEnglish ? ["Male", "Female", "Other"] : ["Erkek", "Kadın", "Diğer"], 
+            required: true 
+          },
+          phone: { label: t("Telefon", "Phone"), type: "tel", required: true },
+          email: { label: t("E-posta", "Email"), type: "email", required: false },
+          country: { label: t("Ülke", "Country"), type: "text", required: false }
+        }
+      },
+      generalHealth: {
+        title: t("Genel Sağlık Durumu", "General Health Status"),
+        fields: {
+          conditions: {
+            label: t("Mevcut Durumlar", "Current Conditions"),
+            type: "multiselect",
+            options: [
+              { value: "diabetes", label: t("Diyabet", "Diabetes") },
+              { value: "heart_disease", label: t("Kalp Hastalığı", "Heart Disease") },
+              { value: "hypertension", label: t("Hipertansiyon (Yüksek Tansiyon)", "Hypertension (High Blood Pressure)") },
+              { value: "bleeding_disorder", label: t("Kanama / Pıhtılaşma Bozukluğu", "Bleeding / Clotting Disorder") },
+              { value: "asthma", label: t("Astım / Solunum Hastalığı", "Asthma / Respiratory Disease") },
+              { value: "epilepsy", label: t("Epilepsi", "Epilepsy") },
+              { value: "kidney_disease", label: t("Böbrek Hastalığı", "Kidney Disease") },
+              { value: "liver_disease", label: t("Karaciğer Hastalığı", "Liver Disease") },
+              { value: "thyroid", label: t("Tiroid Hastalığı", "Thyroid Disease") },
+              { value: "immune_system", label: t("Bağışıklık Sistemi Hastalığı", "Immune System Disease") },
+              { value: "cancer", label: t("Kanser (Geçmiş veya Aktif)", "Cancer (Past or Active)") },
+              { value: "pregnancy", label: t("Hamilelik", "Pregnancy") },
+              { value: "none", label: t("Yok", "None") }
+            ],
+            required: false
+          },
+          pregnancyMonth: { label: t("Hamilelik Ayı", "Pregnancy Month"), type: "number", min: 1, max: 9, required: false },
+          conditionsNotes: { label: t("Notlar", "Notes"), type: "textarea", required: false }
+        }
+      },
+      medications: {
+        title: t("İlaçlar", "Medications"),
+        fields: {
+          none: { label: t("İlaç kullanmıyor", "No medications"), type: "checkbox", required: false },
+          regularMedication: { label: t("Düzenli ilaç kullanımı", "Regular medication"), type: "checkbox", required: false },
+          bloodThinner: { label: t("Kan inceltici (Aspirin, Coumadin, Eliquis, vb.)", "Blood thinner (Aspirin, Coumadin, Eliquis, etc.)"), type: "checkbox", required: false },
+          cortisone: { label: t("Kortizon", "Cortisone"), type: "checkbox", required: false },
+          antibiotics: { label: t("Antibiyotik (son 1 ay içinde)", "Antibiotics (within last month)"), type: "checkbox", required: false },
+          medicationDetails: { label: t("İlaç Detayları", "Medication Details"), type: "textarea", required: false }
+        }
+      },
+      allergies: {
+        title: t("Alerjiler", "Allergies"),
+        fields: {
+          none: { label: t("Alerji yok", "No allergies"), type: "checkbox", required: false },
+          localAnesthesia: { label: t("Lokal anestezi alerjisi", "Allergy to local anesthesia"), type: "checkbox", required: false },
+          penicillin: { label: t("Penisilin / antibiyotik alerjisi", "Penicillin / antibiotic allergy"), type: "checkbox", required: false },
+          latex: { label: t("Lateks alerjisi", "Latex allergy"), type: "checkbox", required: false },
+          other: { label: t("Diğer alerji", "Other allergy"), type: "checkbox", required: false },
+          allergyDetails: { label: t("Alerji Detayları", "Allergy Details"), type: "textarea", required: false }
+        }
+      },
+      dentalHistory: {
+        title: t("Diş Geçmişi", "Dental History"),
+        fields: {
+          previousProblems: { label: t("Önceki diş tedavisinde sorun yaşandı mı", "Problems during previous dental treatment"), type: "boolean", required: false },
+          anesthesiaProblems: { label: t("Lokal anestezi ile kötü deneyim", "Bad experience with local anesthesia"), type: "boolean", required: false },
+          previousProcedures: { label: t("Önceki implant / kanal tedavisi / cerrahi işlem", "Previous implant / root canal / surgical procedure"), type: "boolean", required: false }
+        }
+      },
+      complaint: {
+        title: t("Şikayet", "Complaint"),
+        fields: {
+          mainComplaint: { label: t("Ana Şikayet", "Main Complaint"), type: "textarea", required: false },
+          painLevel: {
+            label: t("Ağrı Seviyesi", "Pain Level"),
+            type: "select",
+            options: [
+              { value: "none", label: t("Yok", "None") },
+              { value: "mild", label: t("Hafif", "Mild") },
+              { value: "moderate", label: t("Orta", "Moderate") },
+              { value: "severe", label: t("Şiddetli", "Severe") }
+            ],
+            required: false
+          }
+        }
+      },
+      habits: {
+        title: t("Alışkanlıklar", "Habits"),
+        fields: {
+          smoking: { label: t("Sigara", "Smoking"), type: "boolean", required: false },
+          cigarettesPerDay: { label: t("Günde sigara sayısı", "Cigarettes per day"), type: "number", min: 0, required: false },
+          alcohol: {
+            label: t("Alkol", "Alcohol"),
+            type: "select",
+            options: [
+              { value: "none", label: t("Hayır", "No") },
+              { value: "occasional", label: t("Ara Sıra", "Occasional") },
+              { value: "regular", label: t("Düzenli", "Regular") }
+            ],
+            required: false
+          }
+        }
+      },
+      consent: {
+        title: t("Onay", "Consent"),
+        fields: {
+          infoAccurate: { label: t("Verdiğim bilgilerin doğru olduğunu beyan ederim", "I declare that the information I provided is accurate"), type: "checkbox", required: true },
+          planMayChange: { label: t("Muayene sonrası tedavi planının değişebileceğini kabul ediyorum", "I accept that the treatment plan may change after examination"), type: "checkbox", required: true },
+          dataUsage: { label: t("Verilerimin tedavi amaçlı kullanımına onay veriyorum", "I consent to the use of my data for treatment purposes"), type: "checkbox", required: true }
+        }
+      }
+    }
+  });
+});
+
+// ================== ORAL HEALTH SCORE CALCULATION ==================
+/**
+ * Calculate oral health scores based on treatment plan
+ * @param {string} patientId - Patient ID
+ * @returns {{beforeScore: number, afterScore: number|null, completed: boolean}}
+ */
+function calculateOralHealthScore(patientId) {
+  const BASE_SCORE = 100;
+  
+  // Penalty table based on procedure types
+  const PENALTIES = {
+    IMPLANT: 4,
+    CROWN: 2,
+    CROWN_REPLACEMENT: 2,
+    TEMP_CROWN: 2,
+    ROOT_CANAL_TREATMENT: 2,
+    ROOT_CANAL_RETREATMENT: 2,
+    FILLING: 1,
+    TEMP_FILLING: 1,
+    EXTRACTION: 3,
+    SURGICAL_EXTRACTION: 3,
+    SINUS_LIFT: 2,
+    BONE_GRAFT: 2,
+    // Additional procedure types (lower penalty for minor procedures)
+    BRIDGE_UNIT: 2,
+    TEMP_BRIDGE_UNIT: 2,
+    INLAY: 1,
+    ONLAY: 1,
+    OVERLAY: 1,
+    POST_AND_CORE: 1,
+    CANAL_OPENING: 1,
+    CANAL_FILLING: 1,
+    APICAL_RESECTION: 2,
+    HEALING_ABUTMENT: 1,
+    IMPLANT_CROWN: 1,
+  };
+  
+  try {
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+    
+    if (!fs.existsSync(treatmentsFile)) {
+      // No treatment plan = perfect score
+      return { beforeScore: 100, afterScore: null, completed: false };
+    }
+    
+    const treatmentData = readJson(treatmentsFile, { teeth: [], formCompleted: false });
+    const teeth = Array.isArray(treatmentData.teeth) ? treatmentData.teeth : [];
+    
+    // Count procedures by type
+    const procedureCounts = {};
+    let totalCompleted = 0;
+    let totalProcedures = 0;
+    
+    teeth.forEach(tooth => {
+      const procedures = Array.isArray(tooth.procedures) ? tooth.procedures : [];
+      procedures.forEach(proc => {
+        const type = String(proc.type || "").trim().toUpperCase();
+        const status = String(proc.status || "PLANNED").trim().toUpperCase();
+        
+        if (type && status !== "CANCELLED") {
+          procedureCounts[type] = (procedureCounts[type] || 0) + 1;
+          totalProcedures++;
+          
+          if (status === "COMPLETED" || status === "DONE") {
+            totalCompleted++;
+          }
+        }
+      });
+    });
+    
+    // Calculate before score (penalize for planned procedures)
+    let totalPenalty = 0;
+    Object.entries(procedureCounts).forEach(([type, count]) => {
+      const penalty = PENALTIES[type] || 1; // Default penalty: 1
+      totalPenalty += count * penalty;
+    });
+    
+    const beforeScore = Math.max(0, Math.min(100, BASE_SCORE - totalPenalty));
+    
+    // Determine if treatment is completed
+    // Treatment is considered completed ONLY if all procedures are COMPLETED
+    // formCompleted only means the form was filled, not that all procedures are done
+    const allCompleted = totalProcedures > 0 && totalCompleted === totalProcedures;
+    const isCompleted = allCompleted; // Only true when ALL procedures are COMPLETED
+    
+    // Calculate after score
+    let afterScore = null;
+    if (isCompleted) {
+      // If completed: afterScore should be higher than beforeScore
+      // Give bonus for completed procedures (improvement factor)
+      const improvementBonus = Math.min(20, totalProcedures * 5); // Max 20 bonus, 5 per procedure
+      afterScore = Math.max(0, Math.min(100, beforeScore + improvementBonus));
+      // Ensure afterScore is at least 92 if treatment is completed (minimum quality standard)
+      afterScore = Math.max(92, afterScore);
+    } else if (totalProcedures > 0) {
+      // If in progress: beforeScore + partial improvement (based on completion ratio)
+      const completionRatio = totalCompleted / totalProcedures;
+      const partialImprovement = Math.min(20, totalProcedures * 5) * completionRatio;
+      afterScore = Math.max(0, Math.min(100, beforeScore + partialImprovement));
+    }
+    
+    return {
+      beforeScore: Math.round(beforeScore * 10) / 10, // Round to 1 decimal
+      afterScore: afterScore !== null ? Math.round(afterScore * 10) / 10 : null,
+      completed: isCompleted
+    };
+  } catch (error) {
+    console.error(`[ORAL_HEALTH_SCORE] Error calculating score for ${patientId}:`, error);
+    // Return default scores on error
+    return { beforeScore: 100, afterScore: null, completed: false };
+  }
+}
+
+/**
+ * Update patient's oral health scores in PAT_FILE
+ * @param {string} patientId - Patient ID
+ */
+function updatePatientOralHealthScores(patientId) {
+  try {
+    const scores = calculateOralHealthScore(patientId);
+    const patients = readJson(PAT_FILE, {});
+    
+    if (patients[patientId]) {
+      patients[patientId].beforeScore = scores.beforeScore;
+      patients[patientId].afterScore = scores.afterScore;
+      patients[patientId].oralHealthCompleted = scores.completed;
+      patients[patientId].updatedAt = now();
+      writeJson(PAT_FILE, patients);
+      console.log(`[ORAL_HEALTH_SCORE] Updated scores for ${patientId}: before=${scores.beforeScore}, after=${scores.afterScore || "N/A"}`);
+    }
+  } catch (error) {
+    console.error(`[ORAL_HEALTH_SCORE] Error updating scores for ${patientId}:`, error);
+  }
+}
 
 // ================== PATIENT TREATMENTS ==================
 // GET /api/patient/:patientId/treatments
@@ -744,9 +2536,68 @@ app.get("/api/patient/:patientId/treatments", (req, res) => {
     updatedAt: now(),
     patientId,
     teeth: [],
+    formCompleted: false,
+    formCompletedAt: null,
   };
   
   const data = readJson(treatmentsFile, defaultData);
+  
+  // Ensure data structure is correct
+  if (!data.patientId) {
+    data.patientId = patientId;
+  }
+  if (!Array.isArray(data.teeth)) {
+    data.teeth = [];
+  }
+  
+  // Ensure each tooth has correct structure
+  data.teeth = data.teeth.map(tooth => {
+    if (!tooth.procedures || !Array.isArray(tooth.procedures)) {
+      tooth.procedures = [];
+    }
+    // Ensure procedures have required fields
+    tooth.procedures = tooth.procedures.map(proc => {
+      const procId = proc.procedureId || proc.id || `${patientId}-${tooth.toothId}-${proc.createdAt || now()}`;
+      const type = procedures.normalizeType(proc.type || "");
+      const status = procedures.normalizeStatus(proc.status || "PLANNED");
+      const category = procedures.categoryForType(type);
+      return {
+        id: procId, // backward compatibility
+        procedureId: procId,
+        type,
+        category,
+        status,
+        scheduledAt: proc.scheduledAt ?? null,
+        date: proc.date ?? (proc.scheduledAt ?? null),
+        notes: proc.notes || "",
+        meta: proc.meta || {},
+        replacesProcedureId: proc.replacesProcedureId,
+        createdAt: proc.createdAt || now(),
+        ...proc // Keep any additional fields
+      };
+    });
+    tooth.locked = procedures.isToothLocked(tooth.procedures);
+    return tooth;
+  });
+  
+  // Check if form is completed (backward compatibility)
+  // Form is considered complete if at least one procedure exists
+  if (data.formCompleted === undefined) {
+    const totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
+    data.formCompleted = totalProcedures > 0;
+    if (data.formCompleted && !data.formCompletedAt) {
+      data.formCompletedAt = data.updatedAt || now();
+    }
+  }
+  
+  // Ensure formCompleted and formCompletedAt fields exist
+  if (data.formCompleted === undefined) {
+    data.formCompleted = false;
+  }
+  if (data.formCompleted && !data.formCompletedAt) {
+    data.formCompletedAt = data.updatedAt || now();
+  }
+  
   const teethCount = data.teeth?.length || 0;
   const totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
   
@@ -754,25 +2605,76 @@ app.get("/api/patient/:patientId/treatments", (req, res) => {
     patientId: data.patientId,
     teethCount,
     totalProcedures,
+    formCompleted: data.formCompleted,
+    formCompletedAt: data.formCompletedAt,
+    sampleTooth: data.teeth[0] || null,
   });
+  
+  // Log full teeth array for debugging
+  console.log(`[TREATMENTS GET] Full teeth array:`, JSON.stringify(data.teeth, null, 2));
+  
+  // Load treatment events from travel data
+  let treatmentEvents = [];
+  try {
+    const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+    if (fs.existsSync(TRAVEL_DIR)) {
+      const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
+      if (fs.existsSync(travelFile)) {
+        const travelData = readJson(travelFile, {});
+        if (Array.isArray(travelData.events)) {
+          // Filter treatment-related events (TREATMENT, CONSULT, FOLLOWUP, LAB)
+          treatmentEvents = travelData.events.filter(evt => {
+            const type = String(evt.type || "").toUpperCase();
+            return type === "TREATMENT" || type === "CONSULT" || type === "FOLLOWUP" || type === "LAB";
+          });
+          console.log(`[TREATMENTS GET] Loaded ${treatmentEvents.length} treatment events from travel data`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[TREATMENTS GET] Error loading treatment events:`, err);
+  }
+  
+  // Add treatment events to response
+  data.events = treatmentEvents;
+  
   console.log(`[TREATMENTS GET] ========== END ==========`);
   
+  // Return data directly (matching the format saved by POST)
   res.json(data);
 });
 
 // POST /api/patient/:patientId/treatments
 app.post("/api/patient/:patientId/treatments", (req, res) => {
   const patientId = req.params.patientId;
+  console.log(`[TREATMENTS POST] ========== START ==========`);
+  console.log(`[TREATMENTS POST] Request for patientId: ${patientId}`);
+  console.log(`[TREATMENTS POST] Request body:`, JSON.stringify(req.body, null, 2));
+  
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
   if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
-  const existing = readJson(treatmentsFile, { teeth: [] });
+  console.log(`[TREATMENTS POST] Treatments file path: ${treatmentsFile}`);
   
-  // Frontend'den gelen format: { toothId, procedure: { type, status, scheduledAt } }
+  const existing = readJson(treatmentsFile, { teeth: [] });
+  console.log(`[TREATMENTS POST] Existing data:`, {
+    teethCount: existing.teeth?.length || 0,
+    totalProcedures: existing.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0,
+  });
+  
+  // Client format: { toothId, procedure: { procedureId/id, type, category?, status, date/scheduledAt, notes, meta, replacesProcedureId } }
   const { toothId, procedure } = req.body || {};
   
+  console.log(`[TREATMENTS POST] Request body procedure:`, {
+    type: procedure?.type,
+    status: procedure?.status,
+    scheduledAt: procedure?.scheduledAt,
+    createdAt: procedure?.createdAt
+  });
+  
   if (!toothId || !procedure) {
+    console.log(`[TREATMENTS POST] Missing required fields: toothId=${!!toothId}, procedure=${!!procedure}`);
     return res.status(400).json({ ok: false, error: "toothId and procedure required" });
   }
   
@@ -785,21 +2687,71 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
   if (!tooth) {
     tooth = { toothId: String(toothId), procedures: [] };
     teeth.push(tooth);
+    console.log(`[TREATMENTS POST] Created new tooth entry: ${toothId}`);
+  } else {
+    console.log(`[TREATMENTS POST] Found existing tooth: ${toothId}, current procedures: ${tooth.procedures?.length || 0}`);
   }
   
-  // Yeni procedure'ü ekle
-  const newProcedure = {
-    id: `${patientId}-${toothId}-${now()}`,
-    type: String(procedure.type || ""),
-    status: String(procedure.status || "PLANNED"),
-    scheduledAt: procedure.scheduledAt ? Number(procedure.scheduledAt) : now(),
-    createdAt: now(),
-  };
-  
-  if (!Array.isArray(tooth.procedures)) {
-    tooth.procedures = [];
+  if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
+
+  const incomingId = String(procedure.procedureId || procedure.id || "").trim();
+  const procedureIdFinal = incomingId || rid(`proc_${patientId}_${toothId}`);
+  const createdAtFinal = procedure.createdAt ? Number(procedure.createdAt) : now();
+  const typeFinal = procedures.normalizeType(procedure.type || "");
+  const statusFinal = procedures.normalizeStatus(procedure.status || "PLANNED");
+  const categoryFinal = procedures.categoryForType(typeFinal);
+  const dateFinal = procedures.normalizeDate(procedure.date ?? procedure.scheduledAt);
+
+  const validation = procedures.validateToothUpsert(tooth.procedures, {
+    procedureId: procedureIdFinal,
+    type: typeFinal,
+    status: statusFinal,
+    category: categoryFinal,
+    date: dateFinal,
+    notes: procedure.notes || "",
+    meta: procedure.meta || {},
+    replacesProcedureId: procedure.replacesProcedureId,
+    createdAt: createdAtFinal,
+  });
+  if (!validation.ok) {
+    return res.status(409).json({ ok: false, error: validation.error, ...validation });
   }
-  tooth.procedures.push(newProcedure);
+
+  // Upsert by procedureId (history preserved; no hard limit)
+  const existingProc = tooth.procedures.find((p) => String(p.procedureId || p.id || "") === procedureIdFinal);
+  if (existingProc) {
+    existingProc.id = procedureIdFinal;
+    existingProc.procedureId = procedureIdFinal;
+    existingProc.type = typeFinal;
+    existingProc.category = categoryFinal;
+    existingProc.status = statusFinal;
+    existingProc.scheduledAt = dateFinal;
+    existingProc.date = dateFinal;
+    existingProc.notes = String(procedure.notes || existingProc.notes || "");
+    existingProc.meta = procedure.meta || existingProc.meta || {};
+    existingProc.replacesProcedureId = procedure.replacesProcedureId || existingProc.replacesProcedureId;
+    // keep createdAt unless explicitly provided
+    if (!existingProc.createdAt) existingProc.createdAt = createdAtFinal;
+  } else {
+    tooth.procedures.push({
+      id: procedureIdFinal,
+      procedureId: procedureIdFinal,
+      type: typeFinal,
+      category: categoryFinal,
+      status: statusFinal,
+      scheduledAt: dateFinal,
+      date: dateFinal,
+      notes: String(procedure.notes || ""),
+      meta: procedure.meta || {},
+      replacesProcedureId: procedure.replacesProcedureId,
+      createdAt: createdAtFinal,
+    });
+  }
+  
+  // Check if form is completed
+  // Form is considered complete if at least one procedure exists
+  const totalProcedures = teeth.reduce((sum, t) => sum + (t.procedures?.length || 0), 0);
+  const isFormCompleted = totalProcedures > 0;
   
   // Güncellenmiş data
   const payload = {
@@ -807,10 +2759,41 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
     updatedAt: now(),
     patientId,
     teeth,
+    formCompleted: isFormCompleted,
   };
   
+  // Set formCompletedAt if form is completed for the first time
+  if (isFormCompleted && !existing.formCompletedAt) {
+    // First time completion
+    payload.formCompletedAt = now();
+  } else if (isFormCompleted && existing.formCompletedAt) {
+    // Already completed, keep original completion time
+    payload.formCompletedAt = existing.formCompletedAt;
+  } else if (!isFormCompleted) {
+    // Not completed, remove completion time
+    payload.formCompletedAt = null;
+  }
+  
   writeJson(treatmentsFile, payload);
-  res.json({ ok: true, saved: true, treatments: payload });
+  
+  // Verify the write
+  const verify = readJson(treatmentsFile, {});
+  const savedTeethCount = verify.teeth?.length || 0;
+  const savedTotalProcedures = verify.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
+  
+  console.log(`[TREATMENTS POST] Data saved. Verification:`, {
+    teethCount: savedTeethCount,
+    totalProcedures: savedTotalProcedures,
+    formCompleted: payload.formCompleted,
+    formCompletedAt: payload.formCompletedAt,
+  });
+  console.log(`[TREATMENTS POST] ========== END ==========`);
+  
+  // Update patient oral health scores after treatment plan change
+  updatePatientOralHealthScores(patientId);
+  
+  // Return the updated data in the same format as GET endpoint
+  res.json({ ok: true, saved: true, treatments: payload, teeth: payload.teeth });
 });
 
 // PUT /api/patient/:patientId/treatments/:procedureId
@@ -831,9 +2814,36 @@ app.put("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
     if (Array.isArray(tooth.procedures)) {
       for (const proc of tooth.procedures) {
         if (String(proc.id) === String(procedureId)) {
-          proc.type = String(req.body?.type || proc.type);
-          proc.status = String(req.body?.status || proc.status);
-          proc.scheduledAt = req.body?.scheduledAt ? Number(req.body.scheduledAt) : proc.scheduledAt;
+          const nextType = procedures.normalizeType(req.body?.type || proc.type);
+          const nextStatus = procedures.normalizeStatus(req.body?.status || proc.status);
+          const nextCategory = procedures.categoryForType(nextType);
+          const nextDate = procedures.normalizeDate(req.body?.date ?? req.body?.scheduledAt ?? proc.scheduledAt);
+
+          const validation = procedures.validateToothUpsert(tooth.procedures, {
+            procedureId: String(proc.procedureId || proc.id || procedureId),
+            type: nextType,
+            status: nextStatus,
+            category: nextCategory,
+            date: nextDate,
+            notes: req.body?.notes || proc.notes || "",
+            meta: req.body?.meta || proc.meta || {},
+            replacesProcedureId: req.body?.replacesProcedureId || proc.replacesProcedureId,
+            createdAt: proc.createdAt || now(),
+          });
+          if (!validation.ok) {
+            return res.status(409).json({ ok: false, error: validation.error, ...validation });
+          }
+
+          proc.id = String(proc.procedureId || proc.id || procedureId);
+          proc.procedureId = proc.id;
+          proc.type = nextType;
+          proc.category = nextCategory;
+          proc.status = nextStatus;
+          proc.scheduledAt = nextDate;
+          proc.date = nextDate;
+          proc.notes = String(req.body?.notes || proc.notes || "");
+          proc.meta = req.body?.meta || proc.meta || {};
+          proc.replacesProcedureId = req.body?.replacesProcedureId || proc.replacesProcedureId;
           found = true;
           break;
         }
@@ -846,14 +2856,36 @@ app.put("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
     return res.status(404).json({ ok: false, error: "Procedure not found" });
   }
   
+  // Check if form is completed
+  // Form is considered complete if at least one procedure exists
+  const totalProcedures = teeth.reduce((sum, t) => sum + (t.procedures?.length || 0), 0);
+  const isFormCompleted = totalProcedures > 0;
+  
   const payload = {
     schemaVersion: existing.schemaVersion || 1,
     updatedAt: now(),
     patientId,
     teeth,
+    formCompleted: isFormCompleted,
   };
   
+  // Set formCompletedAt if form is completed for the first time
+  if (isFormCompleted && !existing.formCompletedAt) {
+    // First time completion
+    payload.formCompletedAt = now();
+  } else if (isFormCompleted && existing.formCompletedAt) {
+    // Already completed, keep original completion time
+    payload.formCompletedAt = existing.formCompletedAt;
+  } else if (!isFormCompleted) {
+    // Not completed, remove completion time
+    payload.formCompletedAt = null;
+  }
+  
   writeJson(treatmentsFile, payload);
+  
+  // Update patient oral health scores after treatment plan update
+  updatePatientOralHealthScores(patientId);
+  
   res.json({ ok: true, updated: true, treatments: payload });
 });
 
@@ -870,30 +2902,55 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
   let teeth = Array.isArray(existing.teeth) ? existing.teeth : [];
   let found = false;
   
-  // Procedure'ü bul ve sil
+  // Procedure history is preserved: "delete" becomes CANCELLED
   for (const tooth of teeth) {
     if (Array.isArray(tooth.procedures)) {
-      const originalLength = tooth.procedures.length;
-      tooth.procedures = tooth.procedures.filter((proc) => String(proc.id) !== String(procedureId));
-      if (tooth.procedures.length < originalLength) {
-        found = true;
-        break;
+      for (const proc of tooth.procedures) {
+        const pid = String(proc.procedureId || proc.id || "");
+        if (pid === String(procedureId)) {
+          proc.status = "CANCELLED";
+          found = true;
+          break;
+        }
       }
     }
+    if (found) break;
   }
   
   if (!found) {
     return res.status(404).json({ ok: false, error: "Procedure not found" });
   }
   
+  // Check if form is completed
+  // Form is considered complete if at least one procedure exists
+  const totalProcedures = teeth.reduce((sum, t) => sum + (t.procedures?.length || 0), 0);
+  const isFormCompleted = totalProcedures > 0;
+  
   const payload = {
     schemaVersion: existing.schemaVersion || 1,
     updatedAt: now(),
     patientId,
     teeth,
+    formCompleted: isFormCompleted,
   };
   
+  // Set formCompletedAt if form is completed for the first time
+  if (isFormCompleted && !existing.formCompletedAt) {
+    // First time completion
+    payload.formCompletedAt = now();
+  } else if (isFormCompleted && existing.formCompletedAt) {
+    // Already completed, keep original completion time
+    payload.formCompletedAt = existing.formCompletedAt;
+  } else if (!isFormCompleted) {
+    // Not completed, remove completion time
+    payload.formCompletedAt = null;
+  }
+  
   writeJson(treatmentsFile, payload);
+  
+  // Update patient oral health scores after procedure deletion
+  updatePatientOralHealthScores(patientId);
+  
   res.json({ ok: true, deleted: true, treatments: payload });
 });
 
@@ -902,11 +2959,14 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
 app.get("/api/patient/:patientId/messages", (req, res) => {
   try {
     const patientId = req.params.patientId;
-    console.log("GET /api/patient/:patientId/messages - patientId:", patientId);
+    const origin = req.headers.origin || "unknown";
+    const userAgent = req.headers["user-agent"] || "unknown";
+    
+    console.log(`[GET /api/patient/:patientId/messages] Request received - patientId: ${patientId}, origin: ${origin}, userAgent: ${userAgent?.substring(0, 50)}`);
     
     if (!patientId) {
-      console.warn("GET messages: patientId missing");
-      return res.status(400).json({ ok: false, error: "patientId_required" });
+      console.warn("[GET /api/patient/:patientId/messages] patientId missing");
+      return res.status(400).json({ ok: false, error: "patientId_required", message: "Patient ID is required" });
     }
 
     const CHAT_DIR = path.join(DATA_DIR, "chats");
@@ -916,11 +2976,11 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
     const existing = readJson(chatFile, { messages: [] });
     
     const messages = Array.isArray(existing.messages) ? existing.messages : [];
-    console.log("GET messages: Returning", messages.length, "messages for patient", patientId);
+    console.log(`[GET /api/patient/:patientId/messages] Returning ${messages.length} messages for patient ${patientId}`);
     res.json({ ok: true, messages });
   } catch (error) {
-    console.error("Get messages error:", error);
-    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+    console.error("[GET /api/patient/:patientId/messages] Error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error", message: "Failed to load messages" });
   }
 });
 
@@ -1023,6 +3083,17 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
     };
     
     writeJson(chatFile, payload);
+    
+    // Send push notification to patient
+    const messagePreview = text.length > 100 ? text.substring(0, 100) + "..." : text;
+    sendPushNotification(patientId, "Klinikten Yeni Mesaj", messagePreview, {
+      url: "/chat",
+      data: { messageId: newMessage.id }
+    }).catch(err => {
+      console.error("[PUSH] Failed to send push notification:", err);
+      // Don't fail the request if push fails
+    });
+    
     res.json({ ok: true, message: newMessage });
   } catch (error) {
     console.error("Admin message send error:", error);
@@ -1030,12 +3101,369 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
   }
 });
 
+// GET /api/push/public-key (Returns VAPID public key for push notifications)
+app.get("/api/push/public-key", (req, res) => {
+  res.json({ ok: true, publicKey: VAPID_PUBLIC_KEY });
+});
+
+// POST /api/patient/:patientId/push-subscription (Register push subscription)
+app.post("/api/patient/:patientId/push-subscription", requireToken, (req, res) => {
+  try {
+    const patientId = req.params.patientId;
+    const subscription = req.body?.subscription;
+    
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+    
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patientId_mismatch" });
+    }
+    
+    if (!subscription || !subscription.endpoint) {
+      return res.status(400).json({ ok: false, error: "subscription_required" });
+    }
+    
+    const subscriptions = readJson(PUSH_SUBSCRIPTIONS_FILE, {});
+    if (!subscriptions[patientId]) {
+      subscriptions[patientId] = [];
+    }
+    
+    // Check if subscription already exists
+    const existingIndex = subscriptions[patientId].findIndex(
+      sub => sub.endpoint === subscription.endpoint
+    );
+    
+    if (existingIndex >= 0) {
+      // Update existing subscription
+      subscriptions[patientId][existingIndex] = subscription;
+    } else {
+      // Add new subscription
+      subscriptions[patientId].push(subscription);
+    }
+    
+    writeJson(PUSH_SUBSCRIPTIONS_FILE, subscriptions);
+    
+    console.log(`[PUSH] Subscription registered for patient ${patientId}`);
+    res.json({ ok: true, message: "subscription_registered" });
+  } catch (error) {
+    console.error("Push subscription registration error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /api/chat/upload (patient uploads files/images to chat)
+app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), (req, res) => {
+  try {
+    const body = req.body || {};
+    const patientId = String(body.patientId || req.patientId || "").trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patientId_mismatch" });
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      return res.status(400).json({ ok: false, error: "no_files", message: "No files received" });
+    }
+
+    const isImageUpload = String(body.isImage || "").toLowerCase() === "true";
+    const allowedImageMimes = new Set(["image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif"]);
+    const allowedDocMimes = new Set([
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/zip",
+      "application/x-zip-compressed",
+    ]);
+
+    const CHAT_UPLOAD_DIR = path.join(__dirname, "public", "uploads", "chat", patientId);
+    if (!fs.existsSync(CHAT_UPLOAD_DIR)) fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
+
+    const CHAT_DIR = path.join(DATA_DIR, "chats");
+    if (!fs.existsSync(CHAT_DIR)) fs.mkdirSync(CHAT_DIR, { recursive: true });
+    const chatFile = path.join(CHAT_DIR, `${patientId}.json`);
+    const existing = readJson(chatFile, { messages: [] });
+    const messages = Array.isArray(existing.messages) ? existing.messages : [];
+
+    const uploadedFiles = [];
+    for (const file of files) {
+      const mime = String(file.mimetype || "").toLowerCase();
+      const size = Number(file.size || 0);
+      const originalName = String(file.originalname || "file");
+
+      const isImage = isImageUpload || mime.startsWith("image/");
+      if (isImage && !allowedImageMimes.has(mime)) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz resim formatı" });
+      }
+      if (!isImage && !allowedDocMimes.has(mime)) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz dosya formatı" });
+      }
+
+      if (isImage && size > 10 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "Resim 10MB'dan küçük olmalıdır." });
+      }
+      const isZip = mime === "application/zip" || mime === "application/x-zip-compressed";
+      if (!isImage && isZip && size > 50 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "ZIP 50MB'dan küçük olmalıdır." });
+      }
+      if (!isImage && !isZip && size > 20 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "Dosya 20MB'dan küçük olmalıdır." });
+      }
+
+      let ext = path.extname(originalName || "").toLowerCase();
+      if (!ext) {
+        if (mime === "image/png") ext = ".png";
+        else if (mime === "image/heic" || mime === "image/heif") ext = ".heic";
+        else if (mime === "application/pdf") ext = ".pdf";
+        else if (mime === "application/msword") ext = ".doc";
+        else if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") ext = ".docx";
+        else if (mime === "application/vnd.ms-excel") ext = ".xls";
+        else if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ext = ".xlsx";
+        else if (mime === "text/plain") ext = ".txt";
+        else if (isZip) ext = ".zip";
+        else ext = ".bin";
+      }
+
+      const safeName = `${patientId}_${now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+      const diskPath = path.join(CHAT_UPLOAD_DIR, safeName);
+      fs.writeFileSync(diskPath, file.buffer);
+
+      // Use relative URL so mobile app can prepend correct API_BASE
+      // This ensures Android emulator uses 10.0.2.2 instead of localhost
+      const fileUrl = `/uploads/chat/${encodeURIComponent(patientId)}/${encodeURIComponent(safeName)}`;
+      const fileType = isImage ? "image" : "pdf";
+      uploadedFiles.push({
+        name: originalName,
+        size,
+        url: fileUrl,
+        mimeType: mime,
+        fileType,
+      });
+
+      // Photo metadata tags for patient-uploaded images
+      const photoTags = isImage ? {
+        source: "Patient Uploaded",
+        sourceDescription: "Hasta tarafından mobil uygulama üzerinden yüklenmiştir.",
+        photoType: "Pre-Treatment",
+        photoTypeDescription: "Tedavi öncesi ön değerlendirme fotoğrafı",
+        filterStatus: "No Filter Applied",
+        filterStatusDescription: "Fotoğrafa herhangi bir filtre veya görsel manipülasyon uygulanmamıştır.",
+        captureDate: new Date(now()).toLocaleDateString('tr-TR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        }),
+        captureTimestamp: now(),
+        // V2 fields for Before/After compatibility
+        comparisonStatus: "Before", // Default for patient uploads
+        clinicApprovalStatus: "Not Approved", // Default
+        // Clinic-selectable fields (empty by default)
+        visualQuality: null,
+        clinicNote: null,
+      } : null;
+
+      const newMessage = {
+        id: `msg_${now()}_${crypto.randomBytes(4).toString("hex")}`,
+        text: "",
+        from: "PATIENT",
+        type: fileType,
+        attachment: {
+          name: originalName,
+          size,
+          url: fileUrl,
+          mimeType: mime,
+          fileType,
+          ...(photoTags && { tags: photoTags }),
+        },
+        createdAt: now(),
+        patientId,
+      };
+      messages.push(newMessage);
+    }
+
+    writeJson(chatFile, { patientId, messages, updatedAt: now() });
+    return res.json({
+      ok: true,
+      files: uploadedFiles,
+      message: uploadedFiles.length === 1 ? "File uploaded successfully" : `${uploadedFiles.length} files uploaded successfully`,
+    });
+  } catch (error) {
+    console.error("[Chat Upload] Error:", error);
+    return res.status(500).json({ ok: false, error: "upload_exception", message: error?.message || "Upload failed" });
+  }
+});
+
+// POST /api/admin/chat/upload (Admin uploads files/images to patient chat)
+app.post("/api/admin/chat/upload", requireAdminToken, chatUpload.array("files", 5), (req, res) => {
+  try {
+    console.log("[Admin Chat Upload] Request received");
+    console.log("[Admin Chat Upload] Body keys:", Object.keys(req.body || {}));
+    console.log("[Admin Chat Upload] Files:", Array.isArray(req.files) ? req.files.length : "not array", req.files);
+    
+    const body = req.body || {};
+    const patientId = String(body.patientId || "").trim();
+    console.log("[Admin Chat Upload] Patient ID:", patientId);
+    
+    if (!patientId) {
+      console.error("[Admin Chat Upload] Missing patientId");
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    console.log("[Admin Chat Upload] Files count:", files.length);
+    
+    if (files.length === 0) {
+      console.error("[Admin Chat Upload] No files received");
+      return res.status(400).json({ ok: false, error: "no_files", message: "No files received" });
+    }
+
+    const isImageUpload = String(body.isImage || "").toLowerCase() === "true";
+    const allowedImageMimes = new Set(["image/jpeg", "image/jpg", "image/png", "image/heic", "image/heif"]);
+    const allowedDocMimes = new Set([
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/zip",
+      "application/x-zip-compressed",
+    ]);
+
+    const CHAT_UPLOAD_DIR = path.join(__dirname, "public", "uploads", "chat", patientId);
+    if (!fs.existsSync(CHAT_UPLOAD_DIR)) fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
+
+    const CHAT_DIR = path.join(DATA_DIR, "chats");
+    if (!fs.existsSync(CHAT_DIR)) fs.mkdirSync(CHAT_DIR, { recursive: true });
+    const chatFile = path.join(CHAT_DIR, `${patientId}.json`);
+    const existing = readJson(chatFile, { messages: [] });
+    const messages = Array.isArray(existing.messages) ? existing.messages : [];
+
+    const uploadedFiles = [];
+    for (const file of files) {
+      const mime = String(file.mimetype || "").toLowerCase();
+      const size = Number(file.size || 0);
+      const originalName = String(file.originalname || "file");
+
+      const isImage = isImageUpload || mime.startsWith("image/");
+      if (isImage && !allowedImageMimes.has(mime)) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz resim formatı" });
+      }
+      if (!isImage && !allowedDocMimes.has(mime)) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz dosya formatı" });
+      }
+
+      if (isImage && size > 10 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "Resim 10MB'dan küçük olmalıdır." });
+      }
+      const isZip = mime === "application/zip" || mime === "application/x-zip-compressed";
+      if (!isImage && isZip && size > 50 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "ZIP 50MB'dan küçük olmalıdır." });
+      }
+      if (!isImage && !isZip && size > 20 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "Dosya 20MB'dan küçük olmalıdır." });
+      }
+
+      let ext = path.extname(originalName || "").toLowerCase();
+      if (!ext) {
+        if (mime === "image/png") ext = ".png";
+        else if (mime === "image/heic" || mime === "image/heif") ext = ".heic";
+        else if (mime === "application/pdf") ext = ".pdf";
+        else if (mime === "application/msword") ext = ".doc";
+        else if (mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") ext = ".docx";
+        else if (mime === "application/vnd.ms-excel") ext = ".xls";
+        else if (mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") ext = ".xlsx";
+        else if (mime === "text/plain") ext = ".txt";
+        else if (isZip) ext = ".zip";
+        else ext = ".bin";
+      }
+
+      const safeName = `${patientId}_${now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+      const diskPath = path.join(CHAT_UPLOAD_DIR, safeName);
+      fs.writeFileSync(diskPath, file.buffer);
+
+      // Use relative URL so mobile app can prepend correct API_BASE
+      // This ensures Android emulator uses 10.0.2.2 instead of localhost
+      const fileUrl = `/uploads/chat/${encodeURIComponent(patientId)}/${encodeURIComponent(safeName)}`;
+      const fileType = isImage ? "image" : "pdf";
+      uploadedFiles.push({
+        name: originalName,
+        size,
+        url: fileUrl,
+        mimeType: mime,
+        fileType,
+      });
+
+      // Admin uploads - message from CLINIC
+      const newMessage = {
+        id: `msg_${now()}_${crypto.randomBytes(4).toString("hex")}`,
+        text: "",
+        from: "CLINIC",
+        type: fileType,
+        attachment: {
+          name: originalName,
+          size,
+          url: fileUrl,
+          mimeType: mime,
+          fileType,
+        },
+        createdAt: now(),
+      };
+      messages.push(newMessage);
+    }
+
+    writeJson(chatFile, { patientId, messages, updatedAt: now() });
+    console.log("[Admin Chat Upload] Success! Uploaded", uploadedFiles.length, "file(s)");
+    return res.json({
+      ok: true,
+      files: uploadedFiles,
+      message: uploadedFiles.length === 1 ? "File uploaded successfully" : `${uploadedFiles.length} files uploaded successfully`,
+    });
+  } catch (error) {
+    console.error("[Admin Chat Upload] Error:", error);
+    console.error("[Admin Chat Upload] Error stack:", error?.stack);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
 // ================== CLINIC INFO ==================
 // GET /api/clinic (Public - mobile app için)
+// Supports ?code=XXX query parameter to get specific clinic from CLINICS_FILE
 app.get("/api/clinic", (req, res) => {
+  const codeParam = String(req.query.code || "").trim().toUpperCase();
+  console.log(`[CLINIC GET] Request with codeParam: "${codeParam}"`);
+  
+  // If code parameter is provided, try to find clinic in CLINICS_FILE (multi-clinic mode)
+  if (codeParam) {
+    const clinics = readJson(CLINICS_FILE, {});
+    for (const [clinicId, clinicData] of Object.entries(clinics)) {
+      if (clinicData && (clinicData.clinicCode === codeParam || clinicData.code === codeParam)) {
+        // Don't return password hash or sensitive data
+        const { password, ...publicClinic } = clinicData;
+        console.log(`[CLINIC GET] Found clinic in CLINICS_FILE: ${codeParam}, discounts: ${publicClinic.defaultInviterDiscountPercent}/${publicClinic.defaultInvitedDiscountPercent}`);
+        return res.json(publicClinic);
+      }
+    }
+    console.log(`[CLINIC GET] Clinic ${codeParam} not found in CLINICS_FILE, trying CLINIC_FILE...`);
+    // If not found in CLINICS_FILE, try CLINIC_FILE as fallback
+    const singleClinic = readJson(CLINIC_FILE, {});
+    if (singleClinic && (singleClinic.clinicCode === codeParam || !codeParam)) {
+      console.log(`[CLINIC GET] Found clinic in CLINIC_FILE: ${singleClinic.clinicCode}, discounts: ${singleClinic.defaultInviterDiscountPercent}/${singleClinic.defaultInvitedDiscountPercent}`);
+      return res.json(singleClinic);
+    }
+  }
+  
+  // Default: read from CLINIC_FILE (single-clinic mode - for backward compatibility)
+  console.log(`[CLINIC GET] No codeParam or clinic not found, using default from CLINIC_FILE`);
   const defaultClinic = {
     clinicCode: "MOON",
-    name: "Cliniflow Dental Clinic",
+    name: "Clinifly Dental Clinic",
     googleReviews: [],
     trustpilotReviews: [],
     address: "Antalya, Türkiye",
@@ -1050,6 +3478,7 @@ app.get("/api/clinic", (req, res) => {
   };
   
   const clinic = readJson(CLINIC_FILE, defaultClinic);
+  console.log(`[CLINIC GET] Returning default clinic with discounts: ${clinic.defaultInviterDiscountPercent}/${clinic.defaultInvitedDiscountPercent}`);
   res.json(clinic);
 });
 
@@ -1073,31 +3502,87 @@ app.get("/api/clinic/:code", (req, res) => {
   res.status(404).json({ ok: false, error: "clinic_not_found", code });
 });
 
-// GET /api/admin/clinic (Admin için)
-app.get("/api/admin/clinic", (req, res) => {
-  const defaultClinic = {
-    clinicCode: "MOON",
-    name: "Cliniflow Dental Clinic",
-    address: "Antalya, Türkiye",
-    phone: "",
-    email: "",
-    website: "",
-    logoUrl: "",
-    googleMapsUrl: "",
-    googleReviews: [],
-    trustpilotReviews: [],
-    updatedAt: now(),
-  };
-  
-  const clinic = readJson(CLINIC_FILE, defaultClinic);
-  res.json(clinic);
+// ================== PROCEDURE DEFINITIONS (shared) ==================
+// Public endpoint: admin UI + backend share the same allowed list.
+app.get("/api/procedures", (req, res) => {
+  res.json({
+    ok: true,
+    types: procedures.PROCEDURE_TYPES,
+    statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
+    categories: ["PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
+    extractionTypes: Array.from(procedures.EXTRACTION_TYPES),
+  });
 });
 
-// PUT /api/admin/clinic (Admin günceller)
-app.put("/api/admin/clinic", async (req, res) => {
+// GET /api/admin/clinic (Admin için) - token-based (multi-clinic)
+app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
+  try {
+    let clinic = null;
+    
+    // Try CLINICS_FILE first if clinicId is available
+    if (req.clinicId) {
+      const clinics = readJson(CLINICS_FILE, {});
+      clinic = clinics[req.clinicId];
+    }
+    
+    // If not found, search by clinicCode
+    if (!clinic && req.clinicCode) {
+      const clinics = readJson(CLINICS_FILE, {});
+      const code = String(req.clinicCode).toUpperCase();
+      for (const clinicId in clinics) {
+        const c = clinics[clinicId];
+        if (c) {
+          const clinicCodeToCheck = c.clinicCode || c.code;
+          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
+            clinic = c;
+            req.clinicId = clinicId; // Update for consistency
+            break;
+          }
+        }
+      }
+    }
+    
+    // Fallback to CLINIC_FILE (single clinic)
+    if (!clinic && req.clinicCode) {
+      const singleClinic = readJson(CLINIC_FILE, {});
+      const code = String(req.clinicCode).toUpperCase();
+      if (singleClinic && singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
+        clinic = singleClinic;
+      }
+    }
+    
+    if (!clinic) {
+      console.error("[GET /api/admin/clinic] Clinic not found, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+    
+    const { password, ...safe } = clinic;
+    res.json(safe);
+  } catch (error) {
+    console.error("Get admin clinic error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// PUT /api/admin/clinic (Admin günceller) - token-based (multi-clinic)
+app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
   try {
     const body = req.body || {};
-    const existing = readJson(CLINIC_FILE, {});
+    const clinics = readJson(CLINICS_FILE, {});
+    const existing = clinics[req.clinicId] || {};
+    if (!clinics[req.clinicId]) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+
+    // Subscription plan (single-clinic mode)
+    const rawPlanInput = String(body.plan || existing.plan || existing.subscriptionPlan || "FREE").trim().toUpperCase();
+    const rawPlan = rawPlanInput === "PROFESSIONAL" ? "PRO" : rawPlanInput;
+    const allowedPlans = ["FREE", "BASIC", "PRO"];
+    if (!allowedPlans.includes(rawPlan)) {
+      return res.status(400).json({ ok: false, error: `invalid_plan:${rawPlan}` });
+    }
+
+    const computedMaxPatients = rawPlan === "FREE" ? 3 : (rawPlan === "BASIC" ? 10 : null);
     
     const inviterPercent = body.defaultInviterDiscountPercent != null 
       ? Number(body.defaultInviterDiscountPercent) 
@@ -1121,15 +3606,35 @@ app.put("/api/admin/clinic", async (req, res) => {
       passwordHash = await bcrypt.hash(String(body.password).trim(), 10);
     }
     
+    // Handle branding object
+    const existingBranding = existing.branding || {};
+    const bodyBranding = body.branding || {};
+    const updatedBranding = {
+      clinicName: bodyBranding.clinicName || existingBranding.clinicName || existing.name || "",
+      clinicLogoUrl: bodyBranding.clinicLogoUrl || existingBranding.clinicLogoUrl || existing.logoUrl || "",
+      address: bodyBranding.address || existingBranding.address || existing.address || "",
+      googleMapLink: bodyBranding.googleMapLink || existingBranding.googleMapLink || existing.googleMapsUrl || "",
+      primaryColor: bodyBranding.primaryColor || existingBranding.primaryColor || "#2563EB",
+      secondaryColor: bodyBranding.secondaryColor || existingBranding.secondaryColor || "#10B981",
+      welcomeMessage: bodyBranding.welcomeMessage || existingBranding.welcomeMessage || "",
+      showPoweredBy: bodyBranding.showPoweredBy !== undefined ? bodyBranding.showPoweredBy : (existingBranding.showPoweredBy !== undefined ? existingBranding.showPoweredBy : true),
+    };
+    
     const updated = {
-      clinicCode: String(body.clinicCode || existing.clinicCode || "MOON"),
-      name: String(body.name || existing.name || "Cliniflow Dental Clinic"),
-      address: String(body.address || existing.address || "Antalya, Türkiye"),
+      ...existing,
+      clinicCode: String(body.clinicCode || existing.clinicCode || existing.code || "MOON").trim().toUpperCase(),
+      code: existing.code || String(body.clinicCode || existing.clinicCode || "MOON").trim().toUpperCase(),
+      name: String(body.name || bodyBranding.clinicName || existing.name || "").trim(),
+      plan: rawPlan,
+      subscriptionPlan: rawPlan, // keep compatibility with older fields
+      max_patients: computedMaxPatients,
+      address: String(body.address || existing.address || ""),
       phone: String(body.phone || existing.phone || ""),
-      email: String(body.email || existing.email || ""),
+      email: String(existing.email || ""),
       website: String(body.website || existing.website || ""),
-      logoUrl: String(body.logoUrl || existing.logoUrl || ""),
-      googleMapsUrl: String(body.googleMapsUrl || existing.googleMapsUrl || ""),
+      logoUrl: String(body.logoUrl || bodyBranding.clinicLogoUrl || existing.logoUrl || existingBranding.clinicLogoUrl || ""),
+      googleMapsUrl: String(body.googleMapsUrl || bodyBranding.googleMapLink || existing.googleMapsUrl || existingBranding.googleMapLink || ""),
+      branding: updatedBranding,
       defaultInviterDiscountPercent: inviterPercent,
       defaultInvitedDiscountPercent: invitedPercent,
       googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
@@ -1137,9 +3642,11 @@ app.put("/api/admin/clinic", async (req, res) => {
       password: passwordHash, // Keep existing or update
       updatedAt: now(),
     };
-    
-    writeJson(CLINIC_FILE, updated);
-    res.json({ ok: true, clinic: updated });
+
+    clinics[req.clinicId] = updated;
+    writeJson(CLINICS_FILE, clinics);
+    const { password, ...safe } = updated;
+    res.json({ ok: true, clinic: safe });
   } catch (error) {
     console.error("Clinic update error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -1206,7 +3713,7 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
 
 // ================== REFERRALS ==================
 // GET /api/admin/referrals?status=PENDING|APPROVED|REJECTED
-app.get("/api/admin/referrals", (req, res) => {
+app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
   try {
     const status = req.query.status;
     const raw = readJson(REF_FILE, []);
@@ -1258,7 +3765,7 @@ app.get("/api/patient/:patientId/referrals", (req, res) => {
 });
 
 // PATCH /api/admin/referrals/:id/approve
-app.patch("/api/admin/referrals/:id/approve", (req, res) => {
+app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
@@ -1330,7 +3837,7 @@ app.patch("/api/admin/referrals/:id/approve", (req, res) => {
 });
 
 // PATCH /api/admin/referrals/:id/reject
-app.patch("/api/admin/referrals/:id/reject", (req, res) => {
+app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, (req, res) => {
   try {
     const { id } = req.params;
     const raw = readJson(REF_FILE, []);
@@ -1531,7 +4038,7 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
 
 // GET /api/admin/referral-events
 // Get all referral events (admin view)
-app.get("/api/admin/referral-events", (req, res) => {
+app.get("/api/admin/referral-events", requireAdminAuth, (req, res) => {
   try {
     const events = readJson(REF_EVENT_FILE, []);
     const eventList = Array.isArray(events) ? events : Object.values(events);
@@ -1542,6 +4049,293 @@ app.get("/api/admin/referral-events", (req, res) => {
     res.json({ ok: true, items: eventList });
   } catch (error) {
     console.error("Get referral events error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// GET /api/admin/events
+// Get all events from all patients (travel events + treatment events)
+// Filters: upcoming (next 14 days, excluding today), overdue (past but not completed)
+app.get("/api/admin/events", requireAdminToken, (req, res) => {
+  try {
+    const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
+    if (!clinicCode) {
+      return res.status(401).json({ ok: false, error: "clinic_required" });
+    }
+
+    const now = Date.now();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStart = today.getTime();
+    
+    // Calculate date range for upcoming (next 14 days, excluding today)
+    const upcomingEnd = new Date(today);
+    upcomingEnd.setDate(upcomingEnd.getDate() + 14);
+    upcomingEnd.setHours(23, 59, 59, 999);
+    const upcomingEndTs = upcomingEnd.getTime();
+    
+    const allEvents = [];
+    const patients = readJson(PAT_FILE, {});
+    const patientClinicMap = {};
+    Object.values(patients || {}).forEach((p) => {
+      const pid = String(p?.patientId || p?.patient_id || "").trim();
+      const code = String(p?.clinicCode || p?.clinic_code || "").trim().toUpperCase();
+      if (pid && code) patientClinicMap[pid] = code;
+    });
+    const isAllowedPatient = (pid) =>
+      pid && patientClinicMap[pid] && patientClinicMap[pid] === clinicCode;
+    const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    
+    // Collect events from travel data
+    if (fs.existsSync(TRAVEL_DIR)) {
+      const travelFiles = fs.readdirSync(TRAVEL_DIR).filter(f => f.endsWith(".json"));
+      for (const file of travelFiles) {
+        try {
+          const travelData = readJson(path.join(TRAVEL_DIR, file), {});
+          const patientId = travelData.patientId || file.replace(".json", "");
+          if (!isAllowedPatient(patientId)) continue;
+          
+          // Travel events
+          if (Array.isArray(travelData.events)) {
+            travelData.events.forEach(evt => {
+              if (evt.date) {
+                const eventDate = new Date(evt.date + (evt.time ? `T${evt.time}:00` : "T00:00:00"));
+                const eventTs = eventDate.getTime();
+                
+                allEvents.push({
+                  id: evt.id || `travel_${patientId}_${eventTs}`,
+                  patientId,
+                  type: "TRAVEL_EVENT",
+                  eventType: evt.type || "TREATMENT",
+                  title: evt.title || "",
+                  description: evt.desc || "",
+                  date: evt.date,
+                  time: evt.time || "",
+                  timestamp: eventTs,
+                  status: "PLANNED", // Travel events are always planned
+                  source: "travel"
+                });
+              }
+            });
+          }
+          
+          // Hotel check-in/check-out as events
+          if (travelData.hotel && travelData.hotel.name) {
+            // Check-in event
+            if (travelData.hotel.checkIn) {
+              const checkInDate = new Date(travelData.hotel.checkIn + "T00:00:00");
+              const checkInTs = checkInDate.getTime();
+              
+              allEvents.push({
+                id: `hotel_checkin_${patientId}_${checkInTs}`,
+                patientId,
+                type: "HOTEL",
+                eventType: "CHECKIN",
+                title: `Otel Giriş: ${travelData.hotel.name}`,
+                description: travelData.hotel.address || "",
+                date: travelData.hotel.checkIn,
+                time: "",
+                timestamp: checkInTs,
+                status: "PLANNED",
+                source: "travel"
+              });
+            }
+            
+            // Check-out event
+            if (travelData.hotel.checkOut) {
+              const checkOutDate = new Date(travelData.hotel.checkOut + "T00:00:00");
+              const checkOutTs = checkOutDate.getTime();
+              
+              allEvents.push({
+                id: `hotel_checkout_${patientId}_${checkOutTs}`,
+                patientId,
+                type: "HOTEL",
+                eventType: "CHECKOUT",
+                title: `Otel Çıkış: ${travelData.hotel.name}`,
+                description: travelData.hotel.address || "",
+                date: travelData.hotel.checkOut,
+                time: "",
+                timestamp: checkOutTs,
+                status: "PLANNED",
+                source: "travel"
+              });
+            }
+          }
+          
+          // Flights as events
+          if (Array.isArray(travelData.flights)) {
+            travelData.flights.forEach(flight => {
+              if (flight.date) {
+                const flightDate = new Date(flight.date + (flight.time ? `T${flight.time}:00` : "T00:00:00"));
+                const flightTs = flightDate.getTime();
+                
+                allEvents.push({
+                  id: flight.id || `flight_${patientId}_${flightTs}`,
+                  patientId,
+                  type: "FLIGHT",
+                  eventType: flight.type || "OUTBOUND",
+                  title: `${flight.type === "RETURN" ? "Dönüş" : "Gidiş"} Uçuşu`,
+                  description: `${flight.from?.toUpperCase() || ""} → ${flight.to?.toUpperCase() || ""}${flight.flightNo ? ` (${flight.flightNo})` : ""}`,
+                  date: flight.date,
+                  time: flight.time || "",
+                  timestamp: flightTs,
+                  status: "PLANNED",
+                  source: "travel"
+                });
+                
+                // Airport pickup event for ARRIVAL flights
+                if ((flight.type === "ARRIVAL" || flight.type === "INBOUND") && travelData.airportPickup) {
+                  const pickup = travelData.airportPickup;
+                  if (pickup && (pickup.name || pickup.phone)) {
+                    const pickupParts = [];
+                    if (pickup.name) pickupParts.push(`İsim: ${pickup.name}`);
+                    if (pickup.phone) pickupParts.push(`Tel: ${pickup.phone}`);
+                    if (pickup.meetingPoint) pickupParts.push(`Buluşma: ${pickup.meetingPoint}`);
+                    if (pickup.vehicle || pickup.vehicleInfo || pickup.plate) {
+                      const vehicle = pickup.vehicle || pickup.vehicleInfo || "";
+                      const plate = pickup.plate || "";
+                      
+                      if (vehicle && plate) {
+                        pickupParts.push(`Araç: ${vehicle}, Plaka: ${plate}`);
+                      } else if (vehicle) {
+                        pickupParts.push(`Araç: ${vehicle}`);
+                      } else if (plate) {
+                        pickupParts.push(`Plaka: ${plate}`);
+                      }
+                    }
+                    if (pickup.note || pickup.notes) {
+                      pickupParts.push(`Not: ${pickup.note || pickup.notes}`);
+                    }
+                    
+                    allEvents.push({
+                      id: `airport_pickup_${patientId}_${flightTs}`,
+                      patientId,
+                      type: "AIRPORT_PICKUP",
+                      eventType: "AIRPORT_PICKUP",
+                      title: "Havalimanı Karşılama - Alan karşılama girildi",
+                      description: pickupParts.join(" • ") || "Alan karşılama girildi",
+                      date: flight.date,
+                      time: flight.time || "",
+                      timestamp: flightTs,
+                      status: "PLANNED",
+                      source: "travel"
+                    });
+                  }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error(`Error reading travel file ${file}:`, err);
+        }
+      }
+    }
+    
+    // Collect events from treatments data
+    if (fs.existsSync(TREATMENTS_DIR)) {
+      const treatmentFiles = fs.readdirSync(TREATMENTS_DIR).filter(f => f.endsWith(".json"));
+      for (const file of treatmentFiles) {
+        try {
+          const treatmentData = readJson(path.join(TREATMENTS_DIR, file), {});
+          const patientId = treatmentData.patientId || file.replace(".json", "");
+          if (!isAllowedPatient(patientId)) continue;
+          
+          if (Array.isArray(treatmentData.teeth)) {
+            treatmentData.teeth.forEach(tooth => {
+              if (Array.isArray(tooth.procedures)) {
+                tooth.procedures.forEach(proc => {
+                  if (proc.scheduledAt) {
+                    const procDate = new Date(proc.scheduledAt);
+                    const procTs = procDate.getTime();
+                    
+                    // Normalize status (PLANNED, ACTIVE, COMPLETED, CANCELLED)
+                    const procStatus = procedures.normalizeStatus(proc.status || "PLANNED");
+                    
+                    allEvents.push({
+                      id: proc.id || `treatment_${patientId}_${procTs}`,
+                      patientId,
+                      type: "TREATMENT",
+                      eventType: proc.type || "PROCEDURE",
+                      title: `${proc.type || "Treatment"} - Tooth ${tooth.toothId}`,
+                      description: "",
+                      date: procDate.toISOString().split("T")[0],
+                      time: procDate.toTimeString().split(" ")[0].slice(0, 5),
+                      timestamp: procTs,
+                      status: procStatus,
+                      source: "treatment",
+                      toothId: tooth.toothId
+                    });
+                  }
+                });
+              }
+            });
+          }
+        } catch (err) {
+          console.error(`Error reading treatment file ${file}:`, err);
+        }
+      }
+    }
+    
+    // Separate into overdue, today, and upcoming
+    const overdue = [];
+    const todayEvents = [];
+    const upcoming = [];
+    
+    // Calculate today end time
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    const todayEndTs = todayEnd.getTime();
+    
+    // Treatment event types that should show as overdue
+    const treatmentEventTypes = ["TREATMENT", "CONSULT", "FOLLOWUP", "LAB"];
+    
+    allEvents.forEach(evt => {
+      const eventTs = evt.timestamp || 0;
+      const status = String(evt.status || "PLANNED").toUpperCase();
+      const isCompleted = status === "DONE" || status === "COMPLETED";
+      const isCancelled = status === "CANCELLED";
+      const eventType = String(evt.type || "").toUpperCase();
+      const isTreatmentEvent = treatmentEventTypes.includes(eventType);
+      
+      // Skip cancelled or completed events from upcoming/overdue lists
+      if (isCancelled || isCompleted) {
+        return; // Don't add to overdue or upcoming
+      }
+      
+      // Overdue: past date but not completed - ONLY for treatment events
+      // Double check: event must be in the past AND not completed
+      if (eventTs < todayStart && isTreatmentEvent && !isCompleted && !isCancelled) {
+        overdue.push(evt);
+      }
+      // Today: events happening today
+      else if (eventTs >= todayStart && eventTs <= todayEndTs && !isCompleted && !isCancelled) {
+        todayEvents.push(evt);
+      }
+      // Upcoming: next 14 days (excluding today), but only if not completed/cancelled
+      else if (eventTs > todayEndTs && eventTs <= upcomingEndTs && !isCompleted && !isCancelled) {
+        upcoming.push(evt);
+      }
+    });
+    
+    // Sort overdue by date (oldest first)
+    overdue.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    
+    // Sort upcoming by date (soonest first)
+    upcoming.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    
+    res.json({
+      ok: true,
+      overdue,
+      today: todayEvents,
+      upcoming,
+      total: allEvents.length,
+      overdueCount: overdue.length,
+      todayCount: todayEvents.length,
+      upcomingCount: upcoming.length
+    });
+  } catch (error) {
+    console.error("Get admin events error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -1560,10 +4354,10 @@ function requireAdminAuth(req, res, next) {
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Verify clinic exists and is active
+    // Verify clinic exists and is active or pending
     const clinics = readJson(CLINICS_FILE, {});
     const clinic = clinics[decoded.clinicId];
-    if (!clinic || clinic.status !== "ACTIVE") {
+    if (!clinic || (clinic.status !== "ACTIVE" && clinic.status !== "PENDING")) {
       return res.status(401).json({ ok: false, error: "clinic_not_active" });
     }
     
@@ -1594,7 +4388,18 @@ app.post("/api/admin/register", async (req, res) => {
       return res.status(400).json({ ok: false, error: "name_required" });
     }
     if (!clinicCode || !String(clinicCode).trim()) {
-      return res.status(400).json({ ok: false, error: "clinic_code_required" });
+      return res.status(400).json({ ok: false, error: "clinic_code_required", message: "Clinic code is required." });
+    }
+    
+    // Validate clinic code format: minimum 3 characters, only letters and numbers
+    const clinicCodeTrimmed = String(clinicCode).trim();
+    if (clinicCodeTrimmed.length < 3) {
+      return res.status(400).json({ ok: false, error: "clinic_code_too_short", message: "Clinic code must be at least 3 characters." });
+    }
+    
+    // Allow only alphanumeric characters (letters and numbers), case insensitive
+    if (!/^[A-Za-z0-9]+$/.test(clinicCodeTrimmed)) {
+      return res.status(400).json({ ok: false, error: "clinic_code_invalid", message: "Clinic code can only contain letters and numbers." });
     }
     
     const clinics = readJson(CLINICS_FILE, {});
@@ -1602,14 +4407,16 @@ app.post("/api/admin/register", async (req, res) => {
     
     // Check if email already exists
     for (const id in clinics) {
-      if (clinics[id].email.toLowerCase() === emailLower) {
+      const existingEmail = clinics[id]?.email;
+      if (existingEmail && String(existingEmail).trim().toLowerCase() === emailLower) {
         return res.status(400).json({ ok: false, error: "email_exists" });
       }
     }
     
     // Check if clinicCode already exists
     for (const id in clinics) {
-      if (clinics[id].clinicCode.toUpperCase() === String(clinicCode).trim().toUpperCase()) {
+      const existingCode = clinics[id]?.clinicCode || clinics[id]?.code;
+      if (existingCode && String(existingCode).trim().toUpperCase() === String(clinicCode).trim().toUpperCase()) {
         return res.status(400).json({ ok: false, error: "clinic_code_exists" });
       }
     }
@@ -1627,6 +4434,8 @@ app.post("/api/admin/register", async (req, res) => {
       phone: String(phone || "").trim(),
       address: String(address || "").trim(),
       clinicCode: String(clinicCode).trim().toUpperCase(),
+      plan: "FREE",
+      max_patients: 3,
       status: "PENDING", // PENDING, ACTIVE, SUSPENDED
       subscriptionStatus: "TRIAL", // TRIAL, ACTIVE, EXPIRED, CANCELLED
       subscriptionPlan: null, // BASIC, PROFESSIONAL, ENTERPRISE
@@ -1659,6 +4468,7 @@ app.post("/api/admin/register", async (req, res) => {
 
 // POST /api/admin/login
 // Clinic login (clinic code + password)
+// Supports both CLINIC_FILE (single clinic) and CLINICS_FILE (multiple clinics)
 app.post("/api/admin/login", async (req, res) => {
   try {
     const { clinicCode, password } = req.body || {};
@@ -1672,15 +4482,44 @@ app.post("/api/admin/login", async (req, res) => {
     }
     
     const code = String(clinicCode).trim().toUpperCase();
-    const clinic = readJson(CLINIC_FILE, {});
+    let foundClinic = null;
+    let foundClinicId = null;
+    let isFromClinicsFile = false;
     
-    // Check if clinic code matches
-    if (!clinic.clinicCode || clinic.clinicCode.toUpperCase() !== code) {
+    // First check CLINIC_FILE (single clinic)
+    const singleClinic = readJson(CLINIC_FILE, {});
+    if (singleClinic && singleClinic.clinicCode) {
+      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
+      if (singleClinicCode === code) {
+        foundClinic = singleClinic;
+        isFromClinicsFile = false;
+      }
+    }
+    
+    // Then check CLINICS_FILE (multiple clinics)
+    if (!foundClinic) {
+      const clinics = readJson(CLINICS_FILE, {});
+      for (const clinicId in clinics) {
+        const clinic = clinics[clinicId];
+        if (clinic) {
+          const clinicCodeToCheck = clinic.clinicCode || clinic.code;
+          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
+            foundClinic = clinic;
+            foundClinicId = clinicId;
+            isFromClinicsFile = true;
+            break;
+          }
+        }
+      }
+    }
+    
+    // If clinic not found
+    if (!foundClinic) {
       return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
     }
     
     // Check password
-    if (!clinic.password) {
+    if (!foundClinic.password) {
       // If no password is set, allow login with default password "admin123" (for initial setup)
       const defaultPassword = "admin123";
       if (password !== defaultPassword) {
@@ -1688,11 +4527,22 @@ app.post("/api/admin/login", async (req, res) => {
       }
       // Set default password hash for first login
       const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-      clinic.password = hashedPassword;
-      writeJson(CLINIC_FILE, clinic);
+      foundClinic.password = hashedPassword;
+      
+      if (isFromClinicsFile) {
+        // Update in CLINICS_FILE
+        const clinics = readJson(CLINICS_FILE, {});
+        if (clinics[foundClinicId]) {
+          clinics[foundClinicId].password = hashedPassword;
+          writeJson(CLINICS_FILE, clinics);
+        }
+      } else {
+        // Update in CLINIC_FILE
+        writeJson(CLINIC_FILE, foundClinic);
+      }
     } else {
       // Verify password hash
-      const passwordMatch = await bcrypt.compare(String(password).trim(), clinic.password);
+      const passwordMatch = await bcrypt.compare(String(password).trim(), foundClinic.password);
       if (!passwordMatch) {
         return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
       }
@@ -1700,7 +4550,11 @@ app.post("/api/admin/login", async (req, res) => {
     
     // Generate JWT token
     const token = jwt.sign(
-      { clinicCode: code, type: "admin" },
+      { 
+        clinicCode: code, 
+        clinicId: foundClinicId || foundClinic.clinicId || null,
+        type: "admin" 
+      },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
@@ -1709,7 +4563,9 @@ app.post("/api/admin/login", async (req, res) => {
       ok: true,
       token,
       clinicCode: code,
-      clinicName: clinic.name || "Clinic",
+      clinicId: foundClinicId || foundClinic.clinicId || null,
+      clinicName: foundClinic.name || "Clinic",
+      status: foundClinic.status || "PENDING",
     });
   } catch (error) {
     console.error("Admin login error:", error);
@@ -1822,9 +4678,33 @@ app.get("/api/admin/me", requireAdminAuth, (req, res) => {
   }
 });
 
+// GET /api/admin/tokens
+// Get list of patient tokens (requires auth)
+app.get("/api/admin/tokens", requireAdminAuth, (req, res) => {
+  try {
+    const tokens = readJson(TOK_FILE, {});
+    const items = Object.keys(tokens).map((token) => ({
+      token,
+      patientId: tokens[token]?.patientId,
+      name: tokens[token]?.name || "-",
+      phone: tokens[token]?.phone || "-",
+      role: tokens[token]?.role || tokens[token]?.status || "PENDING",
+      createdAt: tokens[token]?.createdAt || null,
+    }));
+    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    res.json({ ok: true, items });
+  } catch (error) {
+    console.error("Get admin tokens error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+
 // ================== START ==================
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running: http://127.0.0.1:${PORT}`);
-  console.log(`✅ Health:        http://127.0.0.1:${PORT}/health`);
-  console.log(`✅ Admin:         http://127.0.0.1:${PORT}/admin.html`);
+  console.log(`✅ Health (JSON):  http://127.0.0.1:${PORT}/health`);
+  console.log(`✅ Health (HTML):  http://127.0.0.1:${PORT}/health.html`);
+  console.log(`✅ Admin:          http://127.0.0.1:${PORT}/admin.html`);
+  console.log(`✅ Travel:         http://127.0.0.1:${PORT}/admin-travel.html`);
 });
