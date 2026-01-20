@@ -1,3 +1,5 @@
+console.log("🔥 RUNNING INDEX.CJS FROM ROOT /cliniflow-admin");
+
 // Load environment variables from .env file
 require("dotenv").config();
 
