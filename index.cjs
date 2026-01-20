@@ -674,6 +674,7 @@ app.get("/super-admin.html", (req, res) => {
 // All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
 
 const publicPath = path.join(__dirname, "public");
+console.log("🔥 PUBLIC DIR:", path.join(__dirname, "public"));
 console.log("[STATIC] Serving public from:", publicPath);
 
 app.use(express.static(publicPath));
