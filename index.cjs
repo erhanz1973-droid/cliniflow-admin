@@ -606,7 +606,7 @@ app.get("/admin-login.html", (req, res) => {
   const filePath = path.join(__dirname, "public", "admin-login.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
-  } else {
+    } else {
     console.error(`[GET /admin-login.html] File not found: ${filePath}`);
     console.error(`[GET /admin-login.html] __dirname: ${__dirname}`);
     console.error(`[GET /admin-login.html] process.cwd(): ${process.cwd()}`);
@@ -683,7 +683,7 @@ if (!fs.existsSync(publicPath)) {
   } else if (fs.existsSync(altPath2)) {
     publicPath = altPath2;
     console.log(`[STATIC] Using alternative path 2: ${publicPath}`);
-  } else {
+    } else {
     console.error(`[STATIC] ERROR: Public directory not found in any path!`);
     console.error(`[STATIC] Tried: ${path.join(__dirname, "public")}`);
     console.error(`[STATIC] Tried: ${altPath1}`);
@@ -716,11 +716,11 @@ if (fs.existsSync(publicPath)) {
 
 // Mount static middleware at root path
 // This will serve files from public/ directory at root URL (e.g., /admin-register.html)
-// fallthrough: false ensures 404 if file not found (don't pass to API routes)
+// fallthrough: true allows route handlers to work if static file is not found
 app.use(express.static(publicPath, {
   index: false, // Don't serve index.html for directory requests
   dotfiles: 'ignore', // Ignore dotfiles
-  fallthrough: false // Don't pass to next middleware if file not found (return 404)
+  fallthrough: true // Continue to next middleware/route if file not found
 }));
 
 // ================== REGISTER ==================
