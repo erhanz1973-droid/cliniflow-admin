@@ -558,9 +558,18 @@ app.get("/admin.html", (req, res) => {
   const filePath = path.join(__dirname, "public", "admin.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
+  } else {
+    // Try alternative paths (Render compatibility)
+    const altPath1 = path.join(process.cwd(), "public", "admin.html");
+    const altPath2 = path.resolve("public", "admin.html");
+    if (fs.existsSync(altPath1)) {
+      res.sendFile(altPath1);
+    } else if (fs.existsSync(altPath2)) {
+      res.sendFile(altPath2);
     } else {
-    // If admin.html doesn't exist, redirect to login (NOT super admin)
-    res.redirect("/admin-login.html");
+      // If admin.html doesn't exist, redirect to login (NOT super admin)
+      res.redirect("/admin-login.html");
+    }
   }
 });
 
@@ -599,7 +608,20 @@ app.get("/admin-login.html", (req, res) => {
     res.sendFile(filePath);
   } else {
     console.error(`[GET /admin-login.html] File not found: ${filePath}`);
-    res.status(404).send("Admin Login page not found");
+    console.error(`[GET /admin-login.html] __dirname: ${__dirname}`);
+    console.error(`[GET /admin-login.html] process.cwd(): ${process.cwd()}`);
+    // Try alternative paths
+    const altPath1 = path.join(process.cwd(), "public", "admin-login.html");
+    const altPath2 = path.resolve("public", "admin-login.html");
+    if (fs.existsSync(altPath1)) {
+      console.log(`[GET /admin-login.html] Using alternative path 1: ${altPath1}`);
+      res.sendFile(altPath1);
+    } else if (fs.existsSync(altPath2)) {
+      console.log(`[GET /admin-login.html] Using alternative path 2: ${altPath2}`);
+      res.sendFile(altPath2);
+    } else {
+      res.status(404).send("Admin Login page not found");
+    }
   }
 });
 
