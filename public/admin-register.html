@@ -484,14 +484,25 @@
           
           // Save token to localStorage
           localStorage.setItem('admin_token', data.token);
+          if (data.clinicCode) {
+            localStorage.setItem('clinic_code', data.clinicCode);
+          }
+          if (clinicName) {
+            localStorage.setItem('clinic_name', clinicName);
+          }
           
-          // Show success
+          // Show success message briefly, then auto-redirect to dashboard
           document.getElementById('form-container').style.display = 'none';
           document.getElementById('success-container').style.display = 'block';
           
           document.getElementById('success-clinic-code').textContent = escapeHtml(data.clinicCode);
           document.getElementById('success-clinic-name').textContent = escapeHtml(clinicName);
           document.getElementById('success-token').textContent = data.token;
+          
+          // Auto-redirect to dashboard after 2 seconds
+          setTimeout(() => {
+            window.location.href = '/admin.html';
+          }, 2000);
         } else {
           throw new Error('Registration failed - no token received');
         }

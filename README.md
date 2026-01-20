@@ -71,6 +71,31 @@ npm start
 - `/api/super-admin/*` - SuperAdmin endpoints
 - `/health` - Health check
 
+## 🔗 Admin & SuperAdmin Links
+
+Render'da deploy edildikten sonra:
+
+### Klinik Admin (Clinic Login/Sign In)
+
+- **Login:** `https://[your-render-url].onrender.com/admin-login.html`
+- **Kayıt (Sign Up):** `https://[your-render-url].onrender.com/admin-register.html`
+- **Dashboard:** `https://[your-render-url].onrender.com/admin.html`
+
+### Super Admin
+
+- **Login:** `https://[your-render-url].onrender.com/super-admin-login.html`
+- **Dashboard:** `https://[your-render-url].onrender.com/super-admin.html`
+
+### Diğer Admin Sayfaları
+
+- **Patients:** `/admin-patients.html`
+- **Travel:** `/admin-travel.html`
+- **Treatment:** `/admin-treatment.html`
+- **Chat:** `/admin-chat.html`
+- **Referrals:** `/admin-referrals.html`
+- **Health:** `/admin-health.html`
+- **Settings:** `/admin-settings.html`
+
 ## 🔐 Authentication
 
 - **Patient:** JWT token (30 gün geçerli)
