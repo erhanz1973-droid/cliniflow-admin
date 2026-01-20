@@ -678,6 +678,12 @@ console.log("🔥 PUBLIC DIR:", path.join(__dirname, "public"));
 console.log("[STATIC] Serving public from:", publicPath);
 
 app.use(express.static(publicPath));
+app.use((req, res, next) => {
+  if (req.path.endsWith(".html")) {
+    return res.sendFile(path.join(publicPath, req.path));
+  }
+  next();
+});
 
 // ================== REGISTER ==================
 app.post("/api/register", async (req, res) => {
