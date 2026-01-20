@@ -674,22 +674,6 @@ app.get("/super-admin.html", (req, res) => {
   }
 });
 
-// ================== STATIC MIDDLEWARE (serves entire public/ directory) ==================
-// This must be placed AFTER redirect routes but BEFORE API routes
-// All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
-
-const publicPath = path.join(__dirname, "public");
-console.log("🔥 PUBLIC DIR:", path.join(__dirname, "public"));
-console.log("[STATIC] Serving public from:", publicPath);
-
-app.use(express.static(publicPath));
-app.use((req, res, next) => {
-  if (req.path.endsWith(".html")) {
-    return res.sendFile(path.join(publicPath, req.path));
-  }
-  next();
-});
-
 // ================== REGISTER ==================
 app.post("/api/register", async (req, res) => {
   const { name = "", phone = "", email = "", referralCode = "", clinicCode = "" } = req.body || {};
