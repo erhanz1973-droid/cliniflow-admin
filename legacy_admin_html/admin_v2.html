@@ -74,6 +74,16 @@
   <div class="wrap">
     <h1>🦷 Cliniflow Admin V2 – Treatments</h1>
 
+    <div class="card" style="margin-bottom:12px;">
+      <div class="row">
+        <div style="flex:1; min-width:300px;">
+          <label>Admin Token</label>
+          <input id="adminToken" type="text" placeholder="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="width:100%" />
+          <div class="muted">Admin token localStorage'dan otomatik yüklenir.</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
       <div class="row">
         <div style="flex:1; min-width:260px;">
@@ -311,10 +321,57 @@
       });
   }
 
+  function getAdminToken(){
+    // Önce input alanından al
+    const elAdminToken = document.getElementById('adminToken');
+    if (elAdminToken && elAdminToken.value && elAdminToken.value.trim()) {
+      return elAdminToken.value.trim();
+    }
+    // Input boşsa localStorage'dan al
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken && savedToken.trim()) {
+      // Eğer input varsa ama boşsa, localStorage'dan yükle
+      if (elAdminToken && !elAdminToken.value) {
+        elAdminToken.value = savedToken;
+      }
+      return savedToken.trim();
+    }
+    return '';
+  }
+
   async function refreshTokens(){
+    const adminToken = getAdminToken();
+    if (!adminToken) {
+      setMsg("⚠️ Admin token bulunamadı. Lütfen yukarıdaki Admin Token alanına token'ı girin.", "err");
+      // Input alanına odaklan
+      const elAdminToken = document.getElementById('adminToken');
+      if (elAdminToken) {
+        elAdminToken.focus();
+      }
+      return;
+    }
+
     try{
       setMsg("Tokens listesi çekiliyor...");
-      const r = await fetch(`${API}/api/admin/tokens`);
+      const headers = {
+        "Content-Type": "application/json"
+      };
+      
+      if (adminToken.startsWith("Bearer ")) {
+        headers["Authorization"] = adminToken;
+      } else {
+        headers["Authorization"] = `Bearer ${adminToken}`;
+      }
+
+      const r = await fetch(`${API}/api/admin/tokens`, {
+        headers: headers
+      });
+      
+      if (r.status === 401) {
+        setMsg("❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.", "err");
+        return;
+      }
+
       const j = await r.json();
       if (!j?.ok) throw new Error("tokens_failed");
 
@@ -439,12 +496,108 @@
     }
   }
 
-  // init
+  // Admin token yükleme ve kaydetme
+  function initAdminToken() {
+    const elAdminToken = document.getElementById('adminToken');
+    if (!elAdminToken) return false;
+    
+    // Event listener'ları ekle (sadece bir kez)
+    if (!elAdminToken.hasAttribute('data-listeners-added')) {
+      elAdminToken.setAttribute('data-listeners-added', 'true');
+      
+      // Token değiştiğinde localStorage'a kaydet
+      elAdminToken.addEventListener('change', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          refreshTokens();
+        } else {
+          localStorage.removeItem('admin_token');
+        }
+      });
+      
+      // Input alanına yazıldığında da kaydet
+      elAdminToken.addEventListener('blur', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          refreshTokens();
+        } else {
+          localStorage.removeItem('admin_token');
+        }
+      });
+      
+      // Input alanına her yazıldığında da kaydet (real-time kaydetme)
+      let inputTimeout;
+      elAdminToken.addEventListener('input', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          clearTimeout(inputTimeout);
+          inputTimeout = setTimeout(() => {
+            if (token) refreshTokens();
+          }, 500);
+        }
+      });
+    }
+    
+    // localStorage'dan token'ı yükle
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken && savedToken.trim()) {
+      elAdminToken.value = savedToken;
+      return true;
+    }
+    return false;
+  }
+
+  // init - Diş gridlerini render et
   renderRow("upperRow1", U1);
   renderRow("upperRow2", U2);
   renderRow("lowerRow1", L1);
   renderRow("lowerRow2", L2);
-  refreshTokens();
+  
+  // Token'ı otomatik yükle - DOM hazır olana kadar bekle
+  function loadTokenWhenReady() {
+    const elAdminToken = document.getElementById('adminToken');
+    if (!elAdminToken) {
+      // DOM henüz hazır değilse tekrar dene
+      setTimeout(loadTokenWhenReady, 100);
+      return;
+    }
+    
+    // localStorage'dan token kontrolü
+    const savedToken = localStorage.getItem('admin_token');
+    console.log('[Admin Token] localStorage token:', savedToken ? 'Bulundu' : 'Bulunamadı');
+    
+    // Token'ı yükle
+    const tokenLoaded = initAdminToken();
+    console.log('[Admin Token] Token yüklendi:', tokenLoaded);
+    console.log('[Admin Token] Input değeri:', elAdminToken.value);
+    
+    // Token yüklendiyse listeyi otomatik yenile
+    if (tokenLoaded) {
+      console.log('[Admin Token] Liste yenileniyor...');
+      setTimeout(() => refreshTokens(), 300);
+    } else {
+      console.log('[Admin Token] Token yüklenmedi, liste yenilenmeyecek');
+    }
+  }
+  
+  // DOM hazır olduğunda token'ı yükle
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadTokenWhenReady);
+  } else {
+    // DOM zaten hazırsa hemen yükle
+    loadTokenWhenReady();
+  }
+  
+  // Sayfa tamamen yüklendiğinde de bir kez daha kontrol et (garanti)
+  window.addEventListener('load', function() {
+    const tokenLoaded = initAdminToken();
+    if (tokenLoaded) {
+      setTimeout(() => refreshTokens(), 100);
+    }
+  });
 </script>
 </body>
 </html>

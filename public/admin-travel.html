@@ -167,7 +167,7 @@
         <div class="navbar-logo">
           <img src="/logo.svg" alt="Clinifly" />
           <span class="navbar-logo-text">Clinifly</span>
-        </div>
+    </div>
         <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
       </div>
       <div class="navbar-center">
@@ -204,7 +204,7 @@
       <div class="row3" style="margin-bottom: 16px;">
         <div>
           <label>Otel</label>
-          <select id="editPolicy_hotel" disabled style="opacity:0.6; cursor:not-allowed;" title="Hasta tarafından belirlenir">
+          <select id="editPolicy_hotel" disabled style="opacity:0.7; cursor:not-allowed;" title="Hasta tarafından belirlenir - Admin değiştiremez">
             <option value="ADMIN">Admin Dolduruyor</option>
             <option value="PATIENT">Hasta Dolduruyor</option>
             <option value="BOTH">İkisi de Doldurabilir</option>
@@ -213,7 +213,7 @@
         </div>
         <div>
           <label>Uçuşlar</label>
-          <select id="editPolicy_flights" disabled style="opacity:0.6; cursor:not-allowed;" title="Hasta tarafından belirlenir">
+          <select id="editPolicy_flights" disabled style="opacity:0.7; cursor:not-allowed;" title="Hasta tarafından belirlenir - Admin değiştiremez">
             <option value="ADMIN">Admin Dolduruyor</option>
             <option value="PATIENT">Hasta Dolduruyor</option>
             <option value="BOTH">İkisi de Doldurabilir</option>
@@ -222,11 +222,12 @@
         </div>
         <div>
           <label>Havalimanı Karşılama</label>
-          <select id="editPolicy_airportPickup" disabled style="opacity:0.6; cursor:not-allowed;">
+          <select id="editPolicy_airportPickup" disabled style="opacity:0.7; cursor:not-allowed;" title="Hasta tarafından belirlenir - Admin değiştiremez">
             <option value="ADMIN">Admin Dolduruyor</option>
             <option value="PATIENT">Hasta Dolduruyor</option>
             <option value="BOTH">İkisi de Doldurabilir</option>
           </select>
+          <div style="font-size:11px; opacity:0.7; margin-top:4px;">⚠️ Hasta tarafından belirlenir</div>
         </div>
       </div>
 
@@ -355,8 +356,12 @@
       </div>
 
       <div class="actions">
-        <button class="btn2" onclick="addFlight('OUTBOUND')">➕ Gidiş Uçuşu Ekle</button>
-        <button class="btn2" onclick="addFlight('RETURN')">➕ Dönüş Uçuşu Ekle</button>
+        <button class="btn2" onclick="addFlight('ARRIVAL')">➕ Geliş Uçuşu Ekle</button>
+        <button class="btn2" onclick="addFlight('DEPARTURE')">➕ Dönüş Uçuşu Ekle</button>
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button onclick="saveTravel()">POST • Kaydet</button>
       </div>
 
       <div style="margin-top:10px;" class="muted">
@@ -367,7 +372,7 @@
     <div class="card">
       <div class="split">
         <div>
-          <h3 style="margin:0 0 8px;">Gidiş</h3>
+          <h3 style="margin:0 0 8px;">Geliş</h3>
           <table>
             <thead><tr><th>Rota</th><th>Tarih/Saat</th><th></th></tr></thead>
             <tbody id="outBody"></tbody>
@@ -516,12 +521,23 @@
 
   function renderTables(){
     const flights = Array.isArray(state.flights) ? state.flights : [];
-    // Support both "OUTBOUND" and "DEPARTURE" types for outbound flights
+    console.log("[ADMIN-TRAVEL] renderTables - flights count:", flights.length);
+    console.log("[ADMIN-TRAVEL] renderTables - flights:", flights);
+    
+    // ARRIVAL = Geliş (Geliş tablosuna)
+    // DEPARTURE = Dönüş (Dönüş tablosuna)
+    // Legacy support: OUTBOUND = Geliş, RETURN = Dönüş
     const outbound = flights.filter(f => {
-      const type = f.type || "OUTBOUND";
-      return type === "OUTBOUND" || type === "DEPARTURE";
+      const type = String(f.type || "").toUpperCase();
+      return type === "ARRIVAL" || type === "OUTBOUND"; // ARRIVAL = Geliş
     });
-    const ret = flights.filter(f => (f.type || "") === "RETURN");
+    const ret = flights.filter(f => {
+      const type = String(f.type || "").toUpperCase();
+      return type === "DEPARTURE" || type === "RETURN"; // DEPARTURE = Dönüş
+    });
+    
+    console.log("[ADMIN-TRAVEL] renderTables - outbound (ARRIVAL) count:", outbound.length);
+    console.log("[ADMIN-TRAVEL] renderTables - return (DEPARTURE) count:", ret.length);
 
     const outBody = $("outBody");
     const retBody = $("retBody");
@@ -546,18 +562,35 @@
     function rowSimple(f){
       const route = `${String(f.from||"").toUpperCase()} → ${String(f.to||"").toUpperCase()}`;
       const dt = `${f.date || "-"} ${f.time || ""}`.trim();
+      
+      // Check if flights can be edited
+      const flightsPolicy = state.editPolicy?.flights || "ADMIN";
+      const canEdit = flightsPolicy !== "PATIENT";
+      
+      // Build detail text (airline, flightNo, note)
+      const details = [];
+      if (f.airline) details.push(`Havayolu: ${escapeHtml(f.airline)}`);
+      if (f.flightNo) details.push(`Uçuş No: ${escapeHtml(f.flightNo)}`);
+      if (f.note) details.push(`Not: ${escapeHtml(f.note)}`);
+      const detailText = details.length > 0 ? ` (${details.join(", ")})` : "";
+      
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${route}</td>
+        <td>${route}${detailText}</td>
         <td class="muted">${dt}</td>
-        <td style="width:120px;"><button class="danger" onclick="removeFlight('${f.id}')">Sil</button></td>
+        <td style="width:120px;">
+          ${canEdit 
+            ? `<button class="danger" onclick="removeFlight('${f.id}')">Sil</button>`
+            : `<span style="font-size:11px; color:var(--muted);">Hasta bilgisi</span>`
+          }
+        </td>
       `;
       return tr;
     }
 
     if(outbound.length === 0){
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td class="muted" colspan="3">Gidiş yok.</td>`;
+      tr.innerHTML = `<td class="muted" colspan="3">Geliş yok.</td>`;
       outBody.appendChild(tr);
     } else outbound.forEach(f => outBody.appendChild(rowSimple(f)));
 
@@ -575,12 +608,15 @@
     const items = [];
 
     // flights
+    // ARRIVAL = Geliş (Geliş uçuşu)
+    // DEPARTURE = Dönüş (Dönüş uçuşu)
+    // Legacy support: OUTBOUND = Geliş, RETURN = Dönüş
     (Array.isArray(state.flights) ? state.flights : []).forEach(f => {
       const ts = toSortableTs(f.date, f.time);
-      const isReturn = (f.type === "RETURN");
-      // Support both "OUTBOUND" and "DEPARTURE" types
-      const isOutbound = (f.type === "OUTBOUND" || f.type === "DEPARTURE");
-      const title = isReturn ? "Dönüş Uçuşu" : (isOutbound ? "Gidiş Uçuşu" : "Uçuş");
+      const type = String(f.type || "").toUpperCase();
+      const isReturn = (type === "DEPARTURE" || type === "RETURN"); // DEPARTURE = Dönüş
+      const isOutbound = (type === "ARRIVAL" || type === "OUTBOUND"); // ARRIVAL = Geliş
+      const title = isReturn ? "Dönüş Uçuşu" : (isOutbound ? "Geliş Uçuşu" : "Uçuş");
       const dotClass = isReturn ? "ret" : "out";
       const route = `${String(f.from||"").toUpperCase()} → ${String(f.to||"").toUpperCase()}`;
       const when = `${f.date || "-"} ${f.time || ""}`.trim();
@@ -804,15 +840,35 @@
   }
 
   function normalizeFromServer(j){
+    // Ensure flights is always an array
+    let flightsArray = [];
+    if (Array.isArray(j.flights)) {
+      flightsArray = j.flights;
+    } else if (j.flights && typeof j.flights === 'object') {
+      // If flights is an object, try to convert to array
+      flightsArray = Object.values(j.flights);
+      console.warn("[ADMIN-TRAVEL] normalizeFromServer - flights was object, converted to array:", flightsArray);
+    }
+    
+    // DEBUG: Log backend editPolicy before assignment
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - RAW j.editPolicy from backend:", JSON.stringify(j.editPolicy, null, 2));
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy type:", typeof j.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy.flights:", j.editPolicy?.flights);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy.flights type:", typeof j.editPolicy?.flights);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy.flights === 'PATIENT':", j.editPolicy?.flights === 'PATIENT');
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy.flights === 'PATIENT' (case insensitive):", String(j.editPolicy?.flights || '').toUpperCase() === 'PATIENT');
+    
     state = {
       hotel: j.hotel ?? null,
-      flights: Array.isArray(j.flights) ? j.flights : [],
+      flights: flightsArray,
       notes: typeof j.notes === "string" ? j.notes : "",
       airportPickup: j.airportPickup ?? null,
       editPolicy: j.editPolicy || { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" }
     };
-    console.log("[ADMIN-TRAVEL] normalizeFromServer - editPolicy:", state.editPolicy);
-    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy:", j.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - editPolicy in state:", state.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - state.editPolicy.flights:", state.editPolicy.flights);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - state.editPolicy.flights type:", typeof state.editPolicy.flights);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - flights count:", state.flights.length);
     console.log("[ADMIN-TRAVEL] normalizeFromServer - state after assignment:", JSON.stringify(state, null, 2));
     $("hotelName").value = state.hotel?.name || "";
     $("hotelCheckIn").value = state.hotel?.checkIn || "";
@@ -821,9 +877,72 @@
     $("hotelPhone").value = state.hotel?.phone || "";
     $("hotelGoogleMapLink").value = state.hotel?.googleMapLink || "";
     $("notes").value = state.notes || "";
-    $("editPolicy_hotel").value = state.editPolicy.hotel || "ADMIN";
-    $("editPolicy_flights").value = state.editPolicy.flights || "ADMIN";
-    $("editPolicy_airportPickup").value = state.editPolicy.airportPickup || "ADMIN";
+    
+    // Set editPolicy dropdown values - ensure they match state
+    const hotelPolicy = String(state.editPolicy?.hotel || "ADMIN").toUpperCase();
+    const flightsPolicy = String(state.editPolicy?.flights || "ADMIN").toUpperCase();
+    const pickupPolicy = String(state.editPolicy?.airportPickup || "ADMIN").toUpperCase();
+    
+    // Normalize policy values (support both "PATIENT" and variations)
+    const normalizedHotelPolicy = hotelPolicy === "PATIENT" ? "PATIENT" : (hotelPolicy === "BOTH" ? "BOTH" : "ADMIN");
+    const normalizedFlightsPolicy = flightsPolicy === "PATIENT" ? "PATIENT" : (flightsPolicy === "BOTH" ? "BOTH" : "ADMIN");
+    const normalizedPickupPolicy = pickupPolicy === "PATIENT" ? "PATIENT" : (pickupPolicy === "BOTH" ? "BOTH" : "ADMIN");
+    
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - Setting editPolicy dropdowns:", {
+      hotel: normalizedHotelPolicy,
+      flights: normalizedFlightsPolicy,
+      pickup: normalizedPickupPolicy,
+      original: {
+        hotel: state.editPolicy?.hotel,
+        flights: state.editPolicy?.flights,
+        pickup: state.editPolicy?.airportPickup
+      }
+    });
+    
+    // Set dropdown values - ensure elements exist
+    const hotelSelect = $("editPolicy_hotel");
+    const flightsSelect = $("editPolicy_flights");
+    const pickupSelect = $("editPolicy_airportPickup");
+    
+    if (hotelSelect) {
+      hotelSelect.value = normalizedHotelPolicy;
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - Set editPolicy_hotel to:", normalizedHotelPolicy, "actual value:", hotelSelect.value);
+    } else {
+      console.error("[ADMIN-TRAVEL] normalizeFromServer - editPolicy_hotel element not found!");
+    }
+    
+    if (flightsSelect) {
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - BEFORE setting flightsSelect.value");
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - normalizedFlightsPolicy:", normalizedFlightsPolicy);
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - flightsSelect.options:", Array.from(flightsSelect.options).map(opt => ({ value: opt.value, text: opt.text })));
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - flightsSelect has option with value PATIENT:", Array.from(flightsSelect.options).some(opt => opt.value === "PATIENT"));
+      flightsSelect.value = normalizedFlightsPolicy;
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - AFTER setting flightsSelect.value");
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - Set editPolicy_flights to:", normalizedFlightsPolicy);
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - flightsSelect.value (actual):", flightsSelect.value);
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - flightsSelect.selectedIndex:", flightsSelect.selectedIndex);
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - flightsSelect.selectedOptions[0]?.text:", flightsSelect.selectedOptions[0]?.text);
+      // Force update if value didn't change
+      if (flightsSelect.value !== normalizedFlightsPolicy) {
+        console.error("[ADMIN-TRAVEL] normalizeFromServer - WARNING: flightsSelect.value did not match normalizedFlightsPolicy!");
+        console.error("[ADMIN-TRAVEL] normalizeFromServer - Expected:", normalizedFlightsPolicy, "Got:", flightsSelect.value);
+        // Try to find the option and select it
+        const optionToSelect = Array.from(flightsSelect.options).find(opt => opt.value === normalizedFlightsPolicy);
+        if (optionToSelect) {
+          optionToSelect.selected = true;
+          console.log("[ADMIN-TRAVEL] normalizeFromServer - Manually selected option:", optionToSelect.value);
+        }
+      }
+    } else {
+      console.error("[ADMIN-TRAVEL] normalizeFromServer - editPolicy_flights element not found!");
+    }
+    
+    if (pickupSelect) {
+      pickupSelect.value = normalizedPickupPolicy;
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - Set editPolicy_airportPickup to:", normalizedPickupPolicy, "actual value:", pickupSelect.value);
+    } else {
+      console.error("[ADMIN-TRAVEL] normalizeFromServer - editPolicy_airportPickup element not found!");
+    }
     // Airport Pickup fields
     $("pickup_name").value = state.airportPickup?.name || "";
     $("pickup_phone").value = state.airportPickup?.phone || "";
@@ -840,7 +959,22 @@
       console.error("[ADMIN-TRAVEL] normalizeFromServer - updateInputStates error:", e);
     }
     
+    // Always render tables and timeline after loading data (especially important when flights are filled by patient)
     renderAll();
+    
+    // Log final state for debugging
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - Final state after render:", {
+      flightsCount: state.flights.length,
+      editPolicy: state.editPolicy,
+      flights: state.flights.map(f => ({
+        id: f.id,
+        type: f.type,
+        from: f.from,
+        to: f.to,
+        date: f.date,
+        time: f.time
+      }))
+    });
   }
 
   async function loadTravel(){
@@ -853,8 +987,30 @@
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       console.log("[ADMIN-TRAVEL] loadTravel - received response:", j);
+      console.log("[ADMIN-TRAVEL] loadTravel - j.flights:", j.flights);
+      console.log("[ADMIN-TRAVEL] loadTravel - j.flights is array:", Array.isArray(j.flights));
+      console.log("[ADMIN-TRAVEL] loadTravel - j.flights length:", j.flights?.length);
       console.log("[ADMIN-TRAVEL] loadTravel - j.editPolicy:", j.editPolicy);
+      console.log("[ADMIN-TRAVEL] loadTravel - j.editPolicy.flights:", j.editPolicy?.flights);
+      console.log("[ADMIN-TRAVEL] loadTravel - FULL JSON RESPONSE:", JSON.stringify(j, null, 2));
+      
+      // Log flight details
+      if (Array.isArray(j.flights)) {
+        console.log("[ADMIN-TRAVEL] loadTravel - flight details:", j.flights.map(f => ({
+          id: f.id,
+          type: f.type,
+          from: f.from,
+          to: f.to,
+          date: f.date,
+          time: f.time
+        })));
+      } else {
+        console.warn("[ADMIN-TRAVEL] loadTravel - j.flights is not an array:", typeof j.flights, j.flights);
+      }
+      
       normalizeFromServer(j);
+      console.log("[ADMIN-TRAVEL] loadTravel - state after normalize:", state);
+      console.log("[ADMIN-TRAVEL] loadTravel - state.flights:", state.flights);
       setStatus("GET başarılı. Veri yüklendi.");
     }catch(e){
       console.error("[ADMIN-TRAVEL] loadTravel - error:", e);
@@ -866,14 +1022,18 @@
     const pid = $("patientId").value.trim();
     if(!pid) return setStatus("patientId boş", false);
 
-    // EditPolicy is determined by patient, don't allow admin to change it
-    // Use existing editPolicy from state
+    // editPolicy is determined by patient - admin cannot change it
+    // Always use existing editPolicy from state (loaded from backend)
+    // Do NOT read from dropdowns - they are disabled and for display only
     const editPolicy = state.editPolicy || {
       hotel: "ADMIN",
       flights: "ADMIN",
       airportPickup: "ADMIN",
       notes: "ADMIN"
     };
+    
+    console.log("[ADMIN-TRAVEL] saveTravel - editPolicy from state (patient-controlled):", editPolicy);
+    console.log("[ADMIN-TRAVEL] saveTravel - editPolicy NOT read from dropdowns (admin cannot change)");
 
     // Check if admin can edit hotel
     let hotelName = "";
@@ -1004,7 +1164,8 @@
     state.flights = Array.isArray(state.flights) ? state.flights : [];
     state.flights.push(f);
     renderAll();
-    setStatus((type === "RETURN" ? "Dönüş" : "Gidiş") + " uçuşu eklendi. (Kaydet'e bas)");
+    const flightTypeLabel = (type === "DEPARTURE" || type === "RETURN") ? "Dönüş" : "Geliş";
+    setStatus(flightTypeLabel + " uçuşu eklendi. (Kaydet'e bas)");
   }
 
   function removeFlight(id){

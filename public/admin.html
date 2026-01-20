@@ -320,6 +320,10 @@
           Chat
           <span id="chatBadge" class="nav-badge" style="display:none;"></span>
         </a>
+        <a href="/admin-referrals.html" class="nav-link" id="referralsNavLink" data-i18n="dashboard.nav.referrals">
+          Referrals
+          <span id="referralsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
       </div>
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
@@ -367,17 +371,17 @@
         <div style="display:flex; gap:12px; flex-wrap:wrap;">
           <div class="summary-badge summary-badge-overdue" style="padding:8px 14px; background:rgba(220, 38, 38, 0.15); border:1px solid rgba(220, 38, 38, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:14px;">⚠️</span>
-            <span style="font-size:13px; font-weight:600; color:#fca5a5;">Overdue:</span>
+            <span style="font-size:13px; font-weight:600; color:#fca5a5;" data-i18n="dashboard.upcoming.summary.overdue">Gecikmiş:</span>
             <span id="overdueCount" style="font-size:13px; font-weight:700; color:#fff;">0</span>
           </div>
           <div class="summary-badge summary-badge-today" style="padding:8px 14px; background:rgba(37, 99, 235, 0.15); border:1px solid rgba(37, 99, 235, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:14px;">📅</span>
-            <span style="font-size:13px; font-weight:600; color:#93c5fd;">Today:</span>
+            <span style="font-size:13px; font-weight:600; color:#93c5fd;" data-i18n="dashboard.upcoming.summary.today">Bugün:</span>
             <span id="todayPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);">patients</span>
+            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.patients">hasta</span>
             <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
             <span id="todayEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
-            <span style="font-size:11px; color:var(--muted);">events</span>
+            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.events">etkinlik</span>
           </div>
           <div class="summary-badge summary-badge-tomorrow" style="padding:8px 14px; background:rgba(139, 92, 246, 0.15); border:1px solid rgba(139, 92, 246, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:14px;">📅</span>
@@ -422,6 +426,16 @@
   function getAdminToken() {
     try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
   }
+  // Check token on page load - redirect to login if missing
+  function checkAuth() {
+    const token = getAdminToken();
+    if (!token) {
+      // No token - redirect to login page
+      window.location.href = "/admin-login.html";
+      return false;
+    }
+    return true;
+  }
   function adminHeaders(extra = {}) {
     const token = getAdminToken();
     return {
@@ -429,12 +443,13 @@
       ...extra,
     };
   }
-  async function loadClinicBadge() {
-    const el = document.getElementById("clinicBadge");
+  // Load clinic info
+  async function loadClinicInfo() {
+    const el = document.getElementById("clinicInfo");
     if (!el) return;
     const token = getAdminToken();
     if (!token) {
-      el.innerHTML = i18n.t("dashboard.clinicBadge.noToken");
+      el.style.display = "none";
       return;
     }
     try {
@@ -446,25 +461,29 @@
       const code = (data.clinicCode || data.code || "-").toString();
       const name = (data.name || "-").toString();
       const status = (data.status || "-").toString();
-      el.innerHTML = i18n.t("dashboard.clinicBadge.clinicInfo", { name, code, status });
+      
+      // Update clinic name
+      const clinicNameEl = document.getElementById("clinicName");
+      if (clinicNameEl) clinicNameEl.textContent = name || "—";
+      
+      // Update clinic code
+      const clinicCodeEl = document.getElementById("clinicCode");
+      if (clinicCodeEl) clinicCodeEl.textContent = code || "—";
+      
+      // Update clinic status
+      const clinicStatusEl = document.getElementById("clinicStatus");
+      if (clinicStatusEl && status) {
+        clinicStatusEl.textContent = status;
+        clinicStatusEl.style.display = "inline-block";
+      }
+      
+      // Update navbar clinic name
       const navbarClinicName = document.getElementById("navbarClinicName");
       if (navbarClinicName) {
         navbarClinicName.textContent = name || "Clinic";
       }
-      const clearLink = document.getElementById("clearTokenLink");
-      if (clearLink) {
-        clearLink.addEventListener("click", (e) => {
-          e.preventDefault();
-          try {
-            localStorage.removeItem("admin_token");
-            localStorage.removeItem("selected_patient_id");
-            localStorage.removeItem("selected_patient_name");
-          } catch {}
-          location.href = "/admin-register.html";
-        });
-      }
     } catch (e) {
-      el.textContent = i18n.t("dashboard.clinicBadge.clinicNotFound");
+      console.error("Load clinic info error:", e);
     }
   }
 
@@ -522,7 +541,16 @@
   }
 
   function getEventTypeLabel(type) {
-    const labels = {
+    if (!type) return type || "";
+    const typeUpper = String(type).toUpperCase();
+    const key = `dashboard.upcoming.eventTypes.${typeUpper}`;
+    const translated = window.i18n ? window.i18n.t(key) : null;
+    // Fallback to hardcoded if translation not found
+    if (translated && translated !== key) {
+      return translated;
+    }
+    // Fallback labels (should not be used if i18n is working)
+    const fallbackLabels = {
       "TRAVEL_EVENT": "Seyahat Etkinliği",
       "FLIGHT": "Uçuş",
       "HOTEL": "Otel",
@@ -533,7 +561,7 @@
       "LAB": "Lab / Scan",
       "HEALTH": "General Check-up"
     };
-    return labels[type] || type;
+    return fallbackLabels[typeUpper] || type;
   }
 
   function renderOverdueBanner(overdue) {
@@ -663,6 +691,11 @@
   async function renderUpcomingList(upcoming, patientMap = {}) {
     const listEl = document.getElementById("upcomingList");
     
+    if (!listEl) {
+      console.error("[renderUpcomingList] upcomingList element not found");
+      return;
+    }
+    
     if (!upcoming || upcoming.length === 0) {
       listEl.className = "empty-state";
       listEl.innerHTML = `
@@ -671,6 +704,8 @@
       `;
       return;
     }
+
+    console.log("[renderUpcomingList] Rendering", upcoming.length, "events");
 
     // Load patient names if needed
     const patientIds = [...new Set(upcoming.map(evt => evt.patientId).filter(Boolean))];
@@ -753,6 +788,11 @@
 
   async function loadEvents() {
     const upcomingEl = document.getElementById("upcomingList");
+    if (!upcomingEl) {
+      console.error("upcomingList element not found");
+      return;
+    }
+    
     upcomingEl.className = "loading";
     upcomingEl.textContent = i18n.t("common.loading");
 
@@ -761,15 +801,32 @@
       if (!token) {
         throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
       }
+      
+      console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
       const r = await fetch(`${API}/api/admin/events`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      
+      console.log("[loadEvents] Response status:", r.status, r.statusText);
+      
+      if (!r.ok) {
+        const errorText = await r.text().catch(() => `HTTP ${r.status}`);
+        console.error("[loadEvents] HTTP error:", errorText);
+        throw new Error(`HTTP ${r.status}: ${errorText.substring(0, 100)}`);
+      }
+      
+      const contentType = r.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await r.text();
+        console.error("[loadEvents] Non-JSON response:", text.substring(0, 200));
+        throw new Error(`Server returned non-JSON response: ${contentType}`);
+      }
       
       const data = await r.json();
+      console.log("[loadEvents] Response data:", data);
       
       if (!data.ok) {
-        throw new Error(data.error || "Unknown error");
+        throw new Error(data.error || data.message || "Unknown error");
       }
 
       // Hide overdue banner (now shown in timeline)
@@ -778,7 +835,7 @@
 
       // Calculate summary statistics
       const overdueCount = (data.overdue || []).length;
-      
+
       // Get today and tomorrow events from API response
       const todayEvents = data.today || [];
       const tomorrow = new Date();
@@ -828,14 +885,22 @@
       await renderUpcomingList(allEvents);
 
     } catch (error) {
+      console.error("[loadEvents] Error:", error);
       const upcomingEl = document.getElementById("upcomingList");
+      if (!upcomingEl) {
+        console.error("[loadEvents] upcomingList element not found in error handler");
+        return;
+      }
       upcomingEl.className = "empty-state";
       upcomingEl.innerHTML = `
+        <div class="empty-state-icon">⚠️</div>
         <div style="color:var(--r);">
           <strong>${i18n.t("common.error")}:</strong> ${error.message || i18n.t("common.loading")}
         </div>
+        <div style="margin-top: 8px; font-size: 12px; color: var(--muted);">
+          Check browser console (F12) for details
+        </div>
       `;
-      console.error("Load events error:", error);
     }
   }
   
@@ -851,33 +916,107 @@
     if (upcomingTitleEl) upcomingTitleEl.textContent = i18n.t("dashboard.upcoming.title");
     if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = i18n.t("dashboard.upcoming.subtitle");
     
-    // Reload clinic badge and events
-    loadClinicBadge();
+    // Update data-i18n attributes (timeline summary badges, etc.)
+    if (window.i18n && window.i18n.updatePage) {
+      window.i18n.updatePage();
+    }
+    
+    // Reload clinic info and events (this will re-render timeline with new language)
+    loadClinicInfo();
     loadEvents();
+    // Reload badges after i18n update (in case badges were removed during translation)
+    setTimeout(() => {
+      loadAllBadges();
+    }, 100);
   };
 
   // Apply token from URL if provided (helps switching clinics)
   applyTokenFromUrl();
   
-  // Wait for i18n to be ready
-  if (typeof i18n !== 'undefined') {
-    loadClinicBadge();
-    // Load badges immediately (independent of events)
-    loadAllBadges();
-    // Load events after a short delay to avoid token/API conflicts
+  // Check authentication after page loads (wait for DOM and localStorage to be ready)
+  // Use DOMContentLoaded to ensure localStorage is accessible
+  function initializeDashboard() {
+    if (!checkAuth()) {
+      // Redirect will happen in checkAuth
+      return;
+    }
+    
+    // Load clinic info and events
+    loadClinicInfo();
+  }
+  
+  // Check authentication after page loads (wait for DOM and localStorage to be ready)
+  // Use DOMContentLoaded to ensure localStorage is accessible
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeDashboard);
+  } else {
+    // DOM already loaded, check immediately
+    initializeDashboard();
+  }
+  
+  async function loadClinicInfo() {
+    const el = document.getElementById("clinicInfo");
+    if (!el) return;
+    const token = getAdminToken();
+    if (!token) {
+      el.style.display = "none";
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const code = (data.clinicCode || data.code || "-").toString();
+      const name = (data.name || "-").toString();
+      const status = (data.status || "-").toString();
+      
+      // Update clinic name
+      const clinicNameEl = document.getElementById("clinicName");
+      if (clinicNameEl) clinicNameEl.textContent = name || "—";
+      
+      // Update clinic code
+      const clinicCodeEl = document.getElementById("clinicCode");
+      if (clinicCodeEl) clinicCodeEl.textContent = code || "—";
+      
+      // Update clinic status
+      const clinicStatusEl = document.getElementById("clinicStatus");
+      if (clinicStatusEl && status) {
+        clinicStatusEl.textContent = status;
+        clinicStatusEl.style.display = "inline-block";
+      }
+      
+      // Update navbar clinic name
+      const navbarClinicName = document.getElementById("navbarClinicName");
+      if (navbarClinicName) {
+        navbarClinicName.textContent = name || "Clinic";
+      }
+    } catch (e) {
+      console.error("Load clinic info error:", e);
+    }
+  }
+  
+  // Wait for i18n to be ready and DOM to be fully loaded
+  function initializeDashboardBadges() {
+    // Wait a bit for i18n to finish updating DOM (badges might be removed during translation)
     setTimeout(() => {
+      loadClinicInfo();
+      // Load badges after i18n update
+      loadAllBadges();
+      // Load events after a short delay to avoid token/API conflicts
+      setTimeout(() => {
     loadEvents();
-    }, 500);
+      }, 500);
+    }, 200);
+  }
+
+  if (typeof i18n !== 'undefined') {
+    initializeDashboardBadges();
   } else {
     window.addEventListener('load', () => {
       setTimeout(() => {
-        loadClinicBadge();
-        // Load badges immediately (independent of events)
-        loadAllBadges();
-        // Load events after a short delay to avoid token/API conflicts
-        setTimeout(() => {
-        loadEvents();
-        }, 500);
+        initializeDashboardBadges();
       }, 100);
     });
   }
@@ -991,8 +1130,12 @@
   // Load unread message count for badge
   async function loadUnreadMessageCount() {
     const token = getAdminToken();
-    if (!token) return;
+    if (!token) {
+      console.log("[DASHBOARD] No admin token, skipping unread message count");
+      return;
+    }
 
+    console.log("[DASHBOARD] Loading unread message count...");
     try {
       // Get last seen timestamp from localStorage
       let lastSeenTimestamp = 0;
@@ -1014,6 +1157,7 @@
       if (!patientsData.ok) return;
 
       const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+      console.log("[DASHBOARD] Found", patients.length, "patients to check for unread messages");
       let totalUnread = 0;
 
       // Check unread messages for each patient
@@ -1059,19 +1203,39 @@
       }
       previousUnreadCount = totalUnread;
 
-      // Update badge
-      const badgeEl = document.getElementById("chatBadge");
+      // Update badge - try multiple methods to find the element
+      let badgeEl = document.getElementById("chatBadge");
+      if (!badgeEl) {
+        // Try finding via parent link
+        const chatLink = document.getElementById("chatNavLink");
+        if (chatLink) {
+          badgeEl = chatLink.querySelector(".nav-badge");
+        }
+      }
       if (badgeEl) {
         if (totalUnread > 0) {
           badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
           badgeEl.style.display = "flex";
-          badgeEl.style.visibility = "visible";
+          console.log("[DASHBOARD] Chat badge updated:", totalUnread);
         } else {
           badgeEl.style.display = "none";
-          badgeEl.style.visibility = "hidden";
+          console.log("[DASHBOARD] Chat badge hidden (no unread messages)");
         }
       } else {
-        console.warn("chatBadge element not found");
+        console.warn("[DASHBOARD] chatBadge element not found - trying to recreate");
+        // Try to recreate badge if it doesn't exist
+        const chatLink = document.getElementById("chatNavLink");
+        if (chatLink && !chatLink.querySelector(".nav-badge")) {
+          const newBadge = document.createElement("span");
+          newBadge.id = "chatBadge";
+          newBadge.className = "nav-badge";
+          newBadge.style.display = totalUnread > 0 ? "flex" : "none";
+          if (totalUnread > 0) {
+            newBadge.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+          }
+          chatLink.appendChild(newBadge);
+          console.log("[DASHBOARD] Chat badge recreated");
+        }
       }
     } catch (error) {
       console.error("Load unread count error:", error);
@@ -1100,19 +1264,35 @@
       }
       previousPendingPatients = pendingCount;
 
-      // Update badge
-      const badgeEl = document.getElementById("patientsBadge");
+      // Update badge - try multiple methods to find the element
+      let badgeEl = document.getElementById("patientsBadge");
+      if (!badgeEl) {
+        const patientsLink = document.getElementById("patientsNavLink");
+        if (patientsLink) {
+          badgeEl = patientsLink.querySelector(".nav-badge");
+        }
+      }
       if (badgeEl) {
         if (pendingCount > 0) {
           badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
           badgeEl.style.display = "flex";
-          badgeEl.style.visibility = "visible";
         } else {
           badgeEl.style.display = "none";
-          badgeEl.style.visibility = "hidden";
         }
       } else {
-        console.warn("patientsBadge element not found");
+        console.warn("[DASHBOARD] patientsBadge element not found - trying to recreate");
+        const patientsLink = document.getElementById("patientsNavLink");
+        if (patientsLink && !patientsLink.querySelector(".nav-badge")) {
+          const newBadge = document.createElement("span");
+          newBadge.id = "patientsBadge";
+          newBadge.className = "nav-badge";
+          newBadge.style.display = pendingCount > 0 ? "flex" : "none";
+          if (pendingCount > 0) {
+            newBadge.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          }
+          patientsLink.appendChild(newBadge);
+          console.log("[DASHBOARD] Patients badge recreated");
+        }
       }
     } catch (error) {
       console.error("Load pending patients count error:", error);
@@ -1130,7 +1310,8 @@
       });
       if (!res.ok) return;
       const data = await res.json();
-      const items = Array.isArray(data.items) ? data.items : [];
+      // Support both data.items and data.referrals
+      const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.referrals) ? data.referrals : []);
       const pendingCount = items.length;
 
       // Check if new pending referrals arrived
@@ -1139,19 +1320,35 @@
       }
       previousPendingReferrals = pendingCount;
 
-      // Update badge
-      const badgeEl = document.getElementById("referralsBadge");
+      // Update badge - try multiple methods to find the element
+      let badgeEl = document.getElementById("referralsBadge");
+      if (!badgeEl) {
+        const referralsLink = document.getElementById("referralsNavLink");
+        if (referralsLink) {
+          badgeEl = referralsLink.querySelector(".nav-badge");
+        }
+      }
       if (badgeEl) {
         if (pendingCount > 0) {
           badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
           badgeEl.style.display = "flex";
-          badgeEl.style.visibility = "visible";
         } else {
           badgeEl.style.display = "none";
-          badgeEl.style.visibility = "hidden";
         }
       } else {
-        console.warn("referralsBadge element not found");
+        console.warn("[DASHBOARD] referralsBadge element not found - trying to recreate");
+        const referralsLink = document.getElementById("referralsNavLink");
+        if (referralsLink && !referralsLink.querySelector(".nav-badge")) {
+          const newBadge = document.createElement("span");
+          newBadge.id = "referralsBadge";
+          newBadge.className = "nav-badge";
+          newBadge.style.display = pendingCount > 0 ? "flex" : "none";
+          if (pendingCount > 0) {
+            newBadge.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          }
+          referralsLink.appendChild(newBadge);
+          console.log("[DASHBOARD] Referrals badge recreated");
+        }
       }
     } catch (error) {
       console.error("Load pending referrals count error:", error);
@@ -1160,18 +1357,20 @@
 
   // Load all badges
   async function loadAllBadges() {
+    console.log("[DASHBOARD] Loading all badges...");
     // Use allSettled to ensure all badges load even if one fails
     await Promise.allSettled([
       loadUnreadMessageCount().catch(err => {
-        console.error("Failed to load unread message count:", err);
+        console.error("[DASHBOARD] Failed to load unread message count:", err);
       }),
       loadPendingPatientsCount().catch(err => {
-        console.error("Failed to load pending patients count:", err);
+        console.error("[DASHBOARD] Failed to load pending patients count:", err);
       }),
       loadPendingReferralsCount().catch(err => {
-        console.error("Failed to load pending referrals count:", err);
+        console.error("[DASHBOARD] Failed to load pending referrals count:", err);
       })
     ]);
+    console.log("[DASHBOARD] All badges loaded");
   }
 
   // Badges are loaded before events (see above)

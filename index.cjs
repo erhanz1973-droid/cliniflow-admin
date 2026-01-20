@@ -15,10 +15,15 @@ const procedures = require("./shared/procedures");
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT ? Number(process.env.PORT) : 5050;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
 const JWT_SECRET = process.env.JWT_SECRET || "clinifly-secret-key-change-in-production";
 const JWT_EXPIRES_IN = "30d"; // 30 days
+
+// Super Admin ENV variables
+const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
+const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
+const SUPER_ADMIN_JWT_SECRET = process.env.SUPER_ADMIN_JWT_SECRET || "super-admin-secret-key-change-in-production";
 
 // ================== MIDDLEWARE ==================
 app.use(cors());
@@ -39,6 +44,8 @@ const CLINICS_FILE = path.join(DATA_DIR, "clinics.json"); // Admin clinics (emai
 const ADMIN_TOKENS_FILE = path.join(DATA_DIR, "adminTokens.json"); // JWT tokens
 const OTP_FILE = path.join(DATA_DIR, "otps.json"); // OTP storage with hashed codes
 const PUSH_SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "pushSubscriptions.json"); // Push notification subscriptions
+const TREATMENT_PRICES_FILE = path.join(DATA_DIR, "treatmentPrices.json"); // Clinic treatment price list
+const PAYMENTS_FILE = path.join(DATA_DIR, "payments.json"); // Patient payment summaries
 
 function readJson(file, fallback) {
   try {
@@ -537,11 +544,37 @@ app.get("/health", (req, res) => {
 
 // ================== DASHBOARD REDIRECTS ==================
 // Keep both UIs:
-// - Dashboard (current): /admin.html  -> public/admin.html
+// - Dashboard (current): /admin.html  -> public/admin.html (for normal clinic admins)
 // - Legacy page:         /admin-v2.html -> admin_v2.html
-app.get("/", (req, res) => res.redirect("/admin.html"));
-app.get("/admin", (req, res) => res.redirect("/admin.html"));
-app.get("/dashboard", (req, res) => res.redirect("/admin.html"));
+// - Super Admin:         redirects to SUPER_ADMIN_URL
+
+const SUPER_ADMIN_URL = process.env.SUPER_ADMIN_URL || "https://superadmin.clinifly.net/login";
+
+// /admin.html: Serve normal clinic admin dashboard (NOT Super Admin)
+// Super Admin has its own domain: https://superadmin.clinifly.net
+app.get("/admin.html", (req, res) => {
+  // Always serve the normal clinic admin dashboard
+  // The dashboard page itself will check for token and redirect to login if needed
+  const filePath = path.join(__dirname, "public", "admin.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+    } else {
+    // If admin.html doesn't exist, redirect to login (NOT super admin)
+    res.redirect("/admin-login.html");
+  }
+});
+
+app.get("/", (req, res) => res.redirect("/admin-login.html"));
+app.get("/admin", (req, res) => res.redirect("/admin-login.html"));
+// /dashboard should serve normal admin dashboard, NOT redirect to Super Admin
+app.get("/dashboard", (req, res) => {
+  const filePath = path.join(__dirname, "public", "admin.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.redirect("/admin-login.html");
+  }
+});
 
 // Explicit UI entrypoints
 app.get("/admin-v2.html", (req, res) => {
@@ -559,10 +592,57 @@ app.get("/admin-v3.html", (req, res) => {
   res.redirect("/admin.html");
 });
 
+// Super Admin routes
+app.get("/super-admin-login.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "super-admin-login.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+    } else {
+    res.status(404).send("Super Admin Login page not found");
+  }
+});
+
+app.get("/super-admin.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "super-admin.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("Super Admin Dashboard page not found");
+  }
+});
+
 // ================== STATIC MIDDLEWARE (serves entire public/ directory) ==================
 // This must be placed AFTER redirect routes but BEFORE API routes
 // All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
-app.use(express.static(path.join(__dirname, "public")));
+const publicPath = path.join(__dirname, "public");
+console.log(`[STATIC] Serving static files from: ${publicPath}`);
+console.log(`[STATIC] __dirname: ${__dirname}`);
+console.log(`[STATIC] process.cwd(): ${process.cwd()}`);
+if (!fs.existsSync(publicPath)) {
+  console.error(`[STATIC] ERROR: Public directory does not exist: ${publicPath}`);
+  // Try alternative paths
+  const altPath1 = path.join(process.cwd(), "public");
+  const altPath2 = path.resolve("public");
+  console.log(`[STATIC] Trying alternative path 1: ${altPath1} (exists: ${fs.existsSync(altPath1)})`);
+  console.log(`[STATIC] Trying alternative path 2: ${altPath2} (exists: ${fs.existsSync(altPath2)})`);
+    } else {
+  console.log(`[STATIC] Public directory exists, listing files...`);
+  try {
+    const files = fs.readdirSync(publicPath);
+    console.log(`[STATIC] Found ${files.length} files in public directory:`, files.slice(0, 10).join(", "));
+  } catch (e) {
+    console.error(`[STATIC] Error reading public directory:`, e.message);
+  }
+}
+
+// Mount static middleware at root path
+// This will serve files from public/ directory at root URL (e.g., /admin-patients.html)
+// NOTE: fallthrough: true allows API routes to work even if static file is not found
+app.use(express.static(publicPath, {
+  index: false, // Don't serve index.html for directory requests
+  dotfiles: 'ignore', // Ignore dotfiles
+  fallthrough: true // Continue to next middleware if file not found (for API routes)
+}));
 
 // ================== REGISTER ==================
 app.post("/api/register", async (req, res) => {
@@ -588,20 +668,33 @@ app.post("/api/register", async (req, res) => {
     return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
   }
   
-  // Check if email already exists (before clinic validation to fail fast)
+  if (!String(phone).trim()) {
+    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
+  }
+  
+  // Normalize phone number for validation and storage
+  const phoneNormalized = normalizePhone(phone);
+  if (!phoneNormalized || phoneNormalized.length < 10) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "invalid_phone", 
+      message: "Geçersiz telefon numarası formatı." 
+    });
+  }
+  
+  // Check if phone number already exists (phone must be unique)
   const patientsCheck = readJson(PAT_FILE, {});
   for (const pid in patientsCheck) {
-    if (patientsCheck[pid].email && String(patientsCheck[pid].email).trim().toLowerCase() === emailNormalized) {
+    if (patientsCheck[pid].phone) {
+      const existingPhoneNormalized = normalizePhone(patientsCheck[pid].phone);
+      if (existingPhoneNormalized === phoneNormalized) {
       return res.status(400).json({ 
         ok: false, 
-        error: "email_already_exists",
-        message: "Bu e-posta adresi ile zaten bir hesap kayıtlı." 
+          error: "phone_already_exists",
+          message: "Bu telefon numarası ile zaten bir hesap kayıtlı." 
       });
     }
   }
-  
-  if (!String(phone).trim()) {
-    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
   }
 
   // Validate clinic code if provided
@@ -669,15 +762,7 @@ app.post("/api/register", async (req, res) => {
   const requestId = rid("req");
   const token = makeToken();
 
-  // Normalize phone number before saving
-  const phoneNormalized = normalizePhone(phone);
-  if (!phoneNormalized || phoneNormalized.length < 10) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "invalid_phone", 
-      message: "Geçersiz telefon numarası formatı." 
-    });
-  }
+  // phoneNormalized is already defined and validated above
 
   // patients
   const patients = readJson(PAT_FILE, {});
@@ -852,20 +937,33 @@ app.post("/api/patient/register", async (req, res) => {
     return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
   }
   
-  // Check if email already exists (before clinic validation to fail fast)
+  if (!String(phone).trim()) {
+    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
+  }
+  
+  // Normalize phone number for validation and storage
+  const phoneNormalized = normalizePhone(phone);
+  if (!phoneNormalized || phoneNormalized.length < 10) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "invalid_phone", 
+      message: "Geçersiz telefon numarası formatı." 
+    });
+  }
+  
+  // Check if phone number already exists (phone must be unique)
   const patientsCheckEmail = readJson(PAT_FILE, {});
   for (const pid in patientsCheckEmail) {
-    if (patientsCheckEmail[pid].email && String(patientsCheckEmail[pid].email).trim().toLowerCase() === emailNormalized) {
+    if (patientsCheckEmail[pid].phone) {
+      const existingPhoneNormalized = normalizePhone(patientsCheckEmail[pid].phone);
+      if (existingPhoneNormalized === phoneNormalized) {
       return res.status(400).json({ 
         ok: false, 
-        error: "email_already_exists",
-        message: "Bu e-posta adresi ile zaten bir hesap kayıtlı." 
+          error: "phone_already_exists",
+          message: "Bu telefon numarası ile zaten bir hesap kayıtlı." 
       });
     }
   }
-  
-  if (!String(phone).trim()) {
-    return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
   }
 
   // Validate clinic code if provided
@@ -933,15 +1031,7 @@ app.post("/api/patient/register", async (req, res) => {
   const requestId = rid("req");
   const token = makeToken();
 
-  // Normalize phone number before saving
-  const phoneNormalized = normalizePhone(phone);
-  if (!phoneNormalized || phoneNormalized.length < 10) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "invalid_phone", 
-      message: "Geçersiz telefon numarası formatı." 
-    });
-  }
+  // phoneNormalized is already defined and validated above
 
   // patients
   const patients = readJson(PAT_FILE, {});
@@ -1179,7 +1269,7 @@ app.post("/auth/request-otp", async (req, res) => {
       return res.status(404).json({ 
         ok: false, 
         error: "patient_not_found", 
-        message: "Bu telefon numarası ile kayıtlı hasta bulunamadı. Lütfen kayıt olun." 
+        message: "Bu telefon numarası ile kayıtlı hasta bulunamadı. Lütfen telefon numaranızı kontrol edin veya kayıt olun." 
       });
     }
     
@@ -1284,40 +1374,70 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
     }
     
-    const phoneNormalized = String(phone).trim();
+    // Normalize phone number for comparison
+    const phoneNormalized = normalizePhone(phone);
     const otpCode = String(otp).trim();
     
-    // Get OTP data by phone
-    const otps = readJson(OTP_FILE, {});
-    const phoneKey = `phone_${phoneNormalized}`;
-    let otpData = otps[phoneKey];
+    // Validate normalized phone number
+    if (!phoneNormalized || phoneNormalized.length < 10) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_phone", 
+        message: "Geçersiz telefon numarası formatı. Lütfen telefon numaranızı kontrol edin." 
+      });
+    }
     
-    // Fallback: try to find by phone in recent OTPs
-    if (!otpData) {
-      // Try to find patient first and get their email
+    console.log(`[OTP] Verify OTP request: phone=${phone}, normalized=${phoneNormalized}, otp=${otpCode}`);
+    
+    // OTP is stored by email, not by phone
+    // First, find patient by phone to get their email
       const patients = readJson(PAT_FILE, {});
       let foundPatient = null;
       let foundEmail = null;
       
       for (const pid in patients) {
-        if (patients[pid].phone && String(patients[pid].phone).trim() === phoneNormalized) {
+      const patientPhone = patients[pid].phone;
+      if (patientPhone) {
+        // Normalize both phones for comparison
+        const normalizedPatientPhone = normalizePhone(patientPhone);
+        if (normalizedPatientPhone === phoneNormalized) {
           foundPatient = patients[pid];
           foundEmail = foundPatient.email;
+          console.log(`[OTP] Found patient ${pid} with email: ${foundEmail}`);
           break;
         }
       }
-      
-      if (foundEmail) {
+    }
+    
+    if (!foundPatient || !foundEmail) {
+      console.log(`[OTP] Patient not found for phone: ${phone} (normalized: ${phoneNormalized})`);
+      return res.status(404).json({ 
+        ok: false, 
+        error: "patient_not_found", 
+        message: "Bu telefon numarası ile kayıtlı hasta bulunamadı. Lütfen telefon numaranızı kontrol edin veya kayıt olun." 
+      });
+    }
+    
+    // Get OTP by email (OTP is stored by email during registration)
         const emailNormalized = String(foundEmail).trim().toLowerCase();
-        otpData = getOTPsForEmail(emailNormalized);
-      }
+    let otpData = getOTPsForEmail(emailNormalized);
+    
+    console.log(`[OTP] Looking for OTP by email: ${emailNormalized}, OTP found: ${!!otpData}`);
+    
+    // Legacy: Also check if OTP was stored by phone (older format)
+    if (!otpData) {
+      const otps = readJson(OTP_FILE, {});
+      const phoneKey = `phone_${phoneNormalized}`;
+      otpData = otps[phoneKey];
+      console.log(`[OTP] Checked legacy phone key: ${phoneKey}, OTP found: ${!!otpData}`);
     }
     
     if (!otpData) {
+      console.log(`[OTP] OTP not found for email: ${emailNormalized} or phone: ${phoneNormalized}`);
       return res.status(404).json({ 
         ok: false, 
         error: "otp_not_found", 
-        message: "OTP bulunamadı veya süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+        message: "OTP kodu bulunamadı veya süresi dolmuş. Lütfen önce OTP isteyin." 
       });
     }
     
@@ -1367,30 +1487,17 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
     
-    // OTP is valid - find patient by phone
-    const patients = readJson(PAT_FILE, {});
-    let foundPatient = null;
-    let foundPatientId = null;
-    
-    // Get patientId from OTP data if available
-    if (otpData.patientId) {
-      foundPatientId = otpData.patientId;
-      foundPatient = patients[foundPatientId];
-    }
-    
-    // If not found, search by phone
-    if (!foundPatient) {
-      for (const pid in patients) {
-        if (patients[pid].phone && String(patients[pid].phone).trim() === phoneNormalized) {
-          foundPatient = patients[pid];
-          foundPatientId = pid;
-          break;
-        }
+    // OTP is valid - we already found patient above
+    const foundPatientId = Object.keys(patients).find(pid => {
+      const patientPhone = patients[pid].phone;
+      if (patientPhone) {
+        const normalizedPatientPhone = normalizePhone(patientPhone);
+        return normalizedPatientPhone === phoneNormalized;
       }
-    }
+      return false;
+    });
     
-    // If patient still not found, error
-    if (!foundPatient) {
+    if (!foundPatient || !foundPatientId) {
       return res.status(404).json({ 
         ok: false, 
         error: "patient_not_found", 
@@ -1398,16 +1505,10 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
     
-    // Mark OTP as verified (both phone and email keys if exist)
-    if (phoneKey && otps[phoneKey]) {
-      otps[phoneKey].verified = true;
-      otps[phoneKey].expiresAt = now();
-    }
-    const emailNormalized = otpData.email ? String(otpData.email).trim().toLowerCase() : (foundPatient.email ? String(foundPatient.email).trim().toLowerCase() : "");
+    // Mark OTP as verified (by email - OTP is stored by email)
     if (emailNormalized) {
       markOTPVerified(emailNormalized);
     }
-    writeJson(OTP_FILE, otps);
     
     // Generate JWT token (7-14 days expiry, using 14 days)
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
@@ -1588,6 +1689,13 @@ app.get("/api/patient/me", requireToken, (req, res) => {
     }
   }
 
+  // Load financial snapshot from patient data
+  const financialSnapshot = p?.financialSnapshot || {
+    totalEstimatedCost: 0,
+    totalPaid: 0,
+    remainingBalance: 0,
+  };
+
   res.json({
     ok: true,
     patientId: req.patientId,
@@ -1598,6 +1706,7 @@ app.get("/api/patient/me", requireToken, (req, res) => {
     clinicCode: clinicCode,
     clinicPlan: clinicPlan,
     branding: branding,
+    financialSnapshot: financialSnapshot,
   });
 });
 
@@ -2717,6 +2826,12 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
     return res.status(409).json({ ok: false, error: validation.error, ...validation });
   }
 
+  // Extract pricing fields (optional)
+  const unitPrice = procedure.unit_price !== undefined ? Number(procedure.unit_price) : null;
+  const quantity = procedure.quantity !== undefined ? Number(procedure.quantity) : 1;
+  const totalPrice = procedure.total_price !== undefined ? Number(procedure.total_price) : (unitPrice !== null ? unitPrice * quantity : null);
+  const currency = procedure.currency ? String(procedure.currency).trim().toUpperCase() : null;
+
   // Upsert by procedureId (history preserved; no hard limit)
   const existingProc = tooth.procedures.find((p) => String(p.procedureId || p.id || "") === procedureIdFinal);
   if (existingProc) {
@@ -2730,10 +2845,15 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
     existingProc.notes = String(procedure.notes || existingProc.notes || "");
     existingProc.meta = procedure.meta || existingProc.meta || {};
     existingProc.replacesProcedureId = procedure.replacesProcedureId || existingProc.replacesProcedureId;
+    // Update pricing fields if provided
+    if (unitPrice !== null) existingProc.unit_price = unitPrice;
+    if (procedure.quantity !== undefined) existingProc.quantity = quantity;
+    if (totalPrice !== null) existingProc.total_price = totalPrice;
+    if (currency) existingProc.currency = currency;
     // keep createdAt unless explicitly provided
     if (!existingProc.createdAt) existingProc.createdAt = createdAtFinal;
   } else {
-    tooth.procedures.push({
+    const newProc = {
       id: procedureIdFinal,
       procedureId: procedureIdFinal,
       type: typeFinal,
@@ -2745,7 +2865,13 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
       meta: procedure.meta || {},
       replacesProcedureId: procedure.replacesProcedureId,
       createdAt: createdAtFinal,
-    });
+    };
+    // Add pricing fields if provided
+    if (unitPrice !== null) newProc.unit_price = unitPrice;
+    if (procedure.quantity !== undefined) newProc.quantity = quantity;
+    if (totalPrice !== null) newProc.total_price = totalPrice;
+    if (currency) newProc.currency = currency;
+    tooth.procedures.push(newProc);
   }
   
   // Check if form is completed
@@ -3716,13 +3842,60 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
 app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
   try {
     const status = req.query.status;
+    const clinicCode = req.clinicCode; // Get clinic code from auth middleware
+    const clinicId = req.clinicId;
+    
+    if (!clinicCode && !clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated", message: "Klinik kimlik doğrulaması yapılmadı." });
+    }
+    
+    console.log(`[REFERRALS] Fetching referrals for clinic: code=${clinicCode}, id=${clinicId}`);
+    
+    // Get all referrals
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     
-    let items = list;
-    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
-      items = list.filter((x) => x && x.status === status);
+    // Get all patients to filter by clinic
+    const patients = readJson(PAT_FILE, {});
+    
+    // Get list of patient IDs that belong to this clinic
+    const clinicPatientIds = new Set();
+    for (const pid in patients) {
+      const patient = patients[pid];
+      if (patient) {
+        const patientClinicCode = (patient.clinicCode || patient.clinic_code || "").toUpperCase();
+        if (patientClinicCode === clinicCode?.toUpperCase()) {
+          clinicPatientIds.add(pid);
+          clinicPatientIds.add(patient.patientId || patient.patient_id);
+        }
+      }
     }
+    
+    console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
+    
+    // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
+    let items = list.filter((x) => {
+      if (!x) return false;
+      const inviterId = x.inviterPatientId || x.inviter_patient_id;
+      const invitedId = x.invitedPatientId || x.invited_patient_id;
+      
+      // Check if either inviter or invited patient belongs to this clinic
+      const inviterBelongsToClinic = inviterId && clinicPatientIds.has(inviterId);
+      const invitedBelongsToClinic = invitedId && clinicPatientIds.has(invitedId);
+      
+      // Also check by clinicCode in referral if exists
+      const referralClinicCode = (x.clinicCode || x.clinic_code || "").toUpperCase();
+      const clinicCodeMatches = referralClinicCode && referralClinicCode === clinicCode?.toUpperCase();
+      
+      return inviterBelongsToClinic || invitedBelongsToClinic || clinicCodeMatches;
+    });
+    
+    // Apply status filter if provided
+    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
+      items = items.filter((x) => x && x.status === status);
+    }
+    
+    console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
     
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     res.json({ items });
@@ -3733,33 +3906,73 @@ app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
 });
 
 // GET /api/patient/:patientId/referrals
-// Get referrals where this patient is the inviter (only their own referrals)
+// Get referrals where this patient is the inviter OR the invited patient
 app.get("/api/patient/:patientId/referrals", (req, res) => {
+  console.log(`[GET /api/patient/:patientId/referrals] ========== START ==========`);
+  console.log(`[GET /api/patient/:patientId/referrals] URL: ${req.url}`);
+  console.log(`[GET /api/patient/:patientId/referrals] Method: ${req.method}`);
+  console.log(`[GET /api/patient/:patientId/referrals] Params:`, req.params);
+  console.log(`[GET /api/patient/:patientId/referrals] Query:`, req.query);
+  
   try {
     const { patientId } = req.params;
     const status = req.query.status;
     
+    console.log(`[GET /api/patient/:patientId/referrals] Request received - patientId: ${patientId}, status filter: ${status || 'none'}`);
+    
     if (!patientId) {
+      console.log(`[GET /api/patient/:patientId/referrals] Error: patientId_required`);
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
     
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
+    console.log(`[GET /api/patient/:patientId/referrals] Total referrals in DB: ${list.length}`);
     
-    // Filter: only referrals where this patient is the inviter
-    let items = list.filter((x) => x && x.inviterPatientId === patientId);
+    // Filter: referrals where this patient is the inviter OR the invited patient
+    // Normalize patientId for comparison (trim whitespace)
+    const normalizedPatientId = String(patientId || "").trim();
+    console.log(`[GET /api/patient/:patientId/referrals] Searching for patientId: "${normalizedPatientId}"`);
+    
+    // Log all referral patient IDs for debugging
+    if (list.length > 0) {
+      console.log(`[GET /api/patient/:patientId/referrals] All referral patient IDs in DB:`, list.map((r) => ({
+        id: r.id,
+        inviterPatientId: r.inviterPatientId,
+        invitedPatientId: r.invitedPatientId,
+        inviterMatch: String(r.inviterPatientId || "").trim() === normalizedPatientId,
+        invitedMatch: String(r.invitedPatientId || "").trim() === normalizedPatientId,
+      })));
+    }
+    
+    let items = list.filter((x) => {
+      if (!x) return false;
+      const inviterId = String(x.inviterPatientId || "").trim();
+      const invitedId = String(x.invitedPatientId || "").trim();
+      return inviterId === normalizedPatientId || invitedId === normalizedPatientId;
+    });
+    console.log(`[GET /api/patient/:patientId/referrals] Filtered referrals (inviter or invited): ${items.length}`);
+    console.log(`[GET /api/patient/:patientId/referrals] Referral details:`, items.map((r) => ({
+      id: r.id,
+      status: r.status,
+      inviterPatientId: r.inviterPatientId,
+      invitedPatientId: r.invitedPatientId,
+    })));
     
     // Optional status filter
     if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
+      const beforeFilter = items.length;
       items = items.filter((x) => x.status === status);
+      console.log(`[GET /api/patient/:patientId/referrals] After status filter (${status}): ${items.length} (was ${beforeFilter})`);
     }
     
     // Sort by created date (newest first)
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     
+    console.log(`[GET /api/patient/:patientId/referrals] Returning ${items.length} referrals for patient ${patientId}`);
     res.json({ ok: true, items });
   } catch (error) {
-    console.error("Get patient referrals error:", error);
+    console.error("[GET /api/patient/:patientId/referrals] Error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -4354,11 +4567,16 @@ function requireAdminAuth(req, res, next) {
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Verify clinic exists and is active or pending
+    // Verify clinic exists and is not suspended
+    // Payment = Verification - all clinics are ACTIVE by default after registration
     const clinics = readJson(CLINICS_FILE, {});
     const clinic = clinics[decoded.clinicId];
-    if (!clinic || (clinic.status !== "ACTIVE" && clinic.status !== "PENDING")) {
-      return res.status(401).json({ ok: false, error: "clinic_not_active" });
+    if (!clinic) {
+      return res.status(401).json({ ok: false, error: "clinic_not_found" });
+    }
+    // Only reject if clinic is suspended (fraud/abuse cases)
+    if (clinic.status === "SUSPENDED") {
+      return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
     }
     
     req.clinicId = decoded.clinicId;
@@ -4436,9 +4654,10 @@ app.post("/api/admin/register", async (req, res) => {
       clinicCode: String(clinicCode).trim().toUpperCase(),
       plan: "FREE",
       max_patients: 3,
-      status: "PENDING", // PENDING, ACTIVE, SUSPENDED
+      status: "ACTIVE", // ACTIVE by default - payment = verification
       subscriptionStatus: "TRIAL", // TRIAL, ACTIVE, EXPIRED, CANCELLED
       subscriptionPlan: null, // BASIC, PROFESSIONAL, ENTERPRISE
+      verificationStatus: "verified", // verified = payment completed
       trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000), // 14 days trial
       createdAt: now(),
       updatedAt: now(),
@@ -4699,12 +4918,1140 @@ app.get("/api/admin/tokens", requireAdminAuth, (req, res) => {
   }
 });
 
+// ================== SUPER ADMIN AUTHENTICATION ==================
+
+// Middleware: Super Admin Guard
+function superAdminGuard(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ ok: false, error: "unauthorized", message: "Missing or invalid authorization header" });
+    }
+
+    const token = authHeader.substring(7);
+
+    try {
+      const payload = jwt.verify(token, SUPER_ADMIN_JWT_SECRET);
+
+      if (payload.role !== "super-admin") {
+        return res.status(403).json({ ok: false, error: "forbidden", message: "Invalid role" });
+      }
+
+      req.superAdmin = payload;
+      next();
+    } catch (err) {
+      return res.status(401).json({ ok: false, error: "unauthorized", message: "Invalid or expired token" });
+    }
+  } catch (error) {
+    console.error("Super admin guard error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+}
+
+// POST /api/super-admin/login
+// Super admin login (email + password from ENV)
+app.post("/api/super-admin/login", (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (!email || !password) {
+      return res.status(400).json({ ok: false, error: "missing_credentials", message: "Missing credentials" });
+    }
+
+    if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
+      console.error("[SUPER_ADMIN] Super admin credentials not configured in ENV");
+      return res.status(500).json({ ok: false, error: "configuration_error", message: "Super admin not configured" });
+    }
+
+    if (email !== SUPER_ADMIN_EMAIL || password !== SUPER_ADMIN_PASSWORD) {
+      return res.status(401).json({ ok: false, error: "invalid_credentials", message: "Invalid credentials" });
+    }
+
+    const token = jwt.sign(
+      { role: "super-admin" },
+      SUPER_ADMIN_JWT_SECRET,
+      { expiresIn: "12h" }
+    );
+
+    console.log("[SUPER_ADMIN] Login successful");
+
+    res.json({ 
+      ok: true, 
+      token,
+      message: "Login successful"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Login error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// GET /api/super-admin/me
+// Test endpoint (protected)
+app.get("/api/super-admin/me", superAdminGuard, (req, res) => {
+  try {
+    res.json({ 
+      ok: true, 
+      role: "super-admin",
+      message: "Super admin authenticated"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Me endpoint error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// GET /api/super-admin/clinics
+// Get all clinics with basic statistics (protected)
+app.get("/api/super-admin/clinics", superAdminGuard, (req, res) => {
+  try {
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    const patients = readJson(PAT_FILE, {});
+    const referrals = readJson(REF_FILE, {});
+    
+    // Convert clinics object to array
+    let clinicsList = [];
+    
+    // Add clinics from CLINICS_FILE
+    for (const clinicId in clinics) {
+      const clinic = clinics[clinicId];
+      if (clinic) {
+        const { password, ...clinicWithoutPassword } = clinic;
+        const clinicCode = (clinic.clinicCode || clinic.code || "").toUpperCase();
+        
+        // Calculate basic stats for this clinic
+        const clinicPatients = Object.values(patients).filter(p => 
+          (p.clinicCode || p.clinic_code || "").toUpperCase() === clinicCode
+        );
+        
+        // Create a set of clinic patient IDs for faster lookup
+        const clinicPatientIds = new Set(clinicPatients.map(p => p.patientId || p.patient_id).filter(Boolean));
+        
+        // Filter referrals where either inviter or invited patient belongs to this clinic
+        const referralsList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+        const clinicReferrals = referralsList.filter(r => {
+          if (!r) return false;
+          const inviterId = String(r.inviterPatientId || "").trim();
+          const invitedId = String(r.invitedPatientId || "").trim();
+          return clinicPatientIds.has(inviterId) || clinicPatientIds.has(invitedId);
+        });
+        
+        // Count messages
+        let messageCount = 0;
+        clinicPatients.forEach(p => {
+          if (p.messages && Array.isArray(p.messages)) {
+            messageCount += p.messages.length;
+          }
+        });
+        
+        clinicsList.push({
+          ...clinicWithoutPassword,
+          clinicId: clinicId,
+          id: clinicId,
+          stats: {
+            patientCount: clinicPatients.length,
+            messageCount: messageCount,
+            referralCount: clinicReferrals.length,
+            activeReferralCount: clinicReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE").length
+          }
+        });
+      }
+    }
+    
+    // Add single clinic from CLINIC_FILE if it exists
+    if (singleClinic && singleClinic.clinicCode) {
+      const { password, ...clinicWithoutPassword } = singleClinic;
+      const clinicCode = (singleClinic.clinicCode || "").toUpperCase();
+      
+      // Calculate basic stats
+      const clinicPatients = Object.values(patients).filter(p => 
+        (p.clinicCode || p.clinic_code || "").toUpperCase() === clinicCode
+      );
+      
+      // Create a set of clinic patient IDs for faster lookup
+      const clinicPatientIds = new Set(clinicPatients.map(p => p.patientId || p.patient_id).filter(Boolean));
+      
+      // Filter referrals where either inviter or invited patient belongs to this clinic
+      const referralsList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+      const clinicReferrals = referralsList.filter(r => {
+        if (!r) return false;
+        const inviterId = String(r.inviterPatientId || "").trim();
+        const invitedId = String(r.invitedPatientId || "").trim();
+        return clinicPatientIds.has(inviterId) || clinicPatientIds.has(invitedId);
+      });
+      
+      let messageCount = 0;
+      clinicPatients.forEach(p => {
+        if (p.messages && Array.isArray(p.messages)) {
+          messageCount += p.messages.length;
+        }
+      });
+      
+      clinicsList.push({
+        ...clinicWithoutPassword,
+        clinicId: singleClinic.clinicId || "single",
+        id: singleClinic.clinicId || "single",
+        stats: {
+          patientCount: clinicPatients.length,
+          messageCount: messageCount,
+          referralCount: clinicReferrals.length,
+          activeReferralCount: clinicReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE").length
+        }
+      });
+    }
+    
+    // Sort by createdAt (newest first)
+    clinicsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    
+    console.log(`[SUPER_ADMIN] Returning ${clinicsList.length} clinics with stats`);
+    
+    res.json({ 
+      ok: true, 
+      clinics: clinicsList,
+      count: clinicsList.length
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Get clinics error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// PATCH /api/super-admin/clinics/:clinicId/approve
+// Approve a clinic (change status from PENDING to ACTIVE)
+app.patch("/api/super-admin/clinics/:clinicId/approve", superAdminGuard, (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required", message: "Clinic ID is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    
+    let clinic = null;
+    let isSingleClinic = false;
+    
+    // Check CLINICS_FILE first
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } 
+    // Check CLINIC_FILE (single clinic)
+    else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    // Update status to ACTIVE
+    const oldStatus = clinic.status || "PENDING";
+    clinic.status = "ACTIVE";
+    clinic.approvedAt = Date.now();
+    clinic.updatedAt = Date.now();
+    
+    // Save to appropriate file
+    if (isSingleClinic) {
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      clinics[clinicId] = clinic;
+      writeJson(CLINICS_FILE, clinics);
+    }
+    
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} approved (status: ${oldStatus} -> ACTIVE)`);
+    
+    const { password, ...clinicWithoutPassword } = clinic;
+    res.json({ 
+      ok: true, 
+      clinic: clinicWithoutPassword,
+      message: "Clinic approved successfully"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Approve clinic error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// PATCH /api/super-admin/clinics/:clinicId/reject
+// Reject a clinic (change status to REJECTED)
+app.patch("/api/super-admin/clinics/:clinicId/reject", superAdminGuard, (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required", message: "Clinic ID is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    
+    let clinic = null;
+    let isSingleClinic = false;
+    
+    // Check CLINICS_FILE first
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } 
+    // Check CLINIC_FILE (single clinic)
+    else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    // Update status to REJECTED
+    const oldStatus = clinic.status || "PENDING";
+    clinic.status = "REJECTED";
+    clinic.rejectedAt = Date.now();
+    clinic.updatedAt = Date.now();
+    
+    // Save to appropriate file
+    if (isSingleClinic) {
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      clinics[clinicId] = clinic;
+      writeJson(CLINICS_FILE, clinics);
+    }
+    
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} rejected (status: ${oldStatus} -> REJECTED)`);
+    
+    const { password, ...clinicWithoutPassword } = clinic;
+    res.json({ 
+      ok: true, 
+      clinic: clinicWithoutPassword,
+      message: "Clinic rejected successfully"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Reject clinic error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// PATCH /api/super-admin/clinics/:clinicId/suspend
+// Suspend a clinic (for fraud/abuse cases only)
+app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    const { reason } = req.body || {};
+    
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required", message: "Clinic ID is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    
+    let clinic = null;
+    let isSingleClinic = false;
+    
+    // Check CLINICS_FILE first
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } 
+    // Check CLINIC_FILE (single clinic)
+    else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    // Update status to SUSPENDED
+    const oldStatus = clinic.status || "ACTIVE";
+    clinic.status = "SUSPENDED";
+    clinic.suspendedAt = Date.now();
+    clinic.suspendedReason = reason || "Suspended by super admin";
+    clinic.updatedAt = Date.now();
+    
+    // Save to appropriate file
+    if (isSingleClinic) {
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      clinics[clinicId] = clinic;
+      writeJson(CLINICS_FILE, clinics);
+    }
+    
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} suspended (status: ${oldStatus} -> SUSPENDED), reason: ${reason || "none"}`);
+    
+    const { password, ...clinicWithoutPassword } = clinic;
+    res.json({ 
+      ok: true, 
+      clinic: clinicWithoutPassword,
+      message: "Clinic suspended successfully"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Suspend clinic error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// PATCH /api/super-admin/clinics/:clinicId/activate
+// Activate a clinic (change status from SUSPENDED to ACTIVE)
+app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required", message: "Clinic ID is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    
+    let clinic = null;
+    let isSingleClinic = false;
+    
+    // Check CLINICS_FILE first
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } 
+    // Check CLINIC_FILE (single clinic)
+    else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    // Update status to ACTIVE
+    const oldStatus = clinic.status || "SUSPENDED";
+    clinic.status = "ACTIVE";
+    clinic.suspendedAt = undefined;
+    clinic.suspendedReason = undefined;
+    clinic.updatedAt = Date.now();
+    
+    // Save to appropriate file
+    if (isSingleClinic) {
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      clinics[clinicId] = clinic;
+      writeJson(CLINICS_FILE, clinics);
+    }
+    
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} activated (status: ${oldStatus} -> ACTIVE)`);
+    
+    const { password, ...clinicWithoutPassword } = clinic;
+    res.json({ 
+      ok: true, 
+      clinic: clinicWithoutPassword,
+      message: "Clinic activated successfully"
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Activate clinic error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// GET /api/super-admin/clinics/:clinicId/statistics
+// Get detailed statistics for a specific clinic (protected)
+app.get("/api/super-admin/clinics/:clinicId/statistics", superAdminGuard, (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required", message: "Clinic ID is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    const patients = readJson(PAT_FILE, {});
+    const referrals = readJson(REF_FILE, {});
+    
+    // Find clinic
+    let clinic = null;
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } else if (singleClinic && (singleClinic.clinicId === clinicId || clinicId === "single")) {
+      clinic = singleClinic;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    const clinicCode = (clinic.clinicCode || clinic.code || "").toUpperCase();
+    
+    // Get all patients for this clinic
+    const clinicPatients = Object.values(patients).filter(p => 
+      (p.clinicCode || p.clinic_code || "").toUpperCase() === clinicCode
+    );
+    
+    // Get all referrals for this clinic
+    const clinicReferrals = Object.values(referrals).filter(r =>
+      (r.clinicCode || r.clinic_code || "").toUpperCase() === clinicCode
+    );
+    
+    // Calculate statistics
+    let totalMessages = 0;
+    let messagesFromClinic = 0;
+    let messagesFromPatient = 0;
+    let lastMessageAt = 0;
+    let totalTreatments = 0;
+    let totalFiles = 0;
+    let patientsWithTravel = 0;
+    let travelFilledByPatient = 0;
+    let travelFilledByClinic = 0;
+    let treatmentCountsByPatient = [];
+    
+    clinicPatients.forEach(patient => {
+      const patientId = patient.patientId || patient.patient_id || "";
+      
+      // Count messages
+      if (patient.messages && Array.isArray(patient.messages)) {
+        const patientMessages = patient.messages;
+        totalMessages += patientMessages.length;
+        
+        patientMessages.forEach(msg => {
+          const from = (msg.from || "").toUpperCase();
+          if (from === "CLINIC" || from === "ADMIN") {
+            messagesFromClinic++;
+          } else if (from === "PATIENT" || from === "USER") {
+            messagesFromPatient++;
+          }
+          
+          const msgTime = msg.timestamp || msg.createdAt || 0;
+          if (msgTime > lastMessageAt) {
+            lastMessageAt = msgTime;
+          }
+          
+          // Count files (images and documents)
+          if (msg.type === "image" || msg.type === "file" || msg.fileUrl || msg.imageUrl) {
+            totalFiles++;
+          }
+        });
+      }
+      
+      // Count treatments
+      if (patient.treatments && Array.isArray(patient.treatments)) {
+        const patientTreatmentCount = patient.treatments.length;
+        totalTreatments += patientTreatmentCount;
+        treatmentCountsByPatient.push({
+          patientId: patientId,
+          treatmentCount: patientTreatmentCount
+        });
+      }
+      
+      // Travel statistics
+      if (patient.travel) {
+        patientsWithTravel++;
+        const travel = patient.travel;
+        
+        // Check flight info
+        if (travel.flights && Array.isArray(travel.flights)) {
+          travel.flights.forEach(flight => {
+            const filledBy = (flight.filledBy || travel.filledBy || "").toLowerCase();
+            if (filledBy === "patient" || filledBy === "user") {
+              travelFilledByPatient++;
+            } else if (filledBy === "clinic" || filledBy === "admin") {
+              travelFilledByClinic++;
+            }
+          });
+        }
+        
+        // Check hotel info
+        if (travel.hotel) {
+          const filledBy = (travel.hotel.filledBy || travel.filledBy || "").toLowerCase();
+          if (filledBy === "patient" || filledBy === "user") {
+            travelFilledByPatient++;
+          } else if (filledBy === "clinic" || filledBy === "admin") {
+            travelFilledByClinic++;
+          }
+        }
+      }
+    });
+    
+    // Sort treatment counts (highest first)
+    treatmentCountsByPatient.sort((a, b) => b.treatmentCount - a.treatmentCount);
+    const avgTreatmentsPerPatient = clinicPatients.length > 0 ? (totalTreatments / clinicPatients.length).toFixed(2) : 0;
+    
+    // Referral statistics
+    const successfulReferrals = clinicReferrals.filter(r => 
+      (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE"
+    );
+    
+    let totalDiscountAmount = 0;
+    successfulReferrals.forEach(ref => {
+      if (ref.discountAmount) {
+        totalDiscountAmount += Number(ref.discountAmount) || 0;
+      }
+    });
+    
+    // Calculate activity in last 7 days
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    let recentActivity = {
+      newPatients: 0,
+      newMessages: 0,
+      newTreatments: 0
+    };
+    
+    clinicPatients.forEach(patient => {
+      const createdAt = patient.createdAt || patient.created_at || 0;
+      if (createdAt >= sevenDaysAgo) {
+        recentActivity.newPatients++;
+      }
+      
+      if (patient.messages && Array.isArray(patient.messages)) {
+        patient.messages.forEach(msg => {
+          const msgTime = msg.timestamp || msg.createdAt || 0;
+          if (msgTime >= sevenDaysAgo) {
+            recentActivity.newMessages++;
+          }
+        });
+      }
+      
+      if (patient.treatments && Array.isArray(patient.treatments)) {
+        patient.treatments.forEach(treatment => {
+          const treatmentTime = treatment.createdAt || treatment.date || 0;
+          if (treatmentTime >= sevenDaysAgo) {
+            recentActivity.newTreatments++;
+          }
+        });
+      }
+    });
+    
+    const statistics = {
+      // Basic info
+      clinic: {
+        name: clinic.name || clinic.clinicName || "",
+        address: clinic.address || "",
+        phone: clinic.phone || "",
+        email: clinic.email || "",
+        createdAt: clinic.createdAt || 0,
+        plan: clinic.plan || "FREE",
+        status: clinic.status || "PENDING"
+      },
+      
+      // Activity summary
+      activity: {
+        totalPatients: clinicPatients.length,
+        totalMessages: totalMessages,
+        totalFiles: totalFiles,
+        totalTreatments: totalTreatments
+      },
+      
+      // Treatment statistics
+      treatments: {
+        total: totalTreatments,
+        averagePerPatient: parseFloat(avgTreatmentsPerPatient),
+        topPatients: treatmentCountsByPatient.slice(0, 10).map(p => ({
+          patientId: p.patientId.substring(0, 8) + "...", // Partial ID for privacy
+          treatmentCount: p.treatmentCount
+        }))
+      },
+      
+      // Messaging statistics
+      messaging: {
+        total: totalMessages,
+        fromClinic: messagesFromClinic,
+        fromPatient: messagesFromPatient,
+        lastMessageAt: lastMessageAt || null
+      },
+      
+      // Referral statistics
+      referrals: {
+        total: clinicReferrals.length,
+        successful: successfulReferrals.length,
+        totalDiscountAmount: totalDiscountAmount
+      },
+      
+      // Travel statistics
+      travel: {
+        patientsWithTravel: patientsWithTravel,
+        filledByPatient: travelFilledByPatient,
+        filledByClinic: travelFilledByClinic
+      },
+      
+      // Recent activity (last 7 days)
+      recentActivity: recentActivity
+    };
+    
+    console.log(`[SUPER_ADMIN] Statistics for clinic ${clinicId}:`, {
+      patients: statistics.activity.totalPatients,
+      messages: statistics.activity.totalMessages,
+      treatments: statistics.activity.totalTreatments
+    });
+    
+    res.json({ 
+      ok: true, 
+      statistics: statistics
+    });
+  } catch (error) {
+    console.error("[SUPER_ADMIN] Get clinic statistics error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// ================== CLINIC PAYMENT & SUBSCRIPTION ==================
+
+// POST /api/admin/payment-success
+// Called when clinic payment is successfully completed
+// Payment = Verification - automatically activate plan and features
+app.post("/api/admin/payment-success", requireAdminAuth, (req, res) => {
+  try {
+    const { plan, amount, currency, paymentId, paymentMethod } = req.body || {};
+    const clinicId = req.clinicId;
+    const clinicCode = req.clinicCode;
+    
+    if (!plan) {
+      return res.status(400).json({ ok: false, error: "plan_required", message: "Plan is required" });
+    }
+    
+    const clinics = readJson(CLINICS_FILE, {});
+    const singleClinic = readJson(CLINIC_FILE, {});
+    
+    let clinic = null;
+    let isSingleClinic = false;
+    
+    // Find clinic
+    if (clinics[clinicId]) {
+      clinic = clinics[clinicId];
+    } else if (singleClinic && singleClinic.clinicCode === clinicCode) {
+      clinic = singleClinic;
+      isSingleClinic = true;
+    } else {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+    }
+    
+    // Payment = Verification - automatically activate
+    const oldPlan = clinic.plan || "FREE";
+    const oldStatus = clinic.status || "ACTIVE";
+    
+    // Update clinic: payment = verification
+    clinic.plan = plan.toUpperCase(); // PRO, BASIC, PREMIUM, etc.
+    clinic.status = "ACTIVE"; // Ensure ACTIVE
+    clinic.verificationStatus = "verified"; // Payment = verification
+    clinic.subscriptionStatus = "ACTIVE";
+    clinic.subscriptionPlan = plan.toUpperCase();
+    clinic.paymentCompletedAt = Date.now();
+    clinic.lastPaymentId = paymentId || null;
+    clinic.lastPaymentAmount = amount || null;
+    clinic.lastPaymentCurrency = currency || "USD";
+    clinic.lastPaymentMethod = paymentMethod || null;
+    clinic.updatedAt = Date.now();
+    
+    // Set plan limits based on plan
+    if (plan.toUpperCase() === "PRO" || plan.toUpperCase() === "PREMIUM") {
+      clinic.max_patients = 999999; // Unlimited for paid plans
+    } else if (plan.toUpperCase() === "BASIC") {
+      clinic.max_patients = 50; // Basic plan limit
+    } else {
+      clinic.max_patients = 3; // FREE plan limit
+    }
+    
+    // Save clinic
+    if (isSingleClinic) {
+      writeJson(CLINIC_FILE, clinic);
+    } else {
+      clinics[clinicId] = clinic;
+      writeJson(CLINICS_FILE, clinics);
+    }
+    
+    console.log(`[PAYMENT] Clinic ${clinicId} (${clinicCode}) payment successful: ${oldPlan} -> ${plan}, status: ${oldStatus} -> ACTIVE, verificationStatus: verified`);
+    
+    const { password, ...clinicWithoutPassword } = clinic;
+    res.json({
+      ok: true,
+      clinic: clinicWithoutPassword,
+      message: "Payment successful. Plan activated and all features unlocked.",
+      plan: clinic.plan,
+      status: clinic.status,
+      verificationStatus: clinic.verificationStatus
+    });
+  } catch (error) {
+    console.error("[PAYMENT] Payment success error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// ================== TREATMENT PRICING & PAYMENTS ==================
+
+// GET /api/admin/treatment-prices
+// Get clinic treatment price list (requires auth)
+app.get("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
+  try {
+    const clinicCode = req.clinicCode;
+    const prices = readJson(TREATMENT_PRICES_FILE, {});
+    const clinicPrices = prices[clinicCode] || [];
+    
+    res.json({ 
+      ok: true, 
+      prices: clinicPrices,
+      clinicCode 
+    });
+  } catch (error) {
+    console.error("[TREATMENT_PRICES] Get error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// POST /api/admin/treatment-prices
+// Create or update treatment price (requires auth)
+app.post("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
+  try {
+    const clinicCode = req.clinicCode;
+    const { id, treatment_name, default_price, currency, is_active } = req.body || {};
+    
+    if (!treatment_name || !default_price || !currency) {
+      return res.status(400).json({ ok: false, error: "missing_fields", message: "treatment_name, default_price, and currency are required" });
+    }
+    
+    const prices = readJson(TREATMENT_PRICES_FILE, {});
+    if (!prices[clinicCode]) {
+      prices[clinicCode] = [];
+    }
+    
+    const priceId = id || `price_${now()}_${crypto.randomBytes(4).toString("hex")}`;
+    const existingIndex = prices[clinicCode].findIndex(p => p.id === priceId);
+    
+    const priceItem = {
+      id: priceId,
+      treatment_name: String(treatment_name).trim(),
+      default_price: Number(default_price),
+      currency: String(currency).trim().toUpperCase(),
+      is_active: is_active !== false, // Default to true
+      updatedAt: now(),
+      createdAt: existingIndex >= 0 ? prices[clinicCode][existingIndex].createdAt : now(),
+    };
+    
+    if (existingIndex >= 0) {
+      prices[clinicCode][existingIndex] = priceItem;
+    } else {
+      prices[clinicCode].push(priceItem);
+    }
+    
+    writeJson(TREATMENT_PRICES_FILE, prices);
+    
+    console.log(`[TREATMENT_PRICES] ${existingIndex >= 0 ? 'Updated' : 'Created'} price for clinic ${clinicCode}: ${treatment_name}`);
+    
+    res.json({ 
+      ok: true, 
+      price: priceItem,
+      message: existingIndex >= 0 ? "Price updated" : "Price created"
+    });
+  } catch (error) {
+    console.error("[TREATMENT_PRICES] Create/Update error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// DELETE /api/admin/treatment-prices/:id
+// Delete treatment price (requires auth)
+app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, (req, res) => {
+  try {
+    const clinicCode = req.clinicCode;
+    const { id } = req.params;
+    
+    if (!id) {
+      return res.status(400).json({ ok: false, error: "id_required", message: "Price ID is required" });
+    }
+    
+    const prices = readJson(TREATMENT_PRICES_FILE, {});
+    if (!prices[clinicCode]) {
+      return res.status(404).json({ ok: false, error: "no_prices", message: "No prices found for this clinic" });
+    }
+    
+    const index = prices[clinicCode].findIndex(p => p.id === id);
+    if (index < 0) {
+      return res.status(404).json({ ok: false, error: "price_not_found", message: "Price not found" });
+    }
+    
+    prices[clinicCode].splice(index, 1);
+    writeJson(TREATMENT_PRICES_FILE, prices);
+    
+    console.log(`[TREATMENT_PRICES] Deleted price ${id} for clinic ${clinicCode}`);
+    
+    res.json({ ok: true, message: "Price deleted" });
+  } catch (error) {
+    console.error("[TREATMENT_PRICES] Delete error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// GET /api/patient/:patientId/payment-summary
+// Get patient payment summary (patient can view their own)
+app.get("/api/patient/:patientId/payment-summary", requireToken, (req, res) => {
+  try {
+    const { patientId } = req.params;
+    
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+    
+    // Verify patient can only see their own payment summary
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+    
+    // Get patient payment data
+    const payments = readJson(PAYMENTS_FILE, {});
+    const patientPayments = payments[patientId] || {};
+    
+    // Get treatment plan to calculate total agreed
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+    const treatments = readJson(treatmentsFile, { teeth: [] });
+    
+    // Calculate total agreed amount from treatment plan
+    let totalAgreedAmount = 0;
+    let currency = patientPayments.currency || "EUR";
+    
+    if (Array.isArray(treatments.teeth)) {
+      for (const tooth of treatments.teeth) {
+        if (Array.isArray(tooth.procedures)) {
+          for (const proc of tooth.procedures) {
+            if (proc.unit_price && proc.quantity) {
+              totalAgreedAmount += (Number(proc.unit_price) * Number(proc.quantity));
+              if (proc.currency) currency = proc.currency;
+            } else if (proc.total_price) {
+              totalAgreedAmount += Number(proc.total_price);
+              if (proc.currency) currency = proc.currency;
+            }
+          }
+        }
+      }
+    }
+    
+    // Use stored payment summary or calculate
+    const totalPaidAmount = Number(patientPayments.total_paid_amount || 0);
+    const remainingAmount = totalAgreedAmount - totalPaidAmount;
+    
+    const summary = {
+      total_agreed_amount: totalAgreedAmount,
+      total_paid_amount: totalPaidAmount,
+      remaining_amount: remainingAmount,
+      currency: currency,
+      payers: patientPayments.payers || [],
+      updatedAt: patientPayments.updatedAt || null,
+    };
+    
+    res.json({ ok: true, summary });
+  } catch (error) {
+    console.error("[PAYMENT_SUMMARY] Get error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// GET /api/admin/patient/:patientId/payment-summary
+// Get patient payment summary (requires auth)
+app.get("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicCode = req.clinicCode;
+    
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+    
+    // Get patient payment data
+    const payments = readJson(PAYMENTS_FILE, {});
+    const patientPayments = payments[patientId] || {};
+    
+    // Get treatment plan to calculate total agreed
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+    const treatments = readJson(treatmentsFile, { teeth: [] });
+    
+    // Calculate total agreed amount from treatment plan
+    let totalAgreedAmount = 0;
+    let currency = patientPayments.currency || "EUR";
+    
+    if (Array.isArray(treatments.teeth)) {
+      for (const tooth of treatments.teeth) {
+        if (Array.isArray(tooth.procedures)) {
+          for (const proc of tooth.procedures) {
+            if (proc.unit_price && proc.quantity) {
+              totalAgreedAmount += (Number(proc.unit_price) * Number(proc.quantity));
+              if (proc.currency) currency = proc.currency;
+            } else if (proc.total_price) {
+              totalAgreedAmount += Number(proc.total_price);
+              if (proc.currency) currency = proc.currency;
+            }
+          }
+        }
+      }
+    }
+    
+    // Use stored payment summary or calculate
+    const totalPaidAmount = Number(patientPayments.total_paid_amount || 0);
+    const remainingAmount = totalAgreedAmount - totalPaidAmount;
+    
+    const summary = {
+      total_agreed_amount: totalAgreedAmount,
+      total_paid_amount: totalPaidAmount,
+      remaining_amount: remainingAmount,
+      currency: currency,
+      payers: patientPayments.payers || [],
+      updatedAt: patientPayments.updatedAt || null,
+    };
+    
+    res.json({ ok: true, summary });
+  } catch (error) {
+    console.error("[PAYMENT_SUMMARY] Get error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
+// PUT /api/admin/patient/:patientId/financial-snapshot
+// Update patient financial snapshot (manual update by admin)
+app.put("/api/admin/patient/:patientId/financial-snapshot", requireAdminAuth, (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const { financialSnapshot } = req.body;
+
+    if (!financialSnapshot || typeof financialSnapshot !== 'object') {
+      return res.status(400).json({
+        ok: false,
+        error: "financial_snapshot_required",
+        message: "Financial snapshot data is required"
+      });
+    }
+
+    // Validate fields
+    const totalEstimatedCost = Number(financialSnapshot.totalEstimatedCost);
+    const totalPaid = Number(financialSnapshot.totalPaid);
+    const remainingBalance = Number(financialSnapshot.remainingBalance);
+
+    if (isNaN(totalEstimatedCost) || totalEstimatedCost < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_total_estimated_cost",
+        message: "Total estimated cost must be a non-negative number"
+      });
+    }
+
+    if (isNaN(totalPaid) || totalPaid < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_total_paid",
+        message: "Total paid must be a non-negative number"
+      });
+    }
+
+    if (isNaN(remainingBalance) || remainingBalance < 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_remaining_balance",
+        message: "Remaining balance must be a non-negative number"
+      });
+    }
+
+    // Load patient
+    const patients = readJson(PAT_FILE, {});
+    const patient = patients[patientId];
+
+    if (!patient) {
+      return res.status(404).json({
+        ok: false,
+        error: "patient_not_found",
+        message: "Patient not found"
+      });
+    }
+
+    // Update financial snapshot
+    if (!patient.financialSnapshot) {
+      patient.financialSnapshot = {};
+    }
+
+    patient.financialSnapshot.totalEstimatedCost = totalEstimatedCost;
+    patient.financialSnapshot.totalPaid = totalPaid;
+    patient.financialSnapshot.remainingBalance = remainingBalance;
+    patient.updatedAt = now();
+
+    // Save
+    patients[patientId] = patient;
+    writeJson(PAT_FILE, patients);
+
+    console.log(`[FINANCIAL SNAPSHOT] Updated for patient ${patientId}:`, patient.financialSnapshot);
+
+    res.json({
+      ok: true,
+      financialSnapshot: patient.financialSnapshot
+    });
+  } catch (error) {
+    console.error("[FINANCIAL SNAPSHOT] Update error:", error);
+    res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: error.message || "Failed to update financial snapshot"
+    });
+  }
+});
+
+// POST /api/admin/patient/:patientId/payment-summary
+// Update patient payment summary (requires auth)
+app.post("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicCode = req.clinicCode;
+    const { total_paid_amount, payers, currency } = req.body || {};
+    
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
+    }
+    
+    const payments = readJson(PAYMENTS_FILE, {});
+    
+    // Get treatment plan to calculate total agreed
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+    const treatments = readJson(treatmentsFile, { teeth: [] });
+    
+    // Calculate total agreed amount
+    let totalAgreedAmount = 0;
+    let treatmentCurrency = currency || "EUR";
+    
+    if (Array.isArray(treatments.teeth)) {
+      for (const tooth of treatments.teeth) {
+        if (Array.isArray(tooth.procedures)) {
+          for (const proc of tooth.procedures) {
+            if (proc.unit_price && proc.quantity) {
+              totalAgreedAmount += (Number(proc.unit_price) * Number(proc.quantity));
+              if (proc.currency) treatmentCurrency = proc.currency;
+            } else if (proc.total_price) {
+              totalAgreedAmount += Number(proc.total_price);
+              if (proc.currency) treatmentCurrency = proc.currency;
+            }
+          }
+        }
+      }
+    }
+    
+    const totalPaid = Number(total_paid_amount || payments[patientId]?.total_paid_amount || 0);
+    const remainingAmount = totalAgreedAmount - totalPaid;
+    
+    payments[patientId] = {
+      total_agreed_amount: totalAgreedAmount,
+      total_paid_amount: totalPaid,
+      remaining_amount: remainingAmount,
+      currency: currency || treatmentCurrency,
+      payers: payers || payments[patientId]?.payers || [],
+      updatedAt: now(),
+      clinicCode,
+    };
+    
+    writeJson(PAYMENTS_FILE, payments);
+    
+    console.log(`[PAYMENT_SUMMARY] Updated payment summary for patient ${patientId}`);
+    
+    res.json({ 
+      ok: true, 
+      summary: payments[patientId],
+      message: "Payment summary updated"
+    });
+  } catch (error) {
+    console.error("[PAYMENT_SUMMARY] Update error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
+  }
+});
+
 
 // ================== START ==================
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running: http://127.0.0.1:${PORT}`);
-  console.log(`✅ Health (JSON):  http://127.0.0.1:${PORT}/health`);
-  console.log(`✅ Health (HTML):  http://127.0.0.1:${PORT}/health.html`);
-  console.log(`✅ Admin:          http://127.0.0.1:${PORT}/admin.html`);
-  console.log(`✅ Travel:         http://127.0.0.1:${PORT}/admin-travel.html`);
+// Render uyumlu: app.listen(process.env.PORT || 3000)
+app.listen(process.env.PORT || 3000, () => {
+  const port = process.env.PORT || 3000;
+  console.log(`✅ Server running on port ${port}`);
+  console.log(`✅ Health (JSON):  http://127.0.0.1:${port}/health`);
+  console.log(`✅ Health (HTML):  http://127.0.0.1:${port}/health.html`);
+  console.log(`✅ Admin:          http://127.0.0.1:${port}/admin.html`);
+  console.log(`✅ Travel:         http://127.0.0.1:${port}/admin-travel.html`);
 });

@@ -62,7 +62,24 @@
           tomorrow: "Yarın",
           dayAfterTomorrow: "Öbür gün",
           daysLater: "{count} gün sonra",
-          weeksLater: "{count} hafta sonra"
+          weeksLater: "{count} hafta sonra",
+          eventTypes: {
+            TRAVEL_EVENT: "Seyahat Etkinliği",
+            FLIGHT: "Uçuş",
+            HOTEL: "Otel",
+            AIRPORT_PICKUP: "Havalimanı Karşılama",
+            TREATMENT: "Tedavi",
+            CONSULT: "Konsültasyon",
+            FOLLOWUP: "Takip",
+            LAB: "Lab / Tarama",
+            HEALTH: "Genel Kontrol"
+          },
+          summary: {
+            overdue: "Gecikmiş:",
+            today: "Bugün:",
+            patients: "hasta",
+            events: "etkinlik"
+          }
         }
       },
       
@@ -126,6 +143,8 @@
           nameRequired: "Lütfen klinik adını giriniz.",
           emailRequired: "Lütfen e-posta adresini giriniz.",
           emailInvalid: "Geçerli bir e-posta adresi giriniz.",
+          emailExists: "Bu e-posta adresi zaten kullanılıyor.",
+          clinicCodeExists: "Bu klinik kodu zaten kullanılıyor.",
           passwordRequired: "Lütfen şifrenizi giriniz.",
           passwordMinLength: "Şifre en az 6 karakter olmalıdır.",
           passwordMismatch: "Şifreler eşleşmiyor.",
@@ -134,32 +153,145 @@
           termsNotAccepted: "Lütfen hizmet sözleşmesini kabul edin."
         },
         success: "Klinik kaydı başarılı! Giriş sayfasına yönlendiriliyorsunuz...",
+        successTitle: "Kayıt Başarılı!",
+        successMessage: "Klinik başarıyla kaydedildi. Lütfen admin token'ınızı kaydedin.",
+        clinicInformation: "Klinik Bilgileri",
+        adminToken: "Admin Token",
+        copyToken: "📋 Token'ı Kopyala",
+        goToPatients: "Hasta Listesine Git",
+        goToDashboard: "Dashboard'a Git",
         termsText: "Clinifly Dijital Platform Hizmet Sözleşmesi'ni okudum, anladım ve kabul ediyorum. Free Paket kapsamındaki hizmetlerin ücretsiz olduğunu, Free Paket dışındaki dijital hizmetlerin ücretli olduğunu ve bu hizmetlerin kapsam ile bedelinin ayrıca belirleneceğini kabul ederim."
       },
       
       // Settings (admin-settings.html)
       settings: {
         title: "⚙️ Clinic Settings",
+        pageTitle: "⚙️ Clinifly Admin – Settings",
+        clinicInformation: "Clinic Information",
+        brandingNotice: "Branding ayarları yalnızca PRO plan için kullanılabilir.",
+        subscriptionPlan: "Abonelik Paketi",
+        subscriptionPlanHelp: "FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.",
         plan: "Plan",
         branding: "Branding",
         clinicName: "Clinic Name",
         clinicLogoUrl: "Clinic Logo URL",
-        address: "Address",
-        googleMapLink: "Google Map Link",
-        primaryColor: "Primary Color",
-        secondaryColor: "Secondary Color",
+        clinicLogoUrlHelp: "Pro plan için logo görüntülenir",
+        address: "Clinic Address",
+        addressHelp: "Pro plan için hasta ekranında görüntülenir",
+        googleMapLink: "Google Maps Link",
+        googleMapLinkHelp: "Pro plan için hasta ekranında görüntülenir",
+        primaryColor: "Primary Color (Hex)",
+        secondaryColor: "Secondary Color (Hex)",
         welcomeMessage: "Welcome Message",
-        referrals: "Referral Discounts",
-        inviterDiscount: "Inviter Discount (%)",
-        invitedDiscount: "Invited Discount (%)",
-        save: "Save Settings",
+        referralDiscounts: "🎁 Referral Discounts",
+        referralDiscountsHelp: "Referral sisteminde kullanılacak varsayılan indirim oranları",
+        inviterDiscount: "Davet Eden İndirim (%)",
+        inviterDiscountHelp: "Davet eden hasta için indirim yüzdesi (0-99)",
+        invitedDiscount: "Davet Edilen İndirim (%)",
+        invitedDiscountHelp: "Davet edilen hasta için indirim yüzdesi (0-99)",
+        save: "💾 Save Settings",
         saveLoading: "Kaydediliyor...",
+        treatmentPriceList: "💰 Treatment Price List",
+        treatmentPriceListHelp: "Define your clinic's treatment prices. These prices will be used when creating patient treatment plans.",
+        currency: "Currency",
+        loadingPrices: "Loading prices...",
+        saveAllPrices: "💾 Save All Prices",
+        savingPrices: "💾 Saving...",
+        pricesSaved: "✅ Tüm fiyatlar başarıyla kaydedildi!",
         errors: {
           noToken: "Admin token bulunamadı. Lütfen admin olarak giriş yapın.",
           loadFailed: "Ayarlar yüklenemedi: {error}",
-          saveFailed: "Ayarlar kaydedilemedi: {error}"
+          saveFailed: "Ayarlar kaydedilemedi: {error}",
+          pricesLoadFailed: "Fiyatlar yüklenemedi: {error}",
+          pricesSaveFailed: "Fiyatlar kaydedilemedi: {error}"
         },
-        success: "Ayarlar başarıyla kaydedildi!"
+        success: "✅ Ayarlar başarıyla kaydedildi!",
+        categoryLabels: {
+          PROSTHETIC: "Prosthetic (Protez)",
+          RESTORATIVE: "Restorative (Restoratif)",
+          ENDODONTIC: "Endodontic (Endodontik)",
+          SURGICAL: "Surgical (Cerrahi)",
+          IMPLANT: "Implant"
+        },
+        tableHeaders: {
+          treatment: "Treatment",
+          price: "Price",
+          active: "Active"
+        }
+      },
+      
+      // Patients (admin-patients.html)
+      patients: {
+        title: "Clinifly Admin – Patients",
+        registeredPatients: "Kayıtlı Hastalar",
+        searchPlaceholder: "Ara: isim / telefon / patientId / clinicCode",
+        filterAll: "Tümü",
+        clearFilters: "Temizle",
+        refresh: "Yenile",
+        loading: "Yükleniyor...",
+        noResults: "Sonuç yok",
+        selectedPatient: "Seçili Hasta: {name}",
+        patientId: "Patient ID: {id}",
+        copyId: "Copy ID",
+        copyIdSuccess: "✅ Patient ID kopyalandı",
+        clear: "Clear",
+        travel: "Seyahat",
+        treatment: "Tedavi",
+        health: "Sağlık",
+        chat: "Chat",
+        approve: "Onayla",
+        approveConfirm: "Hastayı onaylamak istediğinize emin misiniz? ({patientId})",
+        approveSuccess: "✅ Hasta onaylandı",
+        before: "Önce",
+        after: "Sonra",
+        phone: "Telefon",
+        status: {
+          PENDING: "Beklemede",
+          APPROVED: "Onaylandı"
+        },
+        errors: {
+          noToken: "⚠️ Admin token bulunamadı. Lütfen önce giriş yapın.",
+          unauthorized: "❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.",
+          loadFailed: "❌ Hasta listesi yüklenemedi: {error}",
+          approveFailed: "❌ Onaylama hatası: {error}"
+        }
+      },
+      
+      // Referrals (admin-referrals.html)
+      referrals: {
+        title: "🎁 Clinifly Admin – Referrals",
+        referrals: "Referrals",
+        filterAll: "Tümü",
+        refresh: "Yenile",
+        loading: "Yükleniyor...",
+        noReferrals: "Referral bulunamadı.",
+        inviter: "Inviter",
+        invited: "Invited",
+        createdAt: "Oluşturulma",
+        inviterDiscount: "Inviter İndirim",
+        invitedDiscount: "Invited İndirim",
+        discount: "İndirim",
+        approve: "Onayla",
+        reject: "Reddet",
+        approveConfirm: "Bu referral'ı onaylamak istediğinize emin misiniz?",
+        rejectConfirm: "Bu referral'ı reddetmek istediğinize emin misiniz?",
+        approved: "Referral onaylandı ✅",
+        rejected: "Referral reddedildi ✅",
+        found: "{count} referral bulundu.",
+        defaultDiscounts: "Varsayılan indirimler: Davet Eden %{inviter}%, Davet Edilen %{invited}%",
+        defaultDiscountsRequired: "⚠️ Varsayılan indirim yüzdeleri Clinic Settings sayfasında girilmelidir.",
+        status: {
+          PENDING: "Beklemede",
+          APPROVED: "Onaylandı",
+          REJECTED: "Reddedildi"
+        },
+        errors: {
+          noToken: "⚠️ Admin token bulunamadı. Lütfen admin olarak giriş yapın.",
+          invalidToken: "❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.",
+          loadFailed: "Referrals yüklenemedi.",
+          approveFailed: "Onaylama hatası: {error}",
+          rejectFailed: "Reddetme hatası: {error}"
+        }
       }
     },
     
@@ -222,7 +354,24 @@
           tomorrow: "Tomorrow",
           dayAfterTomorrow: "Day after tomorrow",
           daysLater: "{count} days later",
-          weeksLater: "{count} weeks later"
+          weeksLater: "{count} weeks later",
+          eventTypes: {
+            TRAVEL_EVENT: "Travel Event",
+            FLIGHT: "Flight",
+            HOTEL: "Hotel",
+            AIRPORT_PICKUP: "Airport Pickup",
+            TREATMENT: "Treatment",
+            CONSULT: "Consultation",
+            FOLLOWUP: "Follow-up",
+            LAB: "Lab / Scan",
+            HEALTH: "General Check-up"
+          },
+          summary: {
+            overdue: "Overdue:",
+            today: "Today:",
+            patients: "patients",
+            events: "events"
+          }
         }
       },
       
@@ -286,6 +435,8 @@
           nameRequired: "Please enter clinic name.",
           emailRequired: "Please enter email address.",
           emailInvalid: "Please enter a valid email address.",
+          emailExists: "This email address is already in use.",
+          clinicCodeExists: "This clinic code is already in use.",
           passwordRequired: "Please enter password.",
           passwordMinLength: "Password must be at least 6 characters.",
           passwordMismatch: "Passwords do not match.",
@@ -294,32 +445,145 @@
           termsNotAccepted: "Please accept the service agreement."
         },
         success: "Clinic registration successful! Redirecting to login page...",
+        successTitle: "Registration Successful!",
+        successMessage: "Your clinic has been registered successfully. Please save your admin token.",
+        clinicInformation: "Clinic Information",
+        adminToken: "Admin Token",
+        copyToken: "📋 Copy Token",
+        goToPatients: "Go to Patients List",
+        goToDashboard: "Go to Dashboard",
         termsText: "I have read, understood and agree to the Clinifly Digital Platform Service Agreement. I acknowledge that services within the Free Package are free of charge, services outside the Free Package are paid, and the scope and price of these services will be determined separately."
       },
       
       // Settings (admin-settings.html)
       settings: {
         title: "⚙️ Clinic Settings",
+        pageTitle: "⚙️ Clinifly Admin – Settings",
+        clinicInformation: "Clinic Information",
+        brandingNotice: "Branding settings are only available for PRO plan.",
+        subscriptionPlan: "Subscription Plan",
+        subscriptionPlanHelp: "You can change FREE / BASIC / PRO package here.",
         plan: "Plan",
         branding: "Branding",
         clinicName: "Clinic Name",
         clinicLogoUrl: "Clinic Logo URL",
-        address: "Address",
-        googleMapLink: "Google Map Link",
-        primaryColor: "Primary Color",
-        secondaryColor: "Secondary Color",
+        clinicLogoUrlHelp: "Logo will be displayed for Pro plan",
+        address: "Clinic Address",
+        addressHelp: "Will be displayed on patient screen for Pro plan",
+        googleMapLink: "Google Maps Link",
+        googleMapLinkHelp: "Will be displayed on patient screen for Pro plan",
+        primaryColor: "Primary Color (Hex)",
+        secondaryColor: "Secondary Color (Hex)",
         welcomeMessage: "Welcome Message",
-        referrals: "Referral Discounts",
+        referralDiscounts: "🎁 Referral Discounts",
+        referralDiscountsHelp: "Default discount rates to be used in the referral system",
         inviterDiscount: "Inviter Discount (%)",
+        inviterDiscountHelp: "Discount percentage for the inviting patient (0-99)",
         invitedDiscount: "Invited Discount (%)",
-        save: "Save Settings",
+        invitedDiscountHelp: "Discount percentage for the invited patient (0-99)",
+        save: "💾 Save Settings",
         saveLoading: "Saving...",
+        treatmentPriceList: "💰 Treatment Price List",
+        treatmentPriceListHelp: "Define your clinic's treatment prices. These prices will be used when creating patient treatment plans.",
+        currency: "Currency",
+        loadingPrices: "Loading prices...",
+        saveAllPrices: "💾 Save All Prices",
+        savingPrices: "💾 Saving...",
+        pricesSaved: "✅ All prices saved successfully!",
         errors: {
           noToken: "Admin token not found. Please login as admin.",
           loadFailed: "Failed to load settings: {error}",
-          saveFailed: "Failed to save settings: {error}"
+          saveFailed: "Failed to save settings: {error}",
+          pricesLoadFailed: "Failed to load prices: {error}",
+          pricesSaveFailed: "Failed to save prices: {error}"
         },
-        success: "Settings saved successfully!"
+        success: "✅ Settings saved successfully!",
+        categoryLabels: {
+          PROSTHETIC: "Prosthetic (Protez)",
+          RESTORATIVE: "Restorative (Restoratif)",
+          ENDODONTIC: "Endodontic (Endodontik)",
+          SURGICAL: "Surgical (Cerrahi)",
+          IMPLANT: "Implant"
+        },
+        tableHeaders: {
+          treatment: "Treatment",
+          price: "Price",
+          active: "Active"
+        }
+      },
+      
+      // Patients (admin-patients.html)
+      patients: {
+        title: "Clinifly Admin – Patients",
+        registeredPatients: "Registered Patients",
+        searchPlaceholder: "Search: name / phone / patientId / clinicCode",
+        filterAll: "All",
+        clearFilters: "Clear",
+        refresh: "Refresh",
+        loading: "Loading...",
+        noResults: "No results",
+        selectedPatient: "Selected Patient: {name}",
+        patientId: "Patient ID: {id}",
+        copyId: "Copy ID",
+        copyIdSuccess: "✅ Patient ID copied",
+        clear: "Clear",
+        travel: "Travel",
+        treatment: "Treatment",
+        health: "Health",
+        chat: "Chat",
+        approve: "Approve",
+        approveConfirm: "Are you sure you want to approve this patient? ({patientId})",
+        approveSuccess: "✅ Patient approved",
+        before: "Before",
+        after: "After",
+        phone: "Phone",
+        status: {
+          PENDING: "Pending",
+          APPROVED: "Approved"
+        },
+        errors: {
+          noToken: "⚠️ Admin token not found. Please login first.",
+          unauthorized: "❌ Authorization error. Please login again.",
+          loadFailed: "❌ Failed to load patient list: {error}",
+          approveFailed: "❌ Approval error: {error}"
+        }
+      },
+      
+      // Referrals (admin-referrals.html)
+      referrals: {
+        title: "🎁 Clinifly Admin – Referrals",
+        referrals: "Referrals",
+        filterAll: "All",
+        refresh: "Refresh",
+        loading: "Loading...",
+        noReferrals: "No referrals found.",
+        inviter: "Inviter",
+        invited: "Invited",
+        createdAt: "Created",
+        inviterDiscount: "Inviter Discount",
+        invitedDiscount: "Invited Discount",
+        discount: "Discount",
+        approve: "Approve",
+        reject: "Reject",
+        approveConfirm: "Are you sure you want to approve this referral?",
+        rejectConfirm: "Are you sure you want to reject this referral?",
+        approved: "Referral approved ✅",
+        rejected: "Referral rejected ✅",
+        found: "{count} referrals found.",
+        defaultDiscounts: "Default discounts: Inviter %{inviter}%, Invited %{invited}%",
+        defaultDiscountsRequired: "⚠️ Default discount percentages must be entered in Clinic Settings page.",
+        status: {
+          PENDING: "Pending",
+          APPROVED: "Approved",
+          REJECTED: "Rejected"
+        },
+        errors: {
+          noToken: "⚠️ Admin token not found. Please login as admin.",
+          invalidToken: "❌ Admin token invalid or expired. Please enter admin token.",
+          loadFailed: "Failed to load referrals.",
+          approveFailed: "Approval error: {error}",
+          rejectFailed: "Rejection error: {error}"
+        }
       }
     }
   };
