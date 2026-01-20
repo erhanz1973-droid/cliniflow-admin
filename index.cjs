@@ -30,7 +30,12 @@ const SUPER_ADMIN_JWT_SECRET = process.env.SUPER_ADMIN_JWT_SECRET || "super-admi
 // ================== MIDDLEWARE ==================
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
-// Static middleware will be placed after redirect routes but before API routes
+
+// ================== STATIC ADMIN FILES ==================
+const publicDir = path.join(__dirname, "public");
+console.log("📂 Serving static files from:", publicDir);
+
+app.use(express.static(publicDir));
 
 // ================== STORAGE ==================
 const DATA_DIR = path.join(__dirname, "data");
