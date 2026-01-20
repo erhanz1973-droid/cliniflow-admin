@@ -592,6 +592,40 @@ app.get("/admin-v3.html", (req, res) => {
   res.redirect("/admin.html");
 });
 
+// Admin Login & Register routes (explicit handlers for Render compatibility)
+app.get("/admin-login.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "admin-login.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    console.error(`[GET /admin-login.html] File not found: ${filePath}`);
+    res.status(404).send("Admin Login page not found");
+  }
+});
+
+app.get("/admin-register.html", (req, res) => {
+  const filePath = path.join(__dirname, "public", "admin-register.html");
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    console.error(`[GET /admin-register.html] File not found: ${filePath}`);
+    console.error(`[GET /admin-register.html] __dirname: ${__dirname}`);
+    console.error(`[GET /admin-register.html] process.cwd(): ${process.cwd()}`);
+    // Try alternative paths
+    const altPath1 = path.join(process.cwd(), "public", "admin-register.html");
+    const altPath2 = path.resolve("public", "admin-register.html");
+    if (fs.existsSync(altPath1)) {
+      console.log(`[GET /admin-register.html] Using alternative path 1: ${altPath1}`);
+      res.sendFile(altPath1);
+    } else if (fs.existsSync(altPath2)) {
+      console.log(`[GET /admin-register.html] Using alternative path 2: ${altPath2}`);
+      res.sendFile(altPath2);
+    } else {
+      res.status(404).send("Admin Register page not found");
+    }
+  }
+});
+
 // Super Admin routes
 app.get("/super-admin-login.html", (req, res) => {
   const filePath = path.join(__dirname, "public", "super-admin-login.html");
@@ -614,34 +648,57 @@ app.get("/super-admin.html", (req, res) => {
 // ================== STATIC MIDDLEWARE (serves entire public/ directory) ==================
 // This must be placed AFTER redirect routes but BEFORE API routes
 // All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
-const publicPath = path.join(__dirname, "public");
+
+// Find public directory - try multiple paths for Render compatibility
+let publicPath = path.join(__dirname, "public");
+if (!fs.existsSync(publicPath)) {
+  // Try alternative paths (Render might use different cwd)
+  const altPath1 = path.join(process.cwd(), "public");
+  const altPath2 = path.resolve("public");
+  if (fs.existsSync(altPath1)) {
+    publicPath = altPath1;
+    console.log(`[STATIC] Using alternative path 1: ${publicPath}`);
+  } else if (fs.existsSync(altPath2)) {
+    publicPath = altPath2;
+    console.log(`[STATIC] Using alternative path 2: ${publicPath}`);
+  } else {
+    console.error(`[STATIC] ERROR: Public directory not found in any path!`);
+    console.error(`[STATIC] Tried: ${path.join(__dirname, "public")}`);
+    console.error(`[STATIC] Tried: ${altPath1}`);
+    console.error(`[STATIC] Tried: ${altPath2}`);
+    console.error(`[STATIC] __dirname: ${__dirname}`);
+    console.error(`[STATIC] process.cwd(): ${process.cwd()}`);
+  }
+}
+
 console.log(`[STATIC] Serving static files from: ${publicPath}`);
 console.log(`[STATIC] __dirname: ${__dirname}`);
 console.log(`[STATIC] process.cwd(): ${process.cwd()}`);
-if (!fs.existsSync(publicPath)) {
-  console.error(`[STATIC] ERROR: Public directory does not exist: ${publicPath}`);
-  // Try alternative paths
-  const altPath1 = path.join(process.cwd(), "public");
-  const altPath2 = path.resolve("public");
-  console.log(`[STATIC] Trying alternative path 1: ${altPath1} (exists: ${fs.existsSync(altPath1)})`);
-  console.log(`[STATIC] Trying alternative path 2: ${altPath2} (exists: ${fs.existsSync(altPath2)})`);
-    } else {
+
+if (fs.existsSync(publicPath)) {
   console.log(`[STATIC] Public directory exists, listing files...`);
   try {
     const files = fs.readdirSync(publicPath);
-    console.log(`[STATIC] Found ${files.length} files in public directory:`, files.slice(0, 10).join(", "));
+    console.log(`[STATIC] Found ${files.length} files in public directory`);
+    console.log(`[STATIC] Sample files:`, files.slice(0, 10).join(", "));
+    // Check specifically for admin-register.html
+    if (fs.existsSync(path.join(publicPath, "admin-register.html"))) {
+      console.log(`[STATIC] ✅ admin-register.html found in public directory`);
+    } else {
+      console.error(`[STATIC] ❌ admin-register.html NOT found in public directory!`);
+    }
   } catch (e) {
     console.error(`[STATIC] Error reading public directory:`, e.message);
   }
 }
 
 // Mount static middleware at root path
-// This will serve files from public/ directory at root URL (e.g., /admin-patients.html)
-// NOTE: fallthrough: true allows API routes to work even if static file is not found
+// This will serve files from public/ directory at root URL (e.g., /admin-register.html)
+// fallthrough: false ensures 404 if file not found (don't pass to API routes)
 app.use(express.static(publicPath, {
   index: false, // Don't serve index.html for directory requests
   dotfiles: 'ignore', // Ignore dotfiles
-  fallthrough: true // Continue to next middleware if file not found (for API routes)
+  fallthrough: false // Don't pass to next middleware if file not found (return 404)
 }));
 
 // ================== REGISTER ==================
