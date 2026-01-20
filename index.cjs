@@ -671,57 +671,10 @@ app.get("/super-admin.html", (req, res) => {
 // This must be placed AFTER redirect routes but BEFORE API routes
 // All static files (HTML, CSS, JS, images, etc.) in public/ will be served automatically
 
-// Find public directory - try multiple paths for Render compatibility
-let publicPath = path.join(__dirname, "public");
-if (!fs.existsSync(publicPath)) {
-  // Try alternative paths (Render might use different cwd)
-  const altPath1 = path.join(process.cwd(), "public");
-  const altPath2 = path.resolve("public");
-  if (fs.existsSync(altPath1)) {
-    publicPath = altPath1;
-    console.log(`[STATIC] Using alternative path 1: ${publicPath}`);
-  } else if (fs.existsSync(altPath2)) {
-    publicPath = altPath2;
-    console.log(`[STATIC] Using alternative path 2: ${publicPath}`);
-    } else {
-    console.error(`[STATIC] ERROR: Public directory not found in any path!`);
-    console.error(`[STATIC] Tried: ${path.join(__dirname, "public")}`);
-    console.error(`[STATIC] Tried: ${altPath1}`);
-    console.error(`[STATIC] Tried: ${altPath2}`);
-    console.error(`[STATIC] __dirname: ${__dirname}`);
-    console.error(`[STATIC] process.cwd(): ${process.cwd()}`);
-  }
-}
+const publicPath = path.join(__dirname, "public");
+console.log("[STATIC] Serving public from:", publicPath);
 
-console.log(`[STATIC] Serving static files from: ${publicPath}`);
-console.log(`[STATIC] __dirname: ${__dirname}`);
-console.log(`[STATIC] process.cwd(): ${process.cwd()}`);
-
-if (fs.existsSync(publicPath)) {
-  console.log(`[STATIC] Public directory exists, listing files...`);
-  try {
-    const files = fs.readdirSync(publicPath);
-    console.log(`[STATIC] Found ${files.length} files in public directory`);
-    console.log(`[STATIC] Sample files:`, files.slice(0, 10).join(", "));
-    // Check specifically for admin-register.html
-    if (fs.existsSync(path.join(publicPath, "admin-register.html"))) {
-      console.log(`[STATIC] ✅ admin-register.html found in public directory`);
-    } else {
-      console.error(`[STATIC] ❌ admin-register.html NOT found in public directory!`);
-    }
-  } catch (e) {
-    console.error(`[STATIC] Error reading public directory:`, e.message);
-  }
-}
-
-// Mount static middleware at root path
-// This will serve files from public/ directory at root URL (e.g., /admin-register.html)
-// fallthrough: true allows route handlers to work if static file is not found
-app.use(express.static(publicPath, {
-  index: false, // Don't serve index.html for directory requests
-  dotfiles: 'ignore', // Ignore dotfiles
-  fallthrough: true // Continue to next middleware/route if file not found
-}));
+app.use(express.static(publicPath));
 
 // ================== REGISTER ==================
 app.post("/api/register", async (req, res) => {
