@@ -1040,7 +1040,43 @@ app.post("/api/register", async (req, res) => {
 
   // phoneNormalized is already defined and validated above
 
-  // patients
+  // SUPABASE: Insert patient (PRIMARY - production source of truth)
+  let supabaseClinicId = null;
+  if (isSupabaseEnabled() && validatedClinicCode) {
+    try {
+      const clinic = await getClinicByCode(validatedClinicCode);
+      if (clinic) {
+        supabaseClinicId = clinic.id;
+        console.log(`[REGISTER] Found clinic UUID: ${supabaseClinicId} for code: ${validatedClinicCode}`);
+      } else {
+        console.warn(`[REGISTER] Clinic not found in Supabase for code: ${validatedClinicCode}`);
+      }
+    } catch (err) {
+      console.error(`[REGISTER] Error finding clinic in Supabase:`, err.message);
+    }
+  }
+
+  if (isSupabaseEnabled()) {
+    try {
+      const patientData = {
+        id: patientId,
+        clinic_id: supabaseClinicId,
+        name: String(name || ""),
+        email: emailNormalized,
+        phone: phoneNormalized,
+        status: "PENDING",
+      };
+      
+      console.log(`[REGISTER] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
+      const supabasePatient = await createPatient(patientData);
+      console.log(`[REGISTER] ✅ Patient inserted to Supabase: ${supabasePatient?.id}`);
+    } catch (supabaseError) {
+      console.error(`[REGISTER] ❌ Failed to insert patient to Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   const patients = readJson(PAT_FILE, {});
   patients[patientId] = {
     patientId,
@@ -1317,7 +1353,43 @@ app.post("/api/patient/register", async (req, res) => {
 
   // phoneNormalized is already defined and validated above
 
-  // patients
+  // SUPABASE: Insert patient (PRIMARY - production source of truth)
+  let supabaseClinicId = null;
+  if (isSupabaseEnabled() && validatedClinicCode) {
+    try {
+      const clinic = await getClinicByCode(validatedClinicCode);
+      if (clinic) {
+        supabaseClinicId = clinic.id;
+        console.log(`[REGISTER /api/patient/register] Found clinic UUID: ${supabaseClinicId} for code: ${validatedClinicCode}`);
+      } else {
+        console.warn(`[REGISTER /api/patient/register] Clinic not found in Supabase for code: ${validatedClinicCode}`);
+      }
+    } catch (err) {
+      console.error(`[REGISTER /api/patient/register] Error finding clinic in Supabase:`, err.message);
+    }
+  }
+
+  if (isSupabaseEnabled()) {
+    try {
+      const patientData = {
+        id: patientId,
+        clinic_id: supabaseClinicId,
+        name: String(name || ""),
+        email: emailNormalized,
+        phone: phoneNormalized,
+        status: "PENDING",
+      };
+      
+      console.log(`[REGISTER /api/patient/register] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
+      const supabasePatient = await createPatient(patientData);
+      console.log(`[REGISTER /api/patient/register] ✅ Patient inserted to Supabase: ${supabasePatient?.id}`);
+    } catch (supabaseError) {
+      console.error(`[REGISTER /api/patient/register] ❌ Failed to insert patient to Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   const patients = readJson(PAT_FILE, {});
   patients[patientId] = {
     patientId,
