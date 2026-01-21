@@ -1730,31 +1730,38 @@ app.post("/auth/request-otp", async (req, res) => {
     // Also save under email key for backward compatibility if needed
     await saveOTP(emailNormalized, otpCode, 0);
     
-    // Send email
-    try {
-      console.log("[OTP] Calling sendOTPEmail...");
-      console.log("[OTP] Email:", emailNormalized);
-      console.log("[OTP] OTP Code:", otpCode);
-      
-      await sendOTPEmail(emailNormalized, otpCode);
-      
-      console.log("[OTP] ✅ sendOTPEmail completed successfully!");
-      console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
-      
-      res.json({
-        ok: true,
-        message: "OTP email adresinize gönderildi",
-        // Don't return email for security, just confirm it was sent
-        phone: phoneNormalized.replace(/(\d{3})(\d{3})(\d{4})/, "*** *** $3"), // Mask phone
-      });
-    } catch (emailError) {
-      console.error("[OTP] Failed to send email:", emailError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "email_send_failed", 
-        message: "OTP email gönderilemedi. Lütfen tekrar deneyin." 
-      });
+    // FIRE-AND-FORGET: Send email WITHOUT waiting
+    // This prevents SMTP timeout from blocking the response
+    console.log("[OTP] ========================================");
+    console.log("[OTP] EMAIL SEND DECISION POINT");
+    console.log("[OTP] emailTransporter exists: " + !!emailTransporter);
+    console.log("[OTP] Email:", emailNormalized);
+    console.log("[OTP] OTP Code:", otpCode);
+    console.log("[OTP] ========================================");
+    
+    if (emailTransporter) {
+      console.log("[OTP] ✅ emailTransporter EXISTS - calling sendOTPEmail (fire-and-forget)");
+      sendOTPEmail(emailNormalized, otpCode)
+        .then(() => {
+          console.log("[OTP] ✅ sendOTPEmail completed successfully!");
+          console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
+        })
+        .catch((emailError) => {
+          console.error("[OTP] ❌ Failed to send email:", emailError.message);
+          // Email failed but OTP is saved - user can request again
+        });
+    } else {
+      console.error("[OTP] ❌ emailTransporter is NULL - cannot send email!");
     }
+    
+    // Return success IMMEDIATELY - don't wait for email
+    console.log("[OTP] Returning success response immediately");
+    res.json({
+      ok: true,
+      message: "OTP email adresinize gönderildi",
+      // Don't return email for security, just confirm it was sent
+      phone: phoneNormalized.replace(/(\d{3})(\d{3})(\d{4})/, "*** *** $3"), // Mask phone
+    });
   } catch (error) {
     console.error("[OTP] Request OTP error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
