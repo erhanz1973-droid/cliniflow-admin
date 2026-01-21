@@ -376,155 +376,82 @@ function cleanupExpiredOTPs() {
 }
 
 /**
- * Send OTP email using Brevo SMTP
+ * Send OTP email using Brevo REST API (not SMTP)
  */
 async function sendOTPEmail(email, otpCode) {
   console.log(`[sendOTPEmail] ========================================`);
-  console.log(`[sendOTPEmail] FUNCTION CALLED`);
+  console.log(`[sendOTPEmail] FUNCTION CALLED (Brevo REST API)`);
   console.log(`[sendOTPEmail] email: ${email}`);
   console.log(`[sendOTPEmail] otpCode: ${otpCode}`);
-  console.log(`[sendOTPEmail] emailTransporter exists: ${!!emailTransporter}`);
   console.log(`[sendOTPEmail] ========================================`);
   
-  if (!emailTransporter) {
-    console.error(`[sendOTPEmail] ❌ SMTP NOT CONFIGURED - emailTransporter is null!`);
-    throw new Error("SMTP not configured");
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.SMTP_FROM; // ⬅️ BURASI ÖNEMLİ
+  const fromName = process.env.BREVO_FROM_NAME || "Clinifly";
+
+  console.log(`[sendOTPEmail] BREVO_API_KEY: ${apiKey ? 'SET' : 'NOT SET'}`);
+  console.log(`[sendOTPEmail] SMTP_FROM: ${fromEmail || 'NOT SET'}`);
+  console.log(`[sendOTPEmail] BREVO_FROM_NAME: ${fromName}`);
+
+  if (!apiKey) {
+    console.error(`[sendOTPEmail] ❌ BREVO_API_KEY not set!`);
+    throw new Error("BREVO_API_KEY not set");
   }
 
-  const htmlTemplate = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clinifly - OTP Code</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
-      background-color: #f4f4f4;
-    }
-    .container {
-      background-color: #ffffff;
-      border-radius: 8px;
-      padding: 30px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .header {
-      text-align: center;
-      margin-bottom: 30px;
-    }
-    .logo {
-      font-size: 24px;
-      font-weight: bold;
-      color: #2563eb;
-      margin-bottom: 10px;
-    }
-    .otp-code {
-      background-color: #f0f0f0;
-      border: 2px dashed #2563eb;
-      border-radius: 8px;
-      padding: 20px;
-      text-align: center;
-      font-size: 32px;
-      font-weight: bold;
-      letter-spacing: 8px;
-      color: #2563eb;
-      margin: 30px 0;
-    }
-    .warning {
-      background-color: #fef3c7;
-      border-left: 4px solid #f59e0b;
-      padding: 15px;
-      margin: 20px 0;
-      border-radius: 4px;
-    }
-    .footer {
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid #e5e7eb;
-      text-align: center;
-      font-size: 12px;
-      color: #6b7280;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <div class="logo">Clinifly</div>
-      <h1 style="margin: 0; color: #111827;">Email Verification Code</h1>
-    </div>
-    
-    <p>Hello,</p>
-    <p>You requested a login code for your Clinifly account. Use the code below to complete your login:</p>
-    
-    <div class="otp-code">${otpCode}</div>
-    
-    <div class="warning">
-      <strong>⚠️ Important:</strong>
-      <ul style="margin: 10px 0; padding-left: 20px;">
-        <li>This code expires in <strong>5 minutes</strong></li>
-        <li>Do not share this code with anyone</li>
-        <li>If you didn't request this code, please ignore this email</li>
-      </ul>
-    </div>
-    
-    <p>If you didn't request this code, you can safely ignore this email.</p>
-    
-    <div class="footer">
-      <p>This is an automated email. Please do not reply.</p>
-      <p>&copy; ${new Date().getFullYear()} Clinifly. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>
-  `;
+  if (!fromEmail) {
+    console.error(`[sendOTPEmail] ❌ SMTP_FROM not set!`);
+    throw new Error("SMTP_FROM not set");
+  }
 
-  const textTemplate = `
-Clinifly - Email Verification Code
-
-Hello,
-
-You requested a login code for your Clinifly account.
-
-Your OTP code is: ${otpCode}
-
-This code expires in 5 minutes. Do not share this code with anyone.
-
-If you didn't request this code, you can safely ignore this email.
-
----
-This is an automated email. Please do not reply.
-© ${new Date().getFullYear()} Clinifly. All rights reserved.
-  `;
-
-  const mailOptions = {
-    from: SMTP_FROM,
-    to: email,
-    subject: "Clinifly - Your Login Code",
-    text: textTemplate,
-    html: htmlTemplate,
+  const payload = {
+    sender: {
+      email: fromEmail,
+      name: fromName,
+    },
+    to: [
+      {
+        email,
+      },
+    ],
+    subject: "Clinifly – Doğrulama Kodunuz",
+    htmlContent: `
+      <div style="font-family:Arial,sans-serif">
+        <h2>Clinifly Doğrulama Kodu</h2>
+        <p>Giriş yapmak için aşağıdaki kodu kullanın:</p>
+        <h1 style="letter-spacing:4px">${otpCode}</h1>
+        <p>Bu kod 10 dakika geçerlidir.</p>
+      </div>
+    `,
   };
 
-  console.log(`[OTP] Sending email to ${email} from ${SMTP_FROM}...`);
-  console.log(`[OTP] SMTP config: host=${SMTP_HOST}, port=${SMTP_PORT}, user=${SMTP_USER ? SMTP_USER.substring(0, 3) + '***' : 'NOT_SET'}`);
-  
+  console.log(`[sendOTPEmail] Calling Brevo API: https://api.brevo.com/v3/smtp/email`);
+  console.log(`[sendOTPEmail] Payload:`, JSON.stringify(payload).substring(0, 200));
+
   try {
-    const info = await emailTransporter.sendMail(mailOptions);
-    console.log(`[OTP] Email sent successfully to ${email}`);
-    console.log(`[OTP] Message ID: ${info.messageId}`);
-    console.log(`[OTP] Response: ${info.response}`);
-    return info;
-  } catch (smtpError) {
-    console.error(`[OTP] SMTP Error sending to ${email}:`, smtpError.message);
-    console.error(`[OTP] SMTP Error code:`, smtpError.code);
-    console.error(`[OTP] SMTP Error response:`, smtpError.response);
-    throw smtpError;
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    console.log(`[sendOTPEmail] Brevo API response status: ${response.status}`);
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[sendOTPEmail] ❌ Brevo API error ${response.status}: ${text}`);
+      throw new Error(`Brevo API error ${response.status}: ${text}`);
+    }
+
+    const result = await response.json();
+    console.log(`[sendOTPEmail] ✅ Email sent successfully via Brevo API`);
+    console.log(`[sendOTPEmail] Brevo response:`, JSON.stringify(result).substring(0, 200));
+    return result;
+  } catch (error) {
+    console.error(`[sendOTPEmail] ❌ Error sending email via Brevo API:`, error.message);
+    throw error;
   }
 }
 
@@ -1223,31 +1150,23 @@ app.post("/api/register", async (req, res) => {
     await saveOTP(emailNormalized, otpCode, 0);
     console.log(`[REGISTER] OTP saved to file`);
     
-    // FIRE-AND-FORGET: Send email WITHOUT waiting
-    // This prevents SMTP timeout from blocking the response
+    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
+    // This prevents API timeout from blocking the response
     console.log(`[REGISTER] ========================================`);
-    console.log(`[REGISTER] EMAIL SEND DECISION POINT`);
-    console.log(`[REGISTER] emailTransporter exists: ${!!emailTransporter}`);
-    console.log(`[REGISTER] SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
-    console.log(`[REGISTER] SMTP_USER: ${SMTP_USER ? 'SET' : 'NOT SET'}`);
-    console.log(`[REGISTER] SMTP_PASS: ${SMTP_PASS ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER] EMAIL SEND DECISION POINT (Brevo REST API)`);
+    console.log(`[REGISTER] BREVO_API_KEY: ${process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER] SMTP_FROM: ${process.env.SMTP_FROM || 'NOT SET'}`);
     console.log(`[REGISTER] ========================================`);
     
-    if (emailTransporter) {
-      console.log(`[REGISTER] ✅ emailTransporter EXISTS - calling sendOTPEmail NOW`);
-      sendOTPEmail(emailNormalized, otpCode)
-        .then(() => {
-          console.log(`[REGISTER] ✅ OTP email sent successfully to ${emailNormalized}`);
-        })
-        .catch((emailError) => {
-          console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
-          // Email failed but registration succeeded - user can request OTP again
-        });
-      console.log(`[REGISTER] sendOTPEmail called (fire-and-forget)`);
-    } else {
-      console.error("[REGISTER] ❌ emailTransporter is NULL - cannot send email!");
-      console.error("[REGISTER] Check SMTP_HOST, SMTP_USER, SMTP_PASS environment variables");
-    }
+    console.log(`[REGISTER] Calling sendOTPEmail (fire-and-forget)`);
+    sendOTPEmail(emailNormalized, otpCode)
+      .then(() => {
+        console.log(`[REGISTER] ✅ OTP email sent successfully to ${emailNormalized}`);
+      })
+      .catch((emailError) => {
+        console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
+        // Email failed but registration succeeded - user can request OTP again
+      });
     
     // Return success IMMEDIATELY - don't wait for email
     console.log(`[REGISTER] Returning success response for patient ${patientId}`);
@@ -1500,31 +1419,23 @@ app.post("/api/patient/register", async (req, res) => {
     await saveOTP(emailNormalized, otpCode, 0);
     console.log(`[REGISTER /api/patient/register] OTP saved to file`);
     
-    // FIRE-AND-FORGET: Send email WITHOUT waiting
-    // This prevents SMTP timeout from blocking the response
+    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
+    // This prevents API timeout from blocking the response
     console.log(`[REGISTER /api/patient/register] ========================================`);
-    console.log(`[REGISTER /api/patient/register] EMAIL SEND DECISION POINT`);
-    console.log(`[REGISTER /api/patient/register] emailTransporter exists: ${!!emailTransporter}`);
-    console.log(`[REGISTER /api/patient/register] SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
-    console.log(`[REGISTER /api/patient/register] SMTP_USER: ${SMTP_USER ? 'SET' : 'NOT SET'}`);
-    console.log(`[REGISTER /api/patient/register] SMTP_PASS: ${SMTP_PASS ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER /api/patient/register] EMAIL SEND DECISION POINT (Brevo REST API)`);
+    console.log(`[REGISTER /api/patient/register] BREVO_API_KEY: ${process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER /api/patient/register] SMTP_FROM: ${process.env.SMTP_FROM || 'NOT SET'}`);
     console.log(`[REGISTER /api/patient/register] ========================================`);
     
-    if (emailTransporter) {
-      console.log(`[REGISTER /api/patient/register] ✅ emailTransporter EXISTS - calling sendOTPEmail NOW`);
-      sendOTPEmail(emailNormalized, otpCode)
-        .then(() => {
-          console.log(`[REGISTER /api/patient/register] ✅ OTP email sent successfully to ${emailNormalized}`);
-        })
-        .catch((emailError) => {
-          console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
-          // Email failed but registration succeeded - user can request OTP again
-        });
-      console.log(`[REGISTER /api/patient/register] sendOTPEmail called (fire-and-forget)`);
-    } else {
-      console.error("[REGISTER /api/patient/register] ❌ emailTransporter is NULL - cannot send email!");
-      console.error("[REGISTER /api/patient/register] Check SMTP_HOST, SMTP_USER, SMTP_PASS environment variables");
-    }
+    console.log(`[REGISTER /api/patient/register] Calling sendOTPEmail (fire-and-forget)`);
+    sendOTPEmail(emailNormalized, otpCode)
+      .then(() => {
+        console.log(`[REGISTER /api/patient/register] ✅ OTP email sent successfully to ${emailNormalized}`);
+      })
+      .catch((emailError) => {
+        console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
+        // Email failed but registration succeeded - user can request OTP again
+      });
     
     // Return success IMMEDIATELY - don't wait for email
     console.log(`[REGISTER /api/patient/register] Returning success response for patient ${patientId}`);
@@ -1730,29 +1641,26 @@ app.post("/auth/request-otp", async (req, res) => {
     // Also save under email key for backward compatibility if needed
     await saveOTP(emailNormalized, otpCode, 0);
     
-    // FIRE-AND-FORGET: Send email WITHOUT waiting
-    // This prevents SMTP timeout from blocking the response
+    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
+    // This prevents API timeout from blocking the response
     console.log("[OTP] ========================================");
-    console.log("[OTP] EMAIL SEND DECISION POINT");
-    console.log("[OTP] emailTransporter exists: " + !!emailTransporter);
+    console.log("[OTP] EMAIL SEND DECISION POINT (Brevo REST API)");
+    console.log("[OTP] BREVO_API_KEY: " + (process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'));
+    console.log("[OTP] SMTP_FROM: " + (process.env.SMTP_FROM || 'NOT SET'));
     console.log("[OTP] Email:", emailNormalized);
     console.log("[OTP] OTP Code:", otpCode);
     console.log("[OTP] ========================================");
     
-    if (emailTransporter) {
-      console.log("[OTP] ✅ emailTransporter EXISTS - calling sendOTPEmail (fire-and-forget)");
-      sendOTPEmail(emailNormalized, otpCode)
-        .then(() => {
-          console.log("[OTP] ✅ sendOTPEmail completed successfully!");
-          console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
-        })
-        .catch((emailError) => {
-          console.error("[OTP] ❌ Failed to send email:", emailError.message);
-          // Email failed but OTP is saved - user can request again
-        });
-    } else {
-      console.error("[OTP] ❌ emailTransporter is NULL - cannot send email!");
-    }
+    console.log("[OTP] Calling sendOTPEmail (fire-and-forget)");
+    sendOTPEmail(emailNormalized, otpCode)
+      .then(() => {
+        console.log("[OTP] ✅ sendOTPEmail completed successfully!");
+        console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
+      })
+      .catch((emailError) => {
+        console.error("[OTP] ❌ Failed to send email:", emailError.message);
+        // Email failed but OTP is saved - user can request again
+      });
     
     // Return success IMMEDIATELY - don't wait for email
     console.log("[OTP] Returning success response immediately");
