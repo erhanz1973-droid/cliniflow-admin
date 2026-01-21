@@ -379,7 +379,15 @@ function cleanupExpiredOTPs() {
  * Send OTP email using Brevo SMTP
  */
 async function sendOTPEmail(email, otpCode) {
+  console.log(`[sendOTPEmail] ========================================`);
+  console.log(`[sendOTPEmail] FUNCTION CALLED`);
+  console.log(`[sendOTPEmail] email: ${email}`);
+  console.log(`[sendOTPEmail] otpCode: ${otpCode}`);
+  console.log(`[sendOTPEmail] emailTransporter exists: ${!!emailTransporter}`);
+  console.log(`[sendOTPEmail] ========================================`);
+  
   if (!emailTransporter) {
+    console.error(`[sendOTPEmail] ❌ SMTP NOT CONFIGURED - emailTransporter is null!`);
     throw new Error("SMTP not configured");
   }
 
@@ -1217,8 +1225,16 @@ app.post("/api/register", async (req, res) => {
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting
     // This prevents SMTP timeout from blocking the response
+    console.log(`[REGISTER] ========================================`);
+    console.log(`[REGISTER] EMAIL SEND DECISION POINT`);
+    console.log(`[REGISTER] emailTransporter exists: ${!!emailTransporter}`);
+    console.log(`[REGISTER] SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
+    console.log(`[REGISTER] SMTP_USER: ${SMTP_USER ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER] SMTP_PASS: ${SMTP_PASS ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER] ========================================`);
+    
     if (emailTransporter) {
-      console.log(`[REGISTER] Starting fire-and-forget email send to ${emailNormalized}`);
+      console.log(`[REGISTER] ✅ emailTransporter EXISTS - calling sendOTPEmail NOW`);
       sendOTPEmail(emailNormalized, otpCode)
         .then(() => {
           console.log(`[REGISTER] ✅ OTP email sent successfully to ${emailNormalized}`);
@@ -1227,8 +1243,10 @@ app.post("/api/register", async (req, res) => {
           console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
           // Email failed but registration succeeded - user can request OTP again
         });
+      console.log(`[REGISTER] sendOTPEmail called (fire-and-forget)`);
     } else {
-      console.warn("[REGISTER] ⚠️ SMTP not configured - OTP not sent");
+      console.error("[REGISTER] ❌ emailTransporter is NULL - cannot send email!");
+      console.error("[REGISTER] Check SMTP_HOST, SMTP_USER, SMTP_PASS environment variables");
     }
     
     // Return success IMMEDIATELY - don't wait for email
@@ -1484,8 +1502,16 @@ app.post("/api/patient/register", async (req, res) => {
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting
     // This prevents SMTP timeout from blocking the response
+    console.log(`[REGISTER /api/patient/register] ========================================`);
+    console.log(`[REGISTER /api/patient/register] EMAIL SEND DECISION POINT`);
+    console.log(`[REGISTER /api/patient/register] emailTransporter exists: ${!!emailTransporter}`);
+    console.log(`[REGISTER /api/patient/register] SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
+    console.log(`[REGISTER /api/patient/register] SMTP_USER: ${SMTP_USER ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER /api/patient/register] SMTP_PASS: ${SMTP_PASS ? 'SET' : 'NOT SET'}`);
+    console.log(`[REGISTER /api/patient/register] ========================================`);
+    
     if (emailTransporter) {
-      console.log(`[REGISTER /api/patient/register] Starting fire-and-forget email send to ${emailNormalized}`);
+      console.log(`[REGISTER /api/patient/register] ✅ emailTransporter EXISTS - calling sendOTPEmail NOW`);
       sendOTPEmail(emailNormalized, otpCode)
         .then(() => {
           console.log(`[REGISTER /api/patient/register] ✅ OTP email sent successfully to ${emailNormalized}`);
@@ -1494,8 +1520,10 @@ app.post("/api/patient/register", async (req, res) => {
           console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
           // Email failed but registration succeeded - user can request OTP again
         });
+      console.log(`[REGISTER /api/patient/register] sendOTPEmail called (fire-and-forget)`);
     } else {
-      console.warn("[REGISTER /api/patient/register] ⚠️ SMTP not configured - OTP not sent");
+      console.error("[REGISTER /api/patient/register] ❌ emailTransporter is NULL - cannot send email!");
+      console.error("[REGISTER /api/patient/register] Check SMTP_HOST, SMTP_USER, SMTP_PASS environment variables");
     }
     
     // Return success IMMEDIATELY - don't wait for email
@@ -6589,6 +6617,13 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[ENV DEBUG]`);
   console.log(`  SUPABASE_URL: ${process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 40) + '...' : 'NOT SET'}`);
   console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET (' + process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 10) + '...)' : 'NOT SET'}`);
+  console.log(`[SMTP DEBUG]`);
+  console.log(`  SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
+  console.log(`  SMTP_PORT: ${SMTP_PORT}`);
+  console.log(`  SMTP_USER: ${SMTP_USER ? SMTP_USER.substring(0, 5) + '...' : 'NOT SET'}`);
+  console.log(`  SMTP_PASS: ${SMTP_PASS ? 'SET (length: ' + SMTP_PASS.length + ')' : 'NOT SET'}`);
+  console.log(`  SMTP_FROM: ${SMTP_FROM}`);
+  console.log(`  emailTransporter: ${emailTransporter ? 'CREATED' : 'NULL'}`);
   console.log(`========================================\n`);
   
   // Run heavy init AFTER server is listening
