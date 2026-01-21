@@ -367,7 +367,7 @@
       } catch {}
     })();
 
-    const API_BASE = window.API_BASE || 'http://127.0.0.1:5050';
+    const API_BASE = window.API_BASE || window.location.origin || 'https://cliniflow-admin.onrender.com';
 
     // Get patientId from URL params
     const urlParams = new URLSearchParams(window.location.search);

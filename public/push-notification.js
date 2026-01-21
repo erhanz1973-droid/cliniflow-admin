@@ -1,7 +1,7 @@
 // Push Notification Utility
 // This file handles push notification registration and subscription
 
-const API_BASE = window.location.origin || 'http://localhost:5050';
+const API_BASE = window.location.origin || 'https://cliniflow-admin.onrender.com';
 
 /**
  * Get VAPID public key from server

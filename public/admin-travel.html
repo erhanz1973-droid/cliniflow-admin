@@ -422,7 +422,7 @@
 
   const DEFAULT_API_BASE = (location.origin && location.origin.startsWith("http"))
     ? location.origin
-    : "http://127.0.0.1:5050";
+    : "https://cliniflow-admin.onrender.com";
 
   let state = { hotel: null, flights: [], notes: "", airportPickup: null, editPolicy: { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" } };
   const $ = (id) => document.getElementById(id);

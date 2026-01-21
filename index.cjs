@@ -15,6 +15,39 @@ const multer = require("multer");
 const nodemailer = require("nodemailer");
 const procedures = require("./shared/procedures");
 
+// Supabase client
+const {
+  supabase,
+  isSupabaseEnabled,
+  testSupabaseConnection,
+  getClinicByCode,
+  getClinicById,
+  getClinicByEmail,
+  createClinic,
+  updateClinic,
+  getAllClinics,
+  getPatientById,
+  getPatientByPhone,
+  getPatientByEmail,
+  getPatientsByClinic,
+  createPatient,
+  updatePatient,
+  countPatientsByClinic,
+  createOTP: createOTPInDB,
+  getOTPByEmail: getOTPByEmailFromDB,
+  incrementOTPAttempts: incrementOTPAttemptsInDB,
+  markOTPUsed: markOTPUsedInDB,
+  deleteOTP: deleteOTPFromDB,
+  cleanupExpiredOTPs: cleanupExpiredOTPsInDB,
+  createAdminToken: createAdminTokenInDB,
+  getAdminToken: getAdminTokenFromDB,
+  deleteAdminToken: deleteAdminTokenFromDB,
+  createReferral: createReferralInDB,
+  getReferralsByClinic: getReferralsByClinicFromDB,
+  savePushSubscription,
+  getPushSubscriptionsByPatient
+} = require("./lib/supabase");
+
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -101,21 +134,18 @@ const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 const SMTP_FROM = process.env.SMTP_FROM || "noreply@clinifly.com";
 
-// Nodemailer transporter for Brevo SMTP
+// Nodemailer transporter for Brevo SMTP (no async - fast startup)
 let emailTransporter = null;
 if (SMTP_USER && SMTP_PASS) {
   emailTransporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
-    secure: false, // true for 465, false for other ports
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
-    },
+    secure: false,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
   });
-  console.log(`[EMAIL] SMTP configured for ${SMTP_HOST}:${SMTP_PORT}`);
+  console.log(`[EMAIL] ✅ SMTP configured (${SMTP_HOST})`);
 } else {
-  console.warn("[EMAIL] SMTP credentials not configured. OTP emails will not be sent.");
+  console.log("[EMAIL] ⚠️  SMTP not configured");
 }
 
 // ================== PUSH NOTIFICATIONS ==================
@@ -243,37 +273,73 @@ async function verifyOTP(plainOTP, hashedOTP) {
 }
 
 /**
- * Get OTPs for an email
+ * Get OTPs for an email (Supabase version)
  */
-function getOTPsForEmail(email) {
+async function getOTPsForEmail(email) {
+  if (isSupabaseEnabled()) {
+    const otpData = await getOTPByEmailFromDB(email);
+    if (otpData) {
+      return {
+        hashedOTP: otpData.otp_hash,
+        createdAt: new Date(otpData.created_at).getTime(),
+        expiresAt: new Date(otpData.expires_at).getTime(),
+        attempts: otpData.attempts || 0,
+        verified: otpData.used || false,
+        id: otpData.id
+      };
+    }
+    return null;
+  }
+  // File fallback (legacy)
   const otps = readJson(OTP_FILE, {});
   return otps[email.toLowerCase().trim()] || null;
 }
 
 /**
- * Save OTP for an email
+ * Save OTP for an email (Supabase version)
  */
 async function saveOTP(email, otpCode, attempts = 0) {
-  const otps = readJson(OTP_FILE, {});
   const emailKey = email.toLowerCase().trim();
   const hashedOTP = await hashOTP(otpCode);
+  const expiresAt = now() + OTP_EXPIRY_MS;
   
+  if (isSupabaseEnabled()) {
+    await createOTPInDB(emailKey, hashedOTP, expiresAt);
+    return {
+      hashedOTP,
+      createdAt: now(),
+      expiresAt,
+      attempts,
+      verified: false,
+    };
+  }
+  
+  // File fallback (legacy)
+  const otps = readJson(OTP_FILE, {});
   otps[emailKey] = {
     hashedOTP,
     createdAt: now(),
-    expiresAt: now() + OTP_EXPIRY_MS,
-    attempts: attempts,
+    expiresAt,
+    attempts,
     verified: false,
   };
-  
   writeJson(OTP_FILE, otps);
   return otps[emailKey];
 }
 
 /**
- * Increment OTP attempt count
+ * Increment OTP attempt count (Supabase version)
  */
-function incrementOTPAttempt(email) {
+async function incrementOTPAttempt(email) {
+  if (isSupabaseEnabled()) {
+    const otpData = await getOTPByEmailFromDB(email);
+    if (otpData && otpData.id) {
+      await incrementOTPAttemptsInDB(otpData.id);
+    }
+    return;
+  }
+  
+  // File fallback (legacy)
   const otps = readJson(OTP_FILE, {});
   const emailKey = email.toLowerCase().trim();
   if (otps[emailKey]) {
@@ -283,9 +349,18 @@ function incrementOTPAttempt(email) {
 }
 
 /**
- * Mark OTP as verified and invalidate it
+ * Mark OTP as verified and invalidate it (Supabase version)
  */
-function markOTPVerified(email) {
+async function markOTPVerified(email) {
+  if (isSupabaseEnabled()) {
+    const otpData = await getOTPByEmailFromDB(email);
+    if (otpData && otpData.id) {
+      await markOTPUsedInDB(otpData.id);
+    }
+    return;
+  }
+  
+  // File fallback (legacy)
   const otps = readJson(OTP_FILE, {});
   const emailKey = email.toLowerCase().trim();
   if (otps[emailKey]) {
@@ -296,17 +371,23 @@ function markOTPVerified(email) {
 }
 
 /**
- * Clean up expired OTPs (optional cleanup function)
+ * Clean up expired OTPs (Supabase version)
  */
-function cleanupExpiredOTPs() {
+async function cleanupExpiredOTPs() {
+  if (isSupabaseEnabled()) {
+    await cleanupExpiredOTPsInDB();
+    return;
+  }
+  
+  // File fallback (legacy)
   const otps = readJson(OTP_FILE, {});
   const nowTime = now();
   let cleaned = false;
   
-  for (const email in otps) {
-    const otpData = otps[email];
+  for (const emailAddr in otps) {
+    const otpData = otps[emailAddr];
     if (otpData.expiresAt < nowTime || otpData.verified) {
-      delete otps[email];
+      delete otps[emailAddr];
       cleaned = true;
     }
   }
@@ -444,8 +525,21 @@ This is an automated email. Please do not reply.
     html: htmlTemplate,
   };
 
-  await emailTransporter.sendMail(mailOptions);
-  console.log(`[OTP] Email sent to ${email}`);
+  console.log(`[OTP] Sending email to ${email} from ${SMTP_FROM}...`);
+  console.log(`[OTP] SMTP config: host=${SMTP_HOST}, port=${SMTP_PORT}, user=${SMTP_USER ? SMTP_USER.substring(0, 3) + '***' : 'NOT_SET'}`);
+  
+  try {
+    const info = await emailTransporter.sendMail(mailOptions);
+    console.log(`[OTP] Email sent successfully to ${email}`);
+    console.log(`[OTP] Message ID: ${info.messageId}`);
+    console.log(`[OTP] Response: ${info.response}`);
+    return info;
+  } catch (smtpError) {
+    console.error(`[OTP] SMTP Error sending to ${email}:`, smtpError.message);
+    console.error(`[OTP] SMTP Error code:`, smtpError.code);
+    console.error(`[OTP] SMTP Error response:`, smtpError.response);
+    throw smtpError;
+  }
 }
 
 // Rate limiting: track OTP requests per email
@@ -476,7 +570,7 @@ function checkRateLimit(email) {
 }
 
 // ================== ADMIN AUTH (token-based, allows PENDING) ==================
-function requireAdminToken(req, res, next) {
+async function requireAdminToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -490,8 +584,29 @@ function requireAdminToken(req, res, next) {
     const decoded = jwt.verify(token, JWT_SECRET);
     console.log("[requireAdminToken] Token decoded, clinicCode:", decoded.clinicCode, "clinicId:", decoded.clinicId);
 
-    // Try to find clinic by clinicId first, then by clinicCode
+    // Try to find clinic - Supabase first, then file fallback
     let clinic = null;
+    
+    if (isSupabaseEnabled()) {
+      // Supabase lookup
+      if (decoded.clinicId) {
+        clinic = await getClinicById(decoded.clinicId);
+      }
+      if (!clinic && decoded.clinicCode) {
+        clinic = await getClinicByCode(decoded.clinicCode);
+      }
+      
+      if (clinic) {
+        req.clinicId = clinic.id;
+        req.clinicCode = clinic.clinic_code;
+        req.clinicStatus = clinic.status || "PENDING";
+        req.clinic = clinic; // Full clinic object for convenience
+        console.log("[requireAdminToken] Supabase auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
+        return next();
+      }
+    }
+    
+    // File fallback (legacy)
     const clinics = readJson(CLINICS_FILE, {});
     
     if (decoded.clinicId) {
@@ -507,7 +622,6 @@ function requireAdminToken(req, res, next) {
           const clinicCodeToCheck = c.clinicCode || c.code;
           if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
             clinic = c;
-            // Update decoded.clinicId for consistency
             decoded.clinicId = clinicId;
             break;
           }
@@ -532,7 +646,7 @@ function requireAdminToken(req, res, next) {
     req.clinicId = decoded.clinicId || null;
     req.clinicCode = clinic.clinicCode || clinic.code;
     req.clinicStatus = clinic.status || "PENDING";
-    console.log("[requireAdminToken] Auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
+    console.log("[requireAdminToken] File auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
     next();
   } catch (error) {
     console.error("[requireAdminToken] Auth error:", error.name, error.message);
@@ -544,9 +658,154 @@ function requireAdminToken(req, res, next) {
 }
 
 // ================== HEALTH ==================
+// Ultra simple - no DB, no async - for Render health check
 app.get("/health", (req, res) => {
-  res.setHeader("X-CLINIFLY-SERVER", "INDEX_CJS_ADMIN_V3");
-  res.json({ ok: true, server: "index.cjs", time: now() });
+  res.status(200).send("OK");
+});
+
+// Detailed health (optional - for debugging)
+app.get("/health/detail", (req, res) => {
+  res.json({ 
+    ok: true, 
+    server: "index.cjs", 
+    time: now(),
+    supabase: isSupabaseEnabled(),
+    smtp: !!emailTransporter
+  });
+});
+
+// ================== PRIVACY POLICY ==================
+app.get("/privacy", (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy - Clinifly</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      line-height: 1.7; color: #333; background: #f8fafc;
+    }
+    .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+    header { text-align: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0; }
+    .logo { font-size: 32px; font-weight: 700; color: #0ea5e9; margin-bottom: 8px; }
+    h1 { font-size: 28px; color: #1e293b; margin-bottom: 8px; }
+    .effective-date { color: #64748b; font-size: 14px; }
+    .card { background: white; border-radius: 12px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    h2 { font-size: 20px; color: #0ea5e9; margin: 32px 0 16px 0; }
+    h2:first-child { margin-top: 0; }
+    p { margin-bottom: 16px; color: #475569; }
+    ul { margin: 16px 0; padding-left: 24px; }
+    li { margin-bottom: 8px; color: #475569; }
+    .highlight { background: #f0f9ff; border-left: 4px solid #0ea5e9; padding: 16px; margin: 20px 0; border-radius: 0 8px 8px 0; }
+    .contact-info { background: #f8fafc; padding: 20px; border-radius: 8px; margin-top: 24px; }
+    .contact-info p { margin-bottom: 8px; }
+    .contact-info a { color: #0ea5e9; text-decoration: none; }
+    .contact-info a:hover { text-decoration: underline; }
+    footer { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; color: #64748b; font-size: 14px; }
+    footer a { color: #0ea5e9; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">Clinifly</div>
+      <h1>Privacy Policy</h1>
+      <p class="effective-date">Effective Date: January 21, 2026</p>
+    </header>
+
+    <div class="card">
+      <h2>1. Introduction</h2>
+      <p>Welcome to Clinifly. We are committed to protecting your personal information and your right to privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and services.</p>
+      
+      <div class="highlight">
+        <p><strong>Summary:</strong> We only collect information necessary to provide our dental health coordination services. Your health data is encrypted and never sold to third parties.</p>
+      </div>
+
+      <h2>2. Information We Collect</h2>
+      <p>We collect information that you provide directly to us:</p>
+      <ul>
+        <li><strong>Account Information:</strong> Name, email address, phone number, and password when you create an account</li>
+        <li><strong>Health Information:</strong> Dental records, X-rays, treatment history, and medical questionnaire responses that you choose to share with your clinic</li>
+        <li><strong>Communication Data:</strong> Messages, photos, and files exchanged through our in-app chat feature</li>
+        <li><strong>Travel Information:</strong> Flight details, hotel bookings, and transfer arrangements coordinated through the app</li>
+        <li><strong>Device Information:</strong> Device type, operating system, and app version for troubleshooting purposes</li>
+      </ul>
+
+      <h2>3. How We Use Your Information</h2>
+      <p>We use the information we collect to:</p>
+      <ul>
+        <li>Facilitate communication between you and your dental clinic</li>
+        <li>Coordinate your treatment plan and appointments</li>
+        <li>Manage your travel arrangements</li>
+        <li>Send you important notifications about your treatment</li>
+        <li>Improve our services and user experience</li>
+        <li>Comply with legal obligations</li>
+      </ul>
+
+      <h2>4. Information Sharing</h2>
+      <p>We share your information only in the following circumstances:</p>
+      <ul>
+        <li><strong>With Your Clinic:</strong> Your health and treatment information is shared with the dental clinic you are registered with</li>
+        <li><strong>Service Providers:</strong> We may share data with trusted third-party service providers who assist in operating our app (e.g., cloud hosting, push notifications)</li>
+        <li><strong>Legal Requirements:</strong> We may disclose information if required by law or to protect our rights</li>
+      </ul>
+      
+      <div class="highlight">
+        <p><strong>We do NOT:</strong> Sell your personal information to advertisers or data brokers. Your health data remains between you and your clinic.</p>
+      </div>
+
+      <h2>5. Data Security</h2>
+      <p>We implement appropriate technical and organizational measures to protect your personal information:</p>
+      <ul>
+        <li>All data is transmitted using SSL/TLS encryption</li>
+        <li>Health records are stored in encrypted databases</li>
+        <li>Access to personal data is restricted to authorized personnel only</li>
+        <li>Regular security audits and updates</li>
+      </ul>
+
+      <h2>6. Data Retention</h2>
+      <p>We retain your personal information for as long as your account is active or as needed to provide you services. You may request deletion of your account and associated data at any time by contacting us.</p>
+
+      <h2>7. Your Rights</h2>
+      <p>Depending on your location, you may have the following rights:</p>
+      <ul>
+        <li><strong>Access:</strong> Request a copy of your personal data</li>
+        <li><strong>Correction:</strong> Request correction of inaccurate data</li>
+        <li><strong>Deletion:</strong> Request deletion of your personal data</li>
+        <li><strong>Portability:</strong> Request transfer of your data to another service</li>
+        <li><strong>Withdraw Consent:</strong> Withdraw consent for data processing at any time</li>
+      </ul>
+
+      <h2>8. Children's Privacy</h2>
+      <p>Our services are not intended for children under 16 years of age. We do not knowingly collect personal information from children under 16. If you are a parent or guardian and believe your child has provided us with personal information, please contact us.</p>
+
+      <h2>9. International Data Transfers</h2>
+      <p>Your information may be transferred to and processed in countries other than your country of residence. We ensure appropriate safeguards are in place to protect your information in accordance with this Privacy Policy.</p>
+
+      <h2>10. Changes to This Policy</h2>
+      <p>We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page and updating the "Effective Date" above. You are advised to review this Privacy Policy periodically.</p>
+
+      <h2>11. Contact Us</h2>
+      <p>If you have any questions about this Privacy Policy or our data practices, please contact us:</p>
+      
+      <div class="contact-info">
+        <p><strong>Clinifly</strong></p>
+        <p>Website: <a href="https://clinifly.net">https://clinifly.net</a></p>
+        <p>Email: <a href="mailto:privacy@clinifly.net">privacy@clinifly.net</a></p>
+      </div>
+    </div>
+
+    <footer>
+      <p>&copy; 2026 Clinifly. All rights reserved.</p>
+      <p><a href="https://clinifly.net">Back to Clinifly</a></p>
+    </footer>
+  </div>
+</body>
+</html>`);
 });
 
 // ================== DASHBOARD REDIRECTS ==================
@@ -729,24 +988,36 @@ app.post("/api/register", async (req, res) => {
 
   // Validate clinic code if provided
   let validatedClinicCode = null;
+  let foundClinicId = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
     let foundClinic = null;
     
     console.log(`[REGISTER] Validating clinic code: ${code}`);
     
-    // First check CLINIC_FILE (single clinic object)
-    const singleClinic = readJson(CLINIC_FILE, {});
-    if (singleClinic && singleClinic.clinicCode) {
-      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-      console.log(`[REGISTER] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
-      if (singleClinicCode === code) {
-        foundClinic = singleClinic;
-        console.log(`[REGISTER] Found matching clinic in CLINIC_FILE`);
+    // SUPABASE: Primary lookup
+    if (isSupabaseEnabled()) {
+      foundClinic = await getClinicByCode(code);
+      if (foundClinic) {
+        foundClinicId = foundClinic.id;
+        console.log(`[REGISTER] Found clinic in Supabase: ${foundClinic.id}`);
       }
     }
     
-    // Then check CLINICS_FILE (multiple clinics object)
+    // FILE FALLBACK: First check CLINIC_FILE (single clinic object)
+    if (!foundClinic) {
+      const singleClinic = readJson(CLINIC_FILE, {});
+      if (singleClinic && singleClinic.clinicCode) {
+        const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
+        console.log(`[REGISTER] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+        if (singleClinicCode === code) {
+          foundClinic = singleClinic;
+          console.log(`[REGISTER] Found matching clinic in CLINIC_FILE`);
+        }
+      }
+    }
+    
+    // FILE FALLBACK: Then check CLINICS_FILE (multiple clinics object)
     if (!foundClinic) {
       const clinics = readJson(CLINICS_FILE, {});
       console.log(`[REGISTER] Available clinics count in CLINICS_FILE: ${Object.keys(clinics).length}`);
@@ -762,6 +1033,7 @@ app.post("/api/register", async (req, res) => {
             console.log(`[REGISTER] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
             if (clinicCodeUpper === code) {
               foundClinic = clinic;
+              foundClinicId = clinicId;
               console.log(`[REGISTER] Found matching clinic in CLINICS_FILE: ${clinicId}`);
               break;
             }
@@ -775,7 +1047,7 @@ app.post("/api/register", async (req, res) => {
       console.log(`[REGISTER] Using existing clinic: ${code}`);
     } else {
       // Clinic not found - return error
-      console.log(`[REGISTER] Clinic code "${code}" not found in CLINIC_FILE or CLINICS_FILE`);
+      console.log(`[REGISTER] Clinic code "${code}" not found in Supabase, CLINIC_FILE or CLINICS_FILE`);
       return res.status(404).json({ 
         ok: false, 
         error: "clinic_not_found",
@@ -4621,7 +4893,7 @@ function requireAdminAuth(req, res, next) {
 }
 
 // POST /api/admin/register
-// Clinic registration (email/password)
+// Clinic registration (email/password) - Supabase supported
 app.post("/api/admin/register", async (req, res) => {
   try {
     const { email, password, name, phone, address, clinicCode } = req.body || {};
@@ -4640,7 +4912,7 @@ app.post("/api/admin/register", async (req, res) => {
     }
     
     // Validate clinic code format: minimum 3 characters, only letters and numbers
-    const clinicCodeTrimmed = String(clinicCode).trim();
+    const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
     if (clinicCodeTrimmed.length < 3) {
       return res.status(400).json({ ok: false, error: "clinic_code_too_short", message: "Clinic code must be at least 3 characters." });
     }
@@ -4650,8 +4922,93 @@ app.post("/api/admin/register", async (req, res) => {
       return res.status(400).json({ ok: false, error: "clinic_code_invalid", message: "Clinic code can only contain letters and numbers." });
     }
     
-    const clinics = readJson(CLINICS_FILE, {});
     const emailLower = String(email).trim().toLowerCase();
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(String(password), 10);
+    
+    // SUPABASE: Primary storage
+    if (isSupabaseEnabled()) {
+      console.log("[ADMIN REGISTER] ========================================");
+      console.log("[ADMIN REGISTER] Using Supabase for clinic registration");
+      console.log("[ADMIN REGISTER] Clinic code:", clinicCodeTrimmed);
+      console.log("[ADMIN REGISTER] Email:", emailLower);
+      console.log("[ADMIN REGISTER] Name:", String(name).trim());
+      console.log("[ADMIN REGISTER] ========================================");
+      
+      // Check if email already exists
+      console.log("[ADMIN REGISTER] Checking if email exists...");
+      const existingByEmail = await getClinicByEmail(emailLower);
+      if (existingByEmail) {
+        console.log("[ADMIN REGISTER] Email already exists:", existingByEmail.id);
+        return res.status(400).json({ ok: false, error: "email_exists" });
+      }
+      console.log("[ADMIN REGISTER] Email is available");
+      
+      // Check if clinicCode already exists
+      console.log("[ADMIN REGISTER] Checking if clinic code exists...");
+      const existingByCode = await getClinicByCode(clinicCodeTrimmed);
+      if (existingByCode) {
+        console.log("[ADMIN REGISTER] Clinic code already exists:", existingByCode.id);
+        return res.status(400).json({ ok: false, error: "clinic_code_exists" });
+      }
+      console.log("[ADMIN REGISTER] Clinic code is available");
+      
+      // Create clinic in Supabase
+      console.log("[ADMIN REGISTER] Inserting clinic into Supabase...");
+      try {
+        const newClinic = await createClinic({
+          clinic_code: clinicCodeTrimmed,
+          email: emailLower,
+          password_hash: hashedPassword,
+          name: String(name).trim(),
+          phone: String(phone || "").trim(),
+          address: String(address || "").trim(),
+          plan: "FREE",
+          max_patients: 3,
+          settings: {
+            status: "ACTIVE",
+            subscriptionStatus: "TRIAL",
+            subscriptionPlan: null,
+            verificationStatus: "verified",
+            trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000),
+          }
+        });
+        
+        if (!newClinic || !newClinic.id) {
+          console.error("[ADMIN REGISTER] ❌ createClinic returned null or no id!");
+          throw new Error("Failed to create clinic - no data returned");
+        }
+        
+        // Generate JWT token
+        const token = jwt.sign({ clinicId: newClinic.id, clinicCode: newClinic.clinic_code }, JWT_SECRET, {
+          expiresIn: JWT_EXPIRES_IN,
+        });
+        
+        console.log("[ADMIN REGISTER] ========================================");
+        console.log("[ADMIN REGISTER] ✅ SUCCESS - Clinic created in Supabase!");
+        console.log("[ADMIN REGISTER] Clinic ID:", newClinic.id);
+        console.log("[ADMIN REGISTER] Clinic Code:", newClinic.clinic_code);
+        console.log("[ADMIN REGISTER] ========================================");
+        
+        return res.json({
+          ok: true,
+          clinicId: newClinic.id,
+          clinicCode: newClinic.clinic_code,
+          token,
+          status: "ACTIVE",
+          subscriptionStatus: "TRIAL",
+        });
+      } catch (supabaseError) {
+        console.error("[ADMIN REGISTER] ❌ Supabase insert FAILED:", supabaseError.message);
+        console.error("[ADMIN REGISTER] Full error:", JSON.stringify(supabaseError));
+        throw supabaseError;
+      }
+    }
+    
+    // FILE FALLBACK: Legacy storage
+    console.log("[ADMIN REGISTER] Using file storage (fallback)...");
+    const clinics = readJson(CLINICS_FILE, {});
     
     // Check if email already exists
     for (const id in clinics) {
@@ -4664,13 +5021,10 @@ app.post("/api/admin/register", async (req, res) => {
     // Check if clinicCode already exists
     for (const id in clinics) {
       const existingCode = clinics[id]?.clinicCode || clinics[id]?.code;
-      if (existingCode && String(existingCode).trim().toUpperCase() === String(clinicCode).trim().toUpperCase()) {
+      if (existingCode && String(existingCode).trim().toUpperCase() === clinicCodeTrimmed) {
         return res.status(400).json({ ok: false, error: "clinic_code_exists" });
       }
     }
-    
-    // Hash password
-    const hashedPassword = await bcrypt.hash(String(password), 10);
     
     // Create clinic
     const clinicId = rid("clinic");
@@ -4681,14 +5035,14 @@ app.post("/api/admin/register", async (req, res) => {
       name: String(name).trim(),
       phone: String(phone || "").trim(),
       address: String(address || "").trim(),
-      clinicCode: String(clinicCode).trim().toUpperCase(),
+      clinicCode: clinicCodeTrimmed,
       plan: "FREE",
       max_patients: 3,
-      status: "ACTIVE", // ACTIVE by default - payment = verification
-      subscriptionStatus: "TRIAL", // TRIAL, ACTIVE, EXPIRED, CANCELLED
-      subscriptionPlan: null, // BASIC, PROFESSIONAL, ENTERPRISE
-      verificationStatus: "verified", // verified = payment completed
-      trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000), // 14 days trial
+      status: "ACTIVE",
+      subscriptionStatus: "TRIAL",
+      subscriptionPlan: null,
+      verificationStatus: "verified",
+      trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000),
       createdAt: now(),
       updatedAt: now(),
     };
@@ -4716,8 +5070,8 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 // POST /api/admin/login
-// Clinic login (clinic code + password)
-// Supports both CLINIC_FILE (single clinic) and CLINICS_FILE (multiple clinics)
+// Clinic login (clinic code + password) - Supabase supported
+// Supports both Supabase, CLINIC_FILE (single clinic) and CLINICS_FILE (multiple clinics)
 app.post("/api/admin/login", async (req, res) => {
   try {
     const { clinicCode, password } = req.body || {};
@@ -4731,6 +5085,47 @@ app.post("/api/admin/login", async (req, res) => {
     }
     
     const code = String(clinicCode).trim().toUpperCase();
+    
+    // SUPABASE: Primary lookup
+    if (isSupabaseEnabled()) {
+      console.log("[ADMIN LOGIN] Using Supabase for clinic:", code);
+      
+      const clinic = await getClinicByCode(code);
+      
+      if (clinic) {
+        // Verify password
+        const passwordMatch = await bcrypt.compare(String(password).trim(), clinic.password_hash);
+        if (!passwordMatch) {
+          return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+        }
+        
+        // Generate JWT token
+        const token = jwt.sign(
+          { 
+            clinicCode: clinic.clinic_code, 
+            clinicId: clinic.id,
+            type: "admin" 
+          },
+          JWT_SECRET,
+          { expiresIn: JWT_EXPIRES_IN }
+        );
+        
+        console.log("[ADMIN LOGIN] Supabase login successful for:", clinic.clinic_code);
+        
+        return res.json({
+          ok: true,
+          token,
+          clinicCode: clinic.clinic_code,
+          clinicId: clinic.id,
+          clinicName: clinic.name || "Clinic",
+          status: clinic.settings?.status || "ACTIVE",
+        });
+      }
+      
+      console.log("[ADMIN LOGIN] Clinic not found in Supabase, trying file fallback...");
+    }
+    
+    // FILE FALLBACK: Legacy storage
     let foundClinic = null;
     let foundClinicId = null;
     let isFromClinicsFile = false;
@@ -4762,7 +5157,7 @@ app.post("/api/admin/login", async (req, res) => {
       }
     }
     
-    // If clinic not found
+    // If clinic not found anywhere
     if (!foundClinic) {
       return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
     }
@@ -4779,14 +5174,12 @@ app.post("/api/admin/login", async (req, res) => {
       foundClinic.password = hashedPassword;
       
       if (isFromClinicsFile) {
-        // Update in CLINICS_FILE
         const clinics = readJson(CLINICS_FILE, {});
         if (clinics[foundClinicId]) {
           clinics[foundClinicId].password = hashedPassword;
           writeJson(CLINICS_FILE, clinics);
         }
       } else {
-        // Update in CLINIC_FILE
         writeJson(CLINIC_FILE, foundClinic);
       }
     } else {
@@ -6075,13 +6468,53 @@ app.post("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req
 });
 
 
+// ================== POST-BOOT INIT ==================
+// Heavy async operations run AFTER server starts
+async function postBootInit() {
+  console.log("\n🧠 Post-boot init starting...");
+  
+  try {
+    // Test Supabase connection
+    if (isSupabaseEnabled()) {
+      await testSupabaseConnection();
+    } else {
+      console.log("[POST-BOOT] Supabase not configured - using file storage");
+    }
+    
+    // Verify SMTP
+    if (emailTransporter) {
+      emailTransporter.verify((error, success) => {
+        if (error) {
+          console.error("[POST-BOOT] ❌ SMTP verify failed:", error.message);
+        } else {
+          console.log("[POST-BOOT] ✅ SMTP ready to send emails");
+        }
+      });
+    } else {
+      console.log("[POST-BOOT] ⚠️  SMTP not configured - emails disabled");
+    }
+    
+  } catch (e) {
+    console.error("[POST-BOOT] Init error:", e.message);
+  }
+  
+  console.log("🧠 Post-boot init done\n");
+}
+
 // ================== START ==================
-// Render uyumlu: app.listen(process.env.PORT || 3000)
-app.listen(process.env.PORT || 3000, () => {
-  const port = process.env.PORT || 3000;
-  console.log(`✅ Server running on port ${port}`);
-  console.log(`✅ Health (JSON):  http://127.0.0.1:${port}/health`);
-  console.log(`✅ Health (HTML):  http://127.0.0.1:${port}/health.html`);
-  console.log(`✅ Admin:          http://127.0.0.1:${port}/admin.html`);
-  console.log(`✅ Travel:         http://127.0.0.1:${port}/admin-travel.html`);
+// Render uyumlu: Server HEMEN başlar, ağır işler sonra
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`\n========================================`);
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`========================================`);
+  console.log(`📍 Health:   http://0.0.0.0:${PORT}/health`);
+  console.log(`📍 Admin:    http://0.0.0.0:${PORT}/admin.html`);
+  console.log(`📍 Privacy:  http://0.0.0.0:${PORT}/privacy`);
+  console.log(`========================================`);
+  console.log(`🗄️  Database: ${isSupabaseEnabled() ? 'SUPABASE' : 'FILE SYSTEM'}`);
+  console.log(`📧 Email:    ${emailTransporter ? 'SMTP' : 'NOT CONFIGURED'}`);
+  console.log(`========================================\n`);
+  
+  // Run heavy init AFTER server is listening
+  postBootInit();
 });
