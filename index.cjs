@@ -128,24 +128,42 @@ const chatUpload = multer({
 });
 
 // ================== EMAIL OTP CONFIGURATION ==================
-const SMTP_HOST = process.env.SMTP_HOST || "smtp-relay.brevo.com";
-const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
-const SMTP_USER = process.env.SMTP_USER || "";
-const SMTP_PASS = process.env.SMTP_PASS || "";
-const SMTP_FROM = process.env.SMTP_FROM || "noreply@clinifly.com";
+// DEBUG: Log raw ENV values at startup
+console.log("[SMTP DEBUG] RAW ENV VALUES:", {
+  SMTP_HOST: process.env.SMTP_HOST || "MISSING",
+  SMTP_PORT: process.env.SMTP_PORT || "MISSING",
+  SMTP_USER: process.env.SMTP_USER ? "SET (" + process.env.SMTP_USER.substring(0, 5) + "...)" : "MISSING",
+  SMTP_PASS: process.env.SMTP_PASS ? "SET (length: " + process.env.SMTP_PASS.length + ")" : "MISSING",
+  SMTP_FROM: process.env.SMTP_FROM || "MISSING",
+});
+
+// NO fallbacks - use ENV directly
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const SMTP_FROM = process.env.SMTP_FROM || "noreply@clinifly.net";
 
 // Nodemailer transporter for Brevo SMTP (no async - fast startup)
 let emailTransporter = null;
-if (SMTP_USER && SMTP_PASS) {
+
+if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  console.log("[EMAIL] Creating SMTP transporter...");
   emailTransporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
     secure: false,
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    auth: { 
+      user: SMTP_USER, 
+      pass: SMTP_PASS 
+    },
   });
-  console.log(`[EMAIL] ✅ SMTP configured (${SMTP_HOST})`);
+  console.log(`[EMAIL] ✅ SMTP transporter created for ${SMTP_HOST}:${SMTP_PORT}`);
 } else {
-  console.log("[EMAIL] ⚠️  SMTP not configured");
+  console.error("[EMAIL] ❌ SMTP NOT configured - missing credentials:");
+  console.error("[EMAIL]   SMTP_HOST:", SMTP_HOST ? "OK" : "MISSING");
+  console.error("[EMAIL]   SMTP_USER:", SMTP_USER ? "OK" : "MISSING");
+  console.error("[EMAIL]   SMTP_PASS:", SMTP_PASS ? "OK" : "MISSING");
 }
 
 // ================== PUSH NOTIFICATIONS ==================
@@ -579,74 +597,69 @@ async function requireAdminToken(req, res, next) {
     }
 
     const token = authHeader.substring(7);
-    console.log("[requireAdminToken] Token received, length:", token.length, "starts with:", token.substring(0, 10));
-    
     const decoded = jwt.verify(token, JWT_SECRET);
-    console.log("[requireAdminToken] Token decoded, clinicCode:", decoded.clinicCode, "clinicId:", decoded.clinicId);
-
-    // Try to find clinic - Supabase first, then file fallback
-    let clinic = null;
     
+    // clinicCode is the PRIMARY key - NOT clinicId
+    const clinicCode = decoded.clinicCode;
+    console.log("[requireAdminToken] Token decoded, clinicCode:", clinicCode);
+
+    if (!clinicCode) {
+      console.error("[requireAdminToken] No clinicCode in token!");
+      return res.status(401).json({ ok: false, error: "invalid_token", message: "Token geçersiz." });
+    }
+
+    // SUPABASE: Primary lookup by clinicCode
     if (isSupabaseEnabled()) {
-      // Supabase lookup
-      if (decoded.clinicId) {
-        clinic = await getClinicById(decoded.clinicId);
-      }
-      if (!clinic && decoded.clinicCode) {
-        clinic = await getClinicByCode(decoded.clinicCode);
-      }
+      const clinic = await getClinicByCode(clinicCode);
       
       if (clinic) {
-        req.clinicId = clinic.id;
-        req.clinicCode = clinic.clinic_code;
-        req.clinicStatus = clinic.status || "PENDING";
-        req.clinic = clinic; // Full clinic object for convenience
-        console.log("[requireAdminToken] Supabase auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
+        req.clinicId = clinic.id;              // Supabase UUID
+        req.clinicCode = clinic.clinic_code;   // e.g. "ORDU"
+        req.clinicStatus = clinic.settings?.status || "ACTIVE";
+        req.clinic = clinic;
+        console.log("[requireAdminToken] ✅ Supabase auth successful for clinic:", req.clinicCode, "(uuid:", req.clinicId, ")");
         return next();
       }
+      
+      console.log("[requireAdminToken] Clinic not found in Supabase, trying file fallback...");
     }
     
-    // File fallback (legacy)
+    // FILE FALLBACK (legacy)
+    const code = String(clinicCode).toUpperCase();
+    let clinic = null;
+    
+    // Check CLINICS_FILE
     const clinics = readJson(CLINICS_FILE, {});
-    
-    if (decoded.clinicId) {
-      clinic = clinics[decoded.clinicId];
-    }
-    
-    // If not found by clinicId, search by clinicCode
-    if (!clinic && decoded.clinicCode) {
-      const code = String(decoded.clinicCode).toUpperCase();
-      for (const clinicId in clinics) {
-        const c = clinics[clinicId];
-        if (c) {
-          const clinicCodeToCheck = c.clinicCode || c.code;
-          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
-            clinic = c;
-            decoded.clinicId = clinicId;
-            break;
-          }
+    for (const cid in clinics) {
+      const c = clinics[cid];
+      if (c) {
+        const cCode = c.clinicCode || c.code;
+        if (cCode && String(cCode).toUpperCase() === code) {
+          clinic = c;
+          clinic._fileId = cid;
+          break;
         }
       }
     }
     
-    // Also check CLINIC_FILE (single clinic) as fallback
-    if (!clinic && decoded.clinicCode) {
+    // Check CLINIC_FILE (single clinic)
+    if (!clinic) {
       const singleClinic = readJson(CLINIC_FILE, {});
-      const code = String(decoded.clinicCode).toUpperCase();
-      if (singleClinic && singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
+      if (singleClinic?.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
         clinic = singleClinic;
       }
     }
     
     if (!clinic) {
-      console.error("[requireAdminToken] Clinic not found, clinicCode:", decoded.clinicCode, "clinicId:", decoded.clinicId);
+      console.error("[requireAdminToken] ❌ Clinic not found by code:", clinicCode);
       return res.status(401).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
     }
 
-    req.clinicId = decoded.clinicId || null;
+    req.clinicId = clinic._fileId || clinic.clinicId || null;
     req.clinicCode = clinic.clinicCode || clinic.code;
     req.clinicStatus = clinic.status || "PENDING";
-    console.log("[requireAdminToken] File auth successful for clinic:", req.clinicCode, "clinicId:", req.clinicId);
+    req.clinic = clinic;
+    console.log("[requireAdminToken] ✅ File auth successful for clinic:", req.clinicCode);
     next();
   } catch (error) {
     console.error("[requireAdminToken] Auth error:", error.name, error.message);
@@ -672,6 +685,63 @@ app.get("/health/detail", (req, res) => {
     supabase: isSupabaseEnabled(),
     smtp: !!emailTransporter
   });
+});
+
+// ================== DEBUG: SMTP TEST ENDPOINT ==================
+// TEMPORARY - Remove after testing
+app.get("/debug/smtp-status", (req, res) => {
+  res.json({
+    configured: !!emailTransporter,
+    env: {
+      SMTP_HOST: process.env.SMTP_HOST ? "SET" : "MISSING",
+      SMTP_PORT: process.env.SMTP_PORT || "MISSING",
+      SMTP_USER: process.env.SMTP_USER ? "SET" : "MISSING",
+      SMTP_PASS: process.env.SMTP_PASS ? "SET" : "MISSING",
+      SMTP_FROM: process.env.SMTP_FROM || "MISSING",
+    }
+  });
+});
+
+app.get("/debug/test-email", async (req, res) => {
+  const testEmail = req.query.to || "test@example.com";
+  
+  if (!emailTransporter) {
+    return res.status(500).json({ 
+      ok: false, 
+      error: "smtp_not_configured",
+      env: {
+        SMTP_HOST: process.env.SMTP_HOST ? "SET" : "MISSING",
+        SMTP_USER: process.env.SMTP_USER ? "SET" : "MISSING",
+        SMTP_PASS: process.env.SMTP_PASS ? "SET" : "MISSING",
+      }
+    });
+  }
+
+  try {
+    console.log("[DEBUG] Sending test email to:", testEmail);
+    const info = await emailTransporter.sendMail({
+      from: SMTP_FROM,
+      to: testEmail,
+      subject: "CLINIFLY SMTP TEST - " + new Date().toISOString(),
+      text: "If you receive this email, SMTP is working correctly!",
+      html: "<h1>SMTP Test</h1><p>If you receive this email, SMTP is working correctly!</p><p>Time: " + new Date().toISOString() + "</p>",
+    });
+    console.log("[DEBUG] Test email sent:", info.messageId);
+    res.json({ 
+      ok: true, 
+      messageId: info.messageId,
+      response: info.response,
+      accepted: info.accepted,
+    });
+  } catch (e) {
+    console.error("[DEBUG] SMTP TEST ERROR:", e);
+    res.status(500).json({ 
+      ok: false, 
+      error: e.message,
+      code: e.code,
+      response: e.response,
+    });
+  }
 });
 
 // ================== PRIVACY POLICY ==================
@@ -1530,10 +1600,16 @@ app.get("/api/me", requireToken, (req, res) => {
 // POST /auth/request-otp
 // Request OTP: takes phone number, finds patient, sends OTP to patient's email
 app.post("/auth/request-otp", async (req, res) => {
+  console.log("[OTP] ========================================");
+  console.log("[OTP] /auth/request-otp endpoint HIT");
+  console.log("[OTP] Request body:", JSON.stringify(req.body));
+  console.log("[OTP] ========================================");
+  
   try {
     const { phone } = req.body || {};
     
     if (!phone || !String(phone).trim()) {
+      console.log("[OTP] ERROR: phone_required");
       return res.status(400).json({ ok: false, error: "phone_required", message: "Telefon numarası gereklidir." });
     }
     
@@ -1568,6 +1644,7 @@ app.post("/auth/request-otp", async (req, res) => {
     }
     
     if (!foundPatient) {
+      console.log("[OTP] ❌ Patient NOT found for phone:", phoneNormalized);
       return res.status(404).json({ 
         ok: false, 
         error: "patient_not_found", 
@@ -1575,7 +1652,10 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
     
+    console.log("[OTP] ✅ Patient found:", foundPatientId, "email:", foundEmail);
+    
     if (!foundEmail || !String(foundEmail).trim()) {
+      console.log("[OTP] ❌ Patient has no email!");
       return res.status(400).json({ 
         ok: false, 
         error: "email_not_found", 
@@ -1602,7 +1682,8 @@ app.post("/auth/request-otp", async (req, res) => {
     
     // Check if SMTP is configured
     if (!emailTransporter) {
-      console.error("[OTP] SMTP not configured");
+      console.error("[OTP] ❌ SMTP not configured - cannot send OTP!");
+      console.error("[OTP] emailTransporter is:", emailTransporter);
       return res.status(500).json({ 
         ok: false, 
         error: "smtp_not_configured", 
@@ -1610,11 +1691,14 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
     
+    console.log("[OTP] ✅ SMTP is configured, proceeding...");
+    
     // Clean up expired OTPs
     cleanupExpiredOTPs();
     
     // Generate OTP
     const otpCode = generateOTP();
+    console.log("[OTP] Generated OTP code:", otpCode, "for email:", emailNormalized);
     
     // Save OTP with phone as key (for lookup) but email for sending
     // We'll store phone-to-email mapping in OTP data
@@ -1639,7 +1723,13 @@ app.post("/auth/request-otp", async (req, res) => {
     
     // Send email
     try {
+      console.log("[OTP] Calling sendOTPEmail...");
+      console.log("[OTP] Email:", emailNormalized);
+      console.log("[OTP] OTP Code:", otpCode);
+      
       await sendOTPEmail(emailNormalized, otpCode);
+      
+      console.log("[OTP] ✅ sendOTPEmail completed successfully!");
       console.log(`[OTP] OTP sent to ${emailNormalized} for phone ${phoneNormalized} (patient ${foundPatientId})`);
       
       res.json({
@@ -4980,8 +5070,8 @@ app.post("/api/admin/register", async (req, res) => {
           throw new Error("Failed to create clinic - no data returned");
         }
         
-        // Generate JWT token
-        const token = jwt.sign({ clinicId: newClinic.id, clinicCode: newClinic.clinic_code }, JWT_SECRET, {
+        // Generate JWT token - ONLY clinicCode
+        const token = jwt.sign({ clinicCode: newClinic.clinic_code, role: "admin" }, JWT_SECRET, {
           expiresIn: JWT_EXPIRES_IN,
         });
         
@@ -5050,8 +5140,8 @@ app.post("/api/admin/register", async (req, res) => {
     clinics[clinicId] = clinic;
     writeJson(CLINICS_FILE, clinics);
     
-    // Generate JWT token
-    const token = jwt.sign({ clinicId, clinicCode: clinic.clinicCode }, JWT_SECRET, {
+    // Generate JWT token - ONLY clinicCode
+    const token = jwt.sign({ clinicCode: clinic.clinicCode, role: "admin" }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
     
@@ -5099,24 +5189,24 @@ app.post("/api/admin/login", async (req, res) => {
           return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
         }
         
-        // Generate JWT token
+        // Generate JWT token - ONLY clinicCode, NO clinicId
+        // UUID will be fetched from Supabase at runtime
         const token = jwt.sign(
           { 
-            clinicCode: clinic.clinic_code, 
-            clinicId: clinic.id,
-            type: "admin" 
+            clinicCode: clinic.clinic_code,
+            role: "admin" 
           },
           JWT_SECRET,
           { expiresIn: JWT_EXPIRES_IN }
         );
         
-        console.log("[ADMIN LOGIN] Supabase login successful for:", clinic.clinic_code);
+        console.log("[ADMIN LOGIN] ✅ Supabase login successful for:", clinic.clinic_code);
         
         return res.json({
           ok: true,
           token,
           clinicCode: clinic.clinic_code,
-          clinicId: clinic.id,
+          clinicId: clinic.id,  // Return for frontend, but NOT in JWT
           clinicName: clinic.name || "Clinic",
           status: clinic.settings?.status || "ACTIVE",
         });
@@ -5190,22 +5280,23 @@ app.post("/api/admin/login", async (req, res) => {
       }
     }
     
-    // Generate JWT token
+    // Generate JWT token - ONLY clinicCode, NO clinicId
     const token = jwt.sign(
       { 
-        clinicCode: code, 
-        clinicId: foundClinicId || foundClinic.clinicId || null,
-        type: "admin" 
+        clinicCode: code,
+        role: "admin" 
       },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
     
+    console.log("[ADMIN LOGIN] ✅ File login successful for:", code);
+    
     res.json({
       ok: true,
       token,
       clinicCode: code,
-      clinicId: foundClinicId || foundClinic.clinicId || null,
+      clinicId: foundClinicId || foundClinic.clinicId || null,  // For frontend only
       clinicName: foundClinic.name || "Clinic",
       status: foundClinic.status || "PENDING",
     });
