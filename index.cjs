@@ -5031,36 +5031,96 @@ app.get("/api/admin/events", requireAdminToken, (req, res) => {
 
 // ================== ADMIN AUTHENTICATION ==================
 // Middleware: Validate admin JWT token
-function requireAdminAuth(req, res, next) {
+async function requireAdminAuth(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("[requireAdminAuth] Missing or invalid auth header");
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     
     const token = authHeader.substring(7);
     const decoded = jwt.verify(token, JWT_SECRET);
     
-    // Verify clinic exists and is not suspended
-    // Payment = Verification - all clinics are ACTIVE by default after registration
+    // New JWT format: clinicCode is primary (not clinicId)
+    const clinicCode = decoded.clinicCode;
+    console.log("[requireAdminAuth] Token decoded, clinicCode:", clinicCode);
+    
+    if (!clinicCode) {
+      console.error("[requireAdminAuth] No clinicCode in token!");
+      return res.status(401).json({ ok: false, error: "invalid_token", message: "Token geçersiz." });
+    }
+    
+    // SUPABASE: Primary lookup by clinicCode
+    if (isSupabaseEnabled()) {
+      const clinic = await getClinicByCode(clinicCode);
+      
+      if (clinic) {
+        req.clinicId = clinic.id;              // Supabase UUID
+        req.clinicCode = clinic.clinic_code;   // e.g. "ORDU"
+        req.clinicStatus = clinic.settings?.status || "ACTIVE";
+        req.clinic = clinic;
+        
+        // Only reject if clinic is suspended
+        if (req.clinicStatus === "SUSPENDED") {
+          return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
+        }
+        
+        console.log("[requireAdminAuth] ✅ Supabase auth successful for clinic:", req.clinicCode, "(uuid:", req.clinicId, ")");
+        return next();
+      }
+      
+      console.log("[requireAdminAuth] Clinic not found in Supabase, trying file fallback...");
+    }
+    
+    // FILE FALLBACK (legacy)
+    const code = String(clinicCode).toUpperCase();
+    let clinic = null;
+    
+    // Check CLINICS_FILE
     const clinics = readJson(CLINICS_FILE, {});
-    const clinic = clinics[decoded.clinicId];
+    for (const cid in clinics) {
+      const c = clinics[cid];
+      if (c) {
+        const cCode = c.clinicCode || c.code;
+        if (cCode && String(cCode).toUpperCase() === code) {
+          clinic = c;
+          req.clinicId = cid;
+          break;
+        }
+      }
+    }
+    
+    // Check CLINIC_FILE (single clinic)
     if (!clinic) {
+      const singleClinic = readJson(CLINIC_FILE, {});
+      if (singleClinic?.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
+        clinic = singleClinic;
+      }
+    }
+    
+    if (!clinic) {
+      console.error("[requireAdminAuth] ❌ Clinic not found by code:", clinicCode);
       return res.status(401).json({ ok: false, error: "clinic_not_found" });
     }
-    // Only reject if clinic is suspended (fraud/abuse cases)
+    
+    // Only reject if clinic is suspended
     if (clinic.status === "SUSPENDED") {
       return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
     }
     
-    req.clinicId = decoded.clinicId;
-    req.clinicCode = clinic.clinicCode;
+    req.clinicId = req.clinicId || clinic.clinicId || null;
+    req.clinicCode = clinic.clinicCode || clinic.code;
+    req.clinicStatus = clinic.status || "ACTIVE";
+    req.clinic = clinic;
+    console.log("[requireAdminAuth] ✅ File auth successful for clinic:", req.clinicCode);
     next();
   } catch (error) {
-    if (error.name === "JsonWebTokenError" || error.name === "TokenExpiredError") {
-      return res.status(401).json({ ok: false, error: "invalid_token" });
+    console.error("[requireAdminAuth] Auth error:", error.name, error.message);
+    if (error?.name === "JsonWebTokenError" || error?.name === "TokenExpiredError") {
+      return res.status(401).json({ ok: false, error: "invalid_token", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
     }
-    return res.status(500).json({ ok: false, error: "auth_error" });
+    return res.status(500).json({ ok: false, error: "auth_error", message: "Kimlik doğrulama hatası." });
   }
 }
 
