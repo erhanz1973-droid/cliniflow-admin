@@ -569,8 +569,14 @@ async function requireAdminToken(req, res, next) {
     }
 
     // SUPABASE: Primary lookup by clinicCode
+    console.log("[requireAdminToken] isSupabaseEnabled:", isSupabaseEnabled());
+    console.log("[requireAdminToken] SUPABASE_URL set:", !!process.env.SUPABASE_URL);
+    console.log("[requireAdminToken] SUPABASE_SERVICE_ROLE_KEY set:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+    
     if (isSupabaseEnabled()) {
+      console.log("[requireAdminToken] Calling getClinicByCode with:", clinicCode);
       const clinic = await getClinicByCode(clinicCode);
+      console.log("[requireAdminToken] getClinicByCode returned:", clinic ? "FOUND" : "NULL");
       
       if (clinic) {
         req.clinicId = clinic.id;              // Supabase UUID
@@ -581,7 +587,10 @@ async function requireAdminToken(req, res, next) {
         return next();
       }
       
-      console.log("[requireAdminToken] Clinic not found in Supabase, trying file fallback...");
+      console.log("[requireAdminToken] ❌ Clinic not found in Supabase for code:", clinicCode);
+      console.log("[requireAdminToken] Trying file fallback...");
+    } else {
+      console.log("[requireAdminToken] ⚠️ Supabase not enabled, using file fallback");
     }
     
     // FILE FALLBACK (legacy)
@@ -6564,6 +6573,10 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`========================================`);
   console.log(`🗄️  Database: ${isSupabaseEnabled() ? 'SUPABASE' : 'FILE SYSTEM'}`);
   console.log(`📧 Email:    ${emailTransporter ? 'SMTP' : 'NOT CONFIGURED'}`);
+  console.log(`========================================`);
+  console.log(`[ENV DEBUG]`);
+  console.log(`  SUPABASE_URL: ${process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 40) + '...' : 'NOT SET'}`);
+  console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET (' + process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 10) + '...)' : 'NOT SET'}`);
   console.log(`========================================\n`);
   
   // Run heavy init AFTER server is listening
