@@ -4083,46 +4083,15 @@ app.get("/api/procedures", (req, res) => {
 // GET /api/admin/clinic (Admin için) - token-based (multi-clinic)
 app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
   try {
-    let clinic = null;
-    
-    // Try CLINICS_FILE first if clinicId is available
-    if (req.clinicId) {
-      const clinics = readJson(CLINICS_FILE, {});
-      clinic = clinics[req.clinicId];
-    }
-    
-    // If not found, search by clinicCode
-    if (!clinic && req.clinicCode) {
-      const clinics = readJson(CLINICS_FILE, {});
-      const code = String(req.clinicCode).toUpperCase();
-      for (const clinicId in clinics) {
-        const c = clinics[clinicId];
-        if (c) {
-          const clinicCodeToCheck = c.clinicCode || c.code;
-          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
-            clinic = c;
-            req.clinicId = clinicId; // Update for consistency
-            break;
-          }
-        }
-      }
-    }
-    
-    // Fallback to CLINIC_FILE (single clinic)
-    if (!clinic && req.clinicCode) {
-      const singleClinic = readJson(CLINIC_FILE, {});
-      const code = String(req.clinicCode).toUpperCase();
-      if (singleClinic && singleClinic.clinicCode && String(singleClinic.clinicCode).toUpperCase() === code) {
-        clinic = singleClinic;
-      }
-    }
-    
-    if (!clinic) {
-      console.error("[GET /api/admin/clinic] Clinic not found, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
+    // requireAdminToken middleware already sets req.clinic
+    // Use it directly - no need to lookup again
+    if (!req.clinic) {
+      console.error("[GET /api/admin/clinic] Clinic not found in req.clinic, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
       return res.status(404).json({ ok: false, error: "clinic_not_found" });
     }
     
-    const { password, ...safe } = clinic;
+    // Remove sensitive fields
+    const { password, password_hash, ...safe } = req.clinic;
     res.json(safe);
   } catch (error) {
     console.error("Get admin clinic error:", error);
@@ -4133,12 +4102,16 @@ app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
 // PUT /api/admin/clinic (Admin günceller) - token-based (multi-clinic)
 app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
   try {
-    const body = req.body || {};
-    const clinics = readJson(CLINICS_FILE, {});
-    const existing = clinics[req.clinicId] || {};
-    if (!clinics[req.clinicId]) {
+    // requireAdminToken middleware already sets req.clinic
+    // Use it directly - no need to lookup again
+    if (!req.clinic) {
+      console.error("[PUT /api/admin/clinic] Clinic not found in req.clinic, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
       return res.status(404).json({ ok: false, error: "clinic_not_found" });
     }
+    
+    const body = req.body || {};
+    // Use req.clinic as existing data (no file lookup needed)
+    const existing = req.clinic;
 
     // Subscription plan (single-clinic mode)
     const rawPlanInput = String(body.plan || existing.plan || existing.subscriptionPlan || "FREE").trim().toUpperCase();
@@ -4209,9 +4182,70 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
       updatedAt: now(),
     };
 
-    clinics[req.clinicId] = updated;
-    writeJson(CLINICS_FILE, clinics);
-    const { password, ...safe } = updated;
+    // SUPABASE: Update clinic (PRIMARY - production source of truth)
+    if (isSupabaseEnabled() && req.clinicId) {
+      try {
+        console.log(`[PUT /api/admin/clinic] Updating clinic in Supabase: ${req.clinicId}`);
+        
+        // Prepare update data for Supabase (remove password from update, handle separately)
+        const supabaseUpdate = {
+          clinic_code: updated.clinicCode || updated.code,
+          name: updated.name,
+          plan: updated.plan,
+          max_patients: updated.max_patients,
+          address: updated.address,
+          phone: updated.phone,
+          website: updated.website,
+          settings: {
+            branding: updatedBranding,
+            defaultInviterDiscountPercent: inviterPercent,
+            defaultInvitedDiscountPercent: invitedPercent,
+            googleReviews: updated.googleReviews,
+            trustpilotReviews: updated.trustpilotReviews,
+            logoUrl: updated.logoUrl,
+            googleMapsUrl: updated.googleMapsUrl,
+          }
+        };
+        
+        // Update password separately if changed
+        if (body.password && String(body.password).trim()) {
+          supabaseUpdate.password_hash = passwordHash;
+        }
+        
+        await updateClinic(req.clinicId, supabaseUpdate);
+        console.log(`[PUT /api/admin/clinic] ✅ Clinic updated in Supabase`);
+      } catch (supabaseError) {
+        console.error(`[PUT /api/admin/clinic] ❌ Failed to update clinic in Supabase:`, supabaseError.message);
+        // Continue with file-based storage as fallback
+      }
+    }
+
+    // FILE-BASED: Fallback storage (for backward compatibility)
+    // Try to find clinic in file by clinicCode if req.clinicId is a UUID
+    const clinics = readJson(CLINICS_FILE, {});
+    let fileClinicId = req.clinicId;
+    
+    // If req.clinicId looks like a UUID, try to find file-based ID by clinicCode
+    if (req.clinicId && req.clinicId.includes('-') && req.clinicCode) {
+      const code = String(req.clinicCode).toUpperCase();
+      for (const fid in clinics) {
+        const c = clinics[fid];
+        if (c && (c.clinicCode || c.code) && String(c.clinicCode || c.code).toUpperCase() === code) {
+          fileClinicId = fid;
+          break;
+        }
+      }
+    }
+    
+    if (fileClinicId && clinics[fileClinicId] !== undefined) {
+      clinics[fileClinicId] = updated;
+      writeJson(CLINICS_FILE, clinics);
+      console.log(`[PUT /api/admin/clinic] File-based clinic updated`);
+    } else {
+      console.log(`[PUT /api/admin/clinic] File-based clinic not found, skipping file update`);
+    }
+    
+    const { password, password_hash, ...safe } = updated;
     res.json({ ok: true, clinic: safe });
   } catch (error) {
     console.error("Clinic update error:", error);
