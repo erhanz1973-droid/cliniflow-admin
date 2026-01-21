@@ -1209,24 +1209,30 @@ app.post("/api/register", async (req, res) => {
     
     // Generate OTP
     const otpCode = generateOTP();
+    console.log(`[REGISTER] Generated OTP for ${emailNormalized}`);
     
-    // Save OTP (hashed)
+    // Save OTP (hashed) - this is fast, keep it sync
     await saveOTP(emailNormalized, otpCode, 0);
+    console.log(`[REGISTER] OTP saved to file`);
     
-    // Send email
+    // FIRE-AND-FORGET: Send email WITHOUT waiting
+    // This prevents SMTP timeout from blocking the response
     if (emailTransporter) {
-      try {
-        await sendOTPEmail(emailNormalized, otpCode);
-        console.log(`[REGISTER] OTP sent to ${emailNormalized} for patient ${patientId}`);
-      } catch (emailError) {
-        console.error("[REGISTER] Failed to send OTP email:", emailError);
-        // Continue even if email fails - user can request OTP again
-      }
+      console.log(`[REGISTER] Starting fire-and-forget email send to ${emailNormalized}`);
+      sendOTPEmail(emailNormalized, otpCode)
+        .then(() => {
+          console.log(`[REGISTER] ✅ OTP email sent successfully to ${emailNormalized}`);
+        })
+        .catch((emailError) => {
+          console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
+          // Email failed but registration succeeded - user can request OTP again
+        });
     } else {
-      console.warn("[REGISTER] SMTP not configured - OTP not sent");
+      console.warn("[REGISTER] ⚠️ SMTP not configured - OTP not sent");
     }
     
-    // Return success without token - user must verify OTP first
+    // Return success IMMEDIATELY - don't wait for email
+    console.log(`[REGISTER] Returning success response for patient ${patientId}`);
     res.json({ 
       ok: true, 
       message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
@@ -1470,24 +1476,30 @@ app.post("/api/patient/register", async (req, res) => {
     
     // Generate OTP
     const otpCode = generateOTP();
+    console.log(`[REGISTER /api/patient/register] Generated OTP for ${emailNormalized}`);
     
-    // Save OTP (hashed)
+    // Save OTP (hashed) - this is fast, keep it sync
     await saveOTP(emailNormalized, otpCode, 0);
+    console.log(`[REGISTER /api/patient/register] OTP saved to file`);
     
-    // Send email
+    // FIRE-AND-FORGET: Send email WITHOUT waiting
+    // This prevents SMTP timeout from blocking the response
     if (emailTransporter) {
-      try {
-        await sendOTPEmail(emailNormalized, otpCode);
-        console.log(`[REGISTER /api/patient/register] OTP sent to ${emailNormalized} for patient ${patientId}`);
-      } catch (emailError) {
-        console.error("[REGISTER /api/patient/register] Failed to send OTP email:", emailError);
-        // Continue even if email fails - user can request OTP again
-      }
+      console.log(`[REGISTER /api/patient/register] Starting fire-and-forget email send to ${emailNormalized}`);
+      sendOTPEmail(emailNormalized, otpCode)
+        .then(() => {
+          console.log(`[REGISTER /api/patient/register] ✅ OTP email sent successfully to ${emailNormalized}`);
+        })
+        .catch((emailError) => {
+          console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
+          // Email failed but registration succeeded - user can request OTP again
+        });
     } else {
-      console.warn("[REGISTER /api/patient/register] SMTP not configured - OTP not sent");
+      console.warn("[REGISTER /api/patient/register] ⚠️ SMTP not configured - OTP not sent");
     }
     
-    // Return success without token - user must verify OTP first
+    // Return success IMMEDIATELY - don't wait for email
+    console.log(`[REGISTER /api/patient/register] Returning success response for patient ${patientId}`);
     res.json({ 
       ok: true, 
       message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
