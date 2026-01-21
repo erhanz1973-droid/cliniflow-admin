@@ -2418,7 +2418,7 @@ app.get("/api/patient/:patientId/travel", (req, res) => {
 });
 
 // POST /api/patient/:patientId/travel
-app.post("/api/patient/:patientId/travel", (req, res) => {
+app.post("/api/patient/:patientId/travel", async (req, res) => {
   const patientId = req.params.patientId;
   const TRAVEL_DIR = path.join(DATA_DIR, "travel");
   if (!fs.existsSync(TRAVEL_DIR)) fs.mkdirSync(TRAVEL_DIR, { recursive: true });
@@ -2518,6 +2518,19 @@ app.post("/api/patient/:patientId/travel", (req, res) => {
     payload.formCompletedAt = null;
   }
   
+  // SUPABASE: Update patient travel data (PRIMARY - production source of truth)
+  if (isSupabaseEnabled()) {
+    try {
+      console.log(`[POST /travel/${patientId}] Updating travel data in Supabase...`);
+      await updatePatient(patientId, { travel: payload });
+      console.log(`[POST /travel/${patientId}] ✅ Travel data updated in Supabase`);
+    } catch (supabaseError) {
+      console.error(`[POST /travel/${patientId}] ❌ Failed to update travel in Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   writeJson(travelFile, payload);
   console.log(`[POST /travel/${patientId}] File written, verifying...`);
   const verify = readJson(travelFile, {});
@@ -3142,7 +3155,7 @@ app.get("/api/patient/:patientId/treatments", (req, res) => {
 });
 
 // POST /api/patient/:patientId/treatments
-app.post("/api/patient/:patientId/treatments", (req, res) => {
+app.post("/api/patient/:patientId/treatments", async (req, res) => {
   const patientId = req.params.patientId;
   console.log(`[TREATMENTS POST] ========== START ==========`);
   console.log(`[TREATMENTS POST] Request for patientId: ${patientId}`);
@@ -3288,6 +3301,19 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
     payload.formCompletedAt = null;
   }
   
+  // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
+  if (isSupabaseEnabled()) {
+    try {
+      console.log(`[TREATMENTS POST] Updating treatments data in Supabase...`);
+      await updatePatient(patientId, { treatments: payload });
+      console.log(`[TREATMENTS POST] ✅ Treatments data updated in Supabase`);
+    } catch (supabaseError) {
+      console.error(`[TREATMENTS POST] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   writeJson(treatmentsFile, payload);
   
   // Verify the write
@@ -3311,7 +3337,7 @@ app.post("/api/patient/:patientId/treatments", (req, res) => {
 });
 
 // PUT /api/patient/:patientId/treatments/:procedureId
-app.put("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
+app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   const patientId = req.params.patientId;
   const procedureId = req.params.procedureId;
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
@@ -3395,6 +3421,19 @@ app.put("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
     payload.formCompletedAt = null;
   }
   
+  // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
+  if (isSupabaseEnabled()) {
+    try {
+      console.log(`[TREATMENTS PUT] Updating treatments data in Supabase...`);
+      await updatePatient(patientId, { treatments: payload });
+      console.log(`[TREATMENTS PUT] ✅ Treatments data updated in Supabase`);
+    } catch (supabaseError) {
+      console.error(`[TREATMENTS PUT] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   writeJson(treatmentsFile, payload);
   
   // Update patient oral health scores after treatment plan update
@@ -3404,7 +3443,7 @@ app.put("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
 });
 
 // DELETE /api/patient/:patientId/treatments/:procedureId
-app.delete("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
+app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   const patientId = req.params.patientId;
   const procedureId = req.params.procedureId;
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
@@ -3460,6 +3499,19 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", (req, res) => {
     payload.formCompletedAt = null;
   }
   
+  // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
+  if (isSupabaseEnabled()) {
+    try {
+      console.log(`[TREATMENTS DELETE] Updating treatments data in Supabase...`);
+      await updatePatient(patientId, { treatments: payload });
+      console.log(`[TREATMENTS DELETE] ✅ Treatments data updated in Supabase`);
+    } catch (supabaseError) {
+      console.error(`[TREATMENTS DELETE] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
+      // Continue with file-based storage as fallback
+    }
+  }
+
+  // FILE-BASED: Fallback storage (for backward compatibility)
   writeJson(treatmentsFile, payload);
   
   // Update patient oral health scores after procedure deletion
