@@ -33,12 +33,13 @@ const {
   createPatient,
   updatePatient,
   countPatientsByClinic,
-  createOTP: createOTPInDB,
-  getOTPByEmail: getOTPByEmailFromDB,
-  incrementOTPAttempts: incrementOTPAttemptsInDB,
-  markOTPUsed: markOTPUsedInDB,
-  deleteOTP: deleteOTPFromDB,
-  cleanupExpiredOTPs: cleanupExpiredOTPsInDB,
+  // OTP fonksiyonları DEVRE DIŞI - Sadece file-based OTP kullanılıyor
+  // createOTP: createOTPInDB,
+  // getOTPByEmail: getOTPByEmailFromDB,
+  // incrementOTPAttempts: incrementOTPAttemptsInDB,
+  // markOTPUsed: markOTPUsedInDB,
+  // deleteOTP: deleteOTPFromDB,
+  // cleanupExpiredOTPs: cleanupExpiredOTPsInDB,
   createAdminToken: createAdminTokenInDB,
   getAdminToken: getAdminTokenFromDB,
   deleteAdminToken: deleteAdminTokenFromDB,
@@ -291,48 +292,24 @@ async function verifyOTP(plainOTP, hashedOTP) {
 }
 
 /**
- * Get OTPs for an email (Supabase version)
+ * Get OTPs for an email (FILE-BASED ONLY)
+ * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
  */
-async function getOTPsForEmail(email) {
-  if (isSupabaseEnabled()) {
-    const otpData = await getOTPByEmailFromDB(email);
-    if (otpData) {
-      return {
-        hashedOTP: otpData.otp_hash,
-        createdAt: new Date(otpData.created_at).getTime(),
-        expiresAt: new Date(otpData.expires_at).getTime(),
-        attempts: otpData.attempts || 0,
-        verified: otpData.used || false,
-        id: otpData.id
-      };
-    }
-    return null;
-  }
-  // File fallback (legacy)
+function getOTPsForEmail(email) {
   const otps = readJson(OTP_FILE, {});
   return otps[email.toLowerCase().trim()] || null;
 }
 
 /**
- * Save OTP for an email (Supabase version)
+ * Save OTP for an email (FILE-BASED ONLY)
+ * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
  */
 async function saveOTP(email, otpCode, attempts = 0) {
   const emailKey = email.toLowerCase().trim();
   const hashedOTP = await hashOTP(otpCode);
   const expiresAt = now() + OTP_EXPIRY_MS;
   
-  if (isSupabaseEnabled()) {
-    await createOTPInDB(emailKey, hashedOTP, expiresAt);
-    return {
-      hashedOTP,
-      createdAt: now(),
-      expiresAt,
-      attempts,
-      verified: false,
-    };
-  }
-  
-  // File fallback (legacy)
+  // FILE-BASED ONLY - Supabase OTP devre dışı
   const otps = readJson(OTP_FILE, {});
   otps[emailKey] = {
     hashedOTP,
@@ -342,62 +319,44 @@ async function saveOTP(email, otpCode, attempts = 0) {
     verified: false,
   };
   writeJson(OTP_FILE, otps);
+  console.log("[OTP] Saved OTP to file for:", emailKey);
   return otps[emailKey];
 }
 
 /**
- * Increment OTP attempt count (Supabase version)
+ * Increment OTP attempt count (FILE-BASED ONLY)
+ * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
  */
-async function incrementOTPAttempt(email) {
-  if (isSupabaseEnabled()) {
-    const otpData = await getOTPByEmailFromDB(email);
-    if (otpData && otpData.id) {
-      await incrementOTPAttemptsInDB(otpData.id);
-    }
-    return;
-  }
-  
-  // File fallback (legacy)
+function incrementOTPAttempt(email) {
   const otps = readJson(OTP_FILE, {});
   const emailKey = email.toLowerCase().trim();
   if (otps[emailKey]) {
     otps[emailKey].attempts = (otps[emailKey].attempts || 0) + 1;
     writeJson(OTP_FILE, otps);
+    console.log("[OTP] Incremented attempt for:", emailKey, "attempts:", otps[emailKey].attempts);
   }
 }
 
 /**
- * Mark OTP as verified and invalidate it (Supabase version)
+ * Mark OTP as verified and invalidate it (FILE-BASED ONLY)
+ * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
  */
-async function markOTPVerified(email) {
-  if (isSupabaseEnabled()) {
-    const otpData = await getOTPByEmailFromDB(email);
-    if (otpData && otpData.id) {
-      await markOTPUsedInDB(otpData.id);
-    }
-    return;
-  }
-  
-  // File fallback (legacy)
+function markOTPVerified(email) {
   const otps = readJson(OTP_FILE, {});
   const emailKey = email.toLowerCase().trim();
   if (otps[emailKey]) {
     otps[emailKey].verified = true;
     otps[emailKey].expiresAt = now(); // Immediately expire
     writeJson(OTP_FILE, otps);
+    console.log("[OTP] Marked OTP as verified for:", emailKey);
   }
 }
 
 /**
- * Clean up expired OTPs (Supabase version)
+ * Clean up expired OTPs (FILE-BASED ONLY)
+ * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
  */
-async function cleanupExpiredOTPs() {
-  if (isSupabaseEnabled()) {
-    await cleanupExpiredOTPsInDB();
-    return;
-  }
-  
-  // File fallback (legacy)
+function cleanupExpiredOTPs() {
   const otps = readJson(OTP_FILE, {});
   const nowTime = now();
   let cleaned = false;
@@ -412,6 +371,7 @@ async function cleanupExpiredOTPs() {
   
   if (cleaned) {
     writeJson(OTP_FILE, otps);
+    console.log("[OTP] Cleaned up expired OTPs");
   }
 }
 
