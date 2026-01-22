@@ -1069,6 +1069,7 @@ app.post("/api/register", async (req, res) => {
       .from("patients")
       .upsert(
         {
+          patient_id: patientId, // legacy app id (p_xxx)
           phone: phoneNormalized,
           email: emailNormalized,
           name: String(name || ""),
@@ -1472,6 +1473,7 @@ app.post("/api/patient/register", async (req, res) => {
       .from("patients")
       .upsert(
         {
+          patient_id: patientId, // legacy app id (p_xxx)
           phone: phoneNormalized,
           email: emailNormalized,
           name: String(name || ""),
