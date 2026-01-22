@@ -1063,29 +1063,34 @@ app.post("/api/register", async (req, res) => {
     return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
   }
 
+  // === SUPABASE PATIENT INSERT (ZORUNLU) ===
   if (isSupabaseEnabled()) {
-    try {
-      const patientData = {
+    console.log("[REGISTER] inserting patient into Supabase", {
+      patientId,
+      clinicId: supabaseClinicId,
+    });
+
+    const { error } = await supabase
+      .from("patients")
+      .insert({
         id: patientId,
-        clinic_id: supabaseClinicId,
         name: String(name || ""),
-        email: emailNormalized,
         phone: phoneNormalized,
+        email: emailNormalized,
+        clinic_id: supabaseClinicId, // ⚠️ KRİTİK
         status: "PENDING",
-      };
-      
-      console.log(`[REGISTER] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
-      const supabasePatient = await createPatient(patientData);
-      console.log(`[REGISTER] ✅ Patient inserted to Supabase`, {
-        id: supabasePatient?.id,
-        clinic_id: supabasePatient?.clinic_id,
-        status: supabasePatient?.status,
+        created_at: new Date().toISOString(),
       });
-    } catch (supabaseError) {
-      console.error(`[REGISTER] ❌ Failed to insert patient to Supabase:`, supabaseError?.message || supabaseError);
-      console.error(`[REGISTER] ❌ Supabase insert error details:`, supabaseError);
-      // Continue with file-based storage as fallback
+
+    if (error) {
+      console.error("[SUPABASE] ❌ patient insert failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "patient_insert_failed",
+      });
     }
+
+    console.log("[SUPABASE] ✅ patient inserted:", patientId);
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -1459,29 +1464,34 @@ app.post("/api/patient/register", async (req, res) => {
     return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
   }
 
+  // === SUPABASE PATIENT INSERT (ZORUNLU) ===
   if (isSupabaseEnabled()) {
-    try {
-      const patientData = {
+    console.log("[REGISTER /api/patient/register] inserting patient into Supabase", {
+      patientId,
+      clinicId: supabaseClinicId,
+    });
+
+    const { error } = await supabase
+      .from("patients")
+      .insert({
         id: patientId,
-        clinic_id: supabaseClinicId,
         name: String(name || ""),
-        email: emailNormalized,
         phone: phoneNormalized,
+        email: emailNormalized,
+        clinic_id: supabaseClinicId, // ⚠️ KRİTİK
         status: "PENDING",
-      };
-      
-      console.log(`[REGISTER /api/patient/register] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
-      const supabasePatient = await createPatient(patientData);
-      console.log(`[REGISTER /api/patient/register] ✅ Patient inserted to Supabase`, {
-        id: supabasePatient?.id,
-        clinic_id: supabasePatient?.clinic_id,
-        status: supabasePatient?.status,
+        created_at: new Date().toISOString(),
       });
-    } catch (supabaseError) {
-      console.error(`[REGISTER /api/patient/register] ❌ Failed to insert patient to Supabase:`, supabaseError?.message || supabaseError);
-      console.error(`[REGISTER /api/patient/register] ❌ Supabase insert error details:`, supabaseError);
-      // Continue with file-based storage as fallback
+
+    if (error) {
+      console.error("[SUPABASE] ❌ patient insert failed:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "patient_insert_failed",
+      });
     }
+
+    console.log("[SUPABASE] ✅ patient inserted:", patientId);
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
