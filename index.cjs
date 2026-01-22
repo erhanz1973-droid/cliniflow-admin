@@ -1058,6 +1058,11 @@ app.post("/api/register", async (req, res) => {
     }
   }
 
+  if (isSupabaseEnabled() && !supabaseClinicId) {
+    console.error("[REGISTER] Missing clinic_id for Supabase insert. clinicCode:", validatedClinicCode);
+    return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
+  }
+
   if (isSupabaseEnabled()) {
     try {
       const patientData = {
@@ -1071,9 +1076,14 @@ app.post("/api/register", async (req, res) => {
       
       console.log(`[REGISTER] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
       const supabasePatient = await createPatient(patientData);
-      console.log(`[REGISTER] ✅ Patient inserted to Supabase: ${supabasePatient?.id}`);
+      console.log(`[REGISTER] ✅ Patient inserted to Supabase`, {
+        id: supabasePatient?.id,
+        clinic_id: supabasePatient?.clinic_id,
+        status: supabasePatient?.status,
+      });
     } catch (supabaseError) {
-      console.error(`[REGISTER] ❌ Failed to insert patient to Supabase:`, supabaseError.message);
+      console.error(`[REGISTER] ❌ Failed to insert patient to Supabase:`, supabaseError?.message || supabaseError);
+      console.error(`[REGISTER] ❌ Supabase insert error details:`, supabaseError);
       // Continue with file-based storage as fallback
     }
   }
@@ -1442,6 +1452,11 @@ app.post("/api/patient/register", async (req, res) => {
     } catch (err) {
       console.error(`[REGISTER /api/patient/register] Error finding clinic in Supabase:`, err.message);
     }
+  }
+
+  if (isSupabaseEnabled() && !supabaseClinicId) {
+    console.error("[REGISTER /api/patient/register] Missing clinic_id for Supabase insert. clinicCode:", validatedClinicCode);
+    return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
   }
 
   if (isSupabaseEnabled()) {
