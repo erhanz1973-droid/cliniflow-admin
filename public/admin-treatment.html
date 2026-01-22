@@ -452,7 +452,7 @@
         <div class="row" style="justify-content:space-between; align-items:flex-start;">
           <div>
             <b>🦷 Treatment Events (Takvim)</b>
-            <div class="muted" style="margin-top:4px;">Not: Event'ler <b>travel.events</b> altında saklanır.</div>
+            <div class="muted" style="margin-top:4px;">Not: Event'ler <b>treatment_events</b> altında saklanır.</div>
           </div>
         </div>
 
@@ -971,7 +971,7 @@
 
   async function loadTreatmentEvents(patientId){
     try {
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/travel`, {
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
         headers: adminHeaders({ Accept: "application/json" }),
       });
       const j = await r.json().catch(()=>null);
@@ -993,8 +993,8 @@
 
   async function saveTreatmentEvents(patientId){
     const payload = { events: Array.isArray(TRAVEL_EVENTS) ? TRAVEL_EVENTS : [] };
-    const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/travel`, {
-      method: "POST",
+    const r = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/treatment-events`, {
+      method: "PUT",
       headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify(payload),
     });
@@ -1003,8 +1003,7 @@
       const err = j?.error || `${r.status}`;
       throw new Error(err);
     }
-    const travel = j?.travel || j;
-    TRAVEL_EVENTS = normalizeEvents(travel?.events);
+    TRAVEL_EVENTS = normalizeEvents(j?.events);
     renderTreatmentEvents();
   }
 

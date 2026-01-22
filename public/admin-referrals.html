@@ -298,9 +298,9 @@
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
         <div class="lang-toggle">
-          <span id="lang-tr" onclick="if(window.i18n) window.i18n.setLang('tr')" class="active">TR</span>
+          <span id="lang-tr" onclick="if(window.onLanguageChange) window.onLanguageChange('tr')" class="active">TR</span>
           <span>|</span>
-          <span id="lang-en" onclick="if(window.i18n) window.i18n.setLang('en')">EN</span>
+          <span id="lang-en" onclick="if(window.onLanguageChange) window.onLanguageChange('en')">EN</span>
         </div>
         <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
     </div>
@@ -811,7 +811,7 @@
   }
 
   // Update UI when language changes
-  window.onLanguageChange = function() {
+  window.onI18nUpdated = function(lang) {
     // Update status filter options
     const statusFilter = document.getElementById('statusFilter');
     if (statusFilter && window.i18n) {

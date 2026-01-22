@@ -2,6 +2,9 @@
 (function() {
   'use strict';
 
+  // Reentrancy guard to prevent update recursion (stack overflow)
+  let isUpdatingI18n = false;
+
   const translations = {
     tr: {
       // Common
@@ -595,18 +598,31 @@
     init() {
       // Load saved language or default to Turkish
       const saved = localStorage.getItem('admin_lang') || 'tr';
-      this.setLang(saved);
-      
-      // Create language switcher
+      this.setLanguage(saved);
       this.createLangSwitcher();
+      // Render static translations once on init
+      this.updatePage();
+      // Notify page-level hook once, if present
+      if (typeof window.onI18nUpdated === 'function') {
+        try {
+          window.onI18nUpdated(this.currentLang);
+        } catch (e) {
+          console.error("[i18n] onI18nUpdated hook failed during init:", e);
+        }
+      }
     },
     
-    setLang(lang) {
+    // State-only: do NOT call updatePage() here.
+    setLanguage(lang) {
       if (!translations[lang]) lang = 'tr';
       this.currentLang = lang;
       localStorage.setItem('admin_lang', lang);
       document.documentElement.lang = lang;
-      this.updatePage();
+    },
+
+    // Backward-compatible alias
+    setLang(lang) {
+      return this.setLanguage(lang);
     },
     
     getLang() {
@@ -663,7 +679,10 @@
         font-size: 13px;
         transition: all 0.2s;
       `;
-      trBtn.onclick = () => this.setLang('tr');
+      trBtn.onclick = () => {
+        if (typeof window.onLanguageChange === 'function') window.onLanguageChange('tr');
+        else { this.setLanguage('tr'); this.updatePage(); }
+      };
       
       const enBtn = document.createElement('button');
       enBtn.textContent = 'EN';
@@ -678,7 +697,10 @@
         font-size: 13px;
         transition: all 0.2s;
       `;
-      enBtn.onclick = () => this.setLang('en');
+      enBtn.onclick = () => {
+        if (typeof window.onLanguageChange === 'function') window.onLanguageChange('en');
+        else { this.setLanguage('en'); this.updatePage(); }
+      };
       
       switcher.appendChild(trBtn);
       switcher.appendChild(enBtn);
@@ -692,43 +714,66 @@
         enBtn.style.color = this.currentLang === 'en' ? '#fff' : 'var(--muted, #a7b2c8)';
       };
       
-      // Store original setLang
-      const originalSetLang = this.setLang.bind(this);
-      this.setLang = (lang) => {
-        originalSetLang(lang);
+      // Keep button styles in sync whenever the page is re-rendered
+      const originalUpdatePage = this.updatePage.bind(this);
+      this.updatePage = () => {
+        originalUpdatePage();
         updateButtons();
       };
+      updateButtons();
     },
     
     updatePage() {
-      // This will be called by each page to update its content
-      if (typeof window.onLanguageChange === 'function') {
-        window.onLanguageChange();
+      if (isUpdatingI18n) return;
+      isUpdatingI18n = true;
+      try {
+        // Update all elements with data-i18n attribute
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.getAttribute('data-i18n');
+          let params = {};
+          try {
+            params = JSON.parse(el.getAttribute('data-i18n-params') || '{}');
+          } catch (e) {
+            console.error("[i18n] Failed to parse data-i18n-params:", e, { key });
+            params = {};
+          }
+          el.textContent = this.t(key, params);
+        });
+        
+        // Update all inputs with data-i18n-placeholder
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+          const key = el.getAttribute('data-i18n-placeholder');
+          el.placeholder = this.t(key);
+        });
+        
+        // Update all inputs with data-i18n-title
+        document.querySelectorAll('[data-i18n-title]').forEach(el => {
+          const key = el.getAttribute('data-i18n-title');
+          el.title = this.t(key);
+        });
+      } finally {
+        isUpdatingI18n = false;
       }
-      
-      // Update all elements with data-i18n attribute
-      document.querySelectorAll('[data-i18n]').forEach(el => {
-        const key = el.getAttribute('data-i18n');
-        const params = JSON.parse(el.getAttribute('data-i18n-params') || '{}');
-        el.textContent = this.t(key, params);
-      });
-      
-      // Update all inputs with data-i18n-placeholder
-      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-        const key = el.getAttribute('data-i18n-placeholder');
-        el.placeholder = this.t(key);
-      });
-      
-      // Update all inputs with data-i18n-title
-      document.querySelectorAll('[data-i18n-title]').forEach(el => {
-        const key = el.getAttribute('data-i18n-title');
-        el.title = this.t(key);
-      });
     }
   };
 
   // Make i18n globally available
   window.i18n = i18n;
+
+  // Global language change entrypoint (single direction; no recursion)
+  // - Only changes language state and triggers a DOM refresh
+  // - Pages can optionally implement window.onI18nUpdated(lang) for dynamic re-renders
+  window.onLanguageChange = function(lang) {
+    try {
+      window.i18n.setLanguage(lang);
+      window.i18n.updatePage();
+      if (typeof window.onI18nUpdated === 'function') {
+        window.onI18nUpdated(lang);
+      }
+    } catch (e) {
+      console.error("[i18n] window.onLanguageChange failed:", e);
+    }
+  };
   
   // Auto-initialize when DOM is ready
   if (document.readyState === 'loading') {

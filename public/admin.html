@@ -587,12 +587,12 @@
           
           // Also check if date is in the past (double check)
           let isPast = false;
-          if (evt.date || evt.timestamp) {
+          if (evt.timelineAt || evt.date || evt.timestamp) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const eventDate = evt.timestamp 
-              ? new Date(evt.timestamp)
-              : new Date(evt.date);
+            const eventDate = evt.timelineAt
+              ? new Date(evt.timelineAt)
+              : (evt.timestamp ? new Date(evt.timestamp) : new Date(evt.date));
             if (!isNaN(eventDate.getTime())) {
               eventDate.setHours(0, 0, 0, 0);
               isPast = eventDate < today;
@@ -736,8 +736,10 @@
         today.setHours(0, 0, 0, 0);
         let eventDate = null;
         
-        // Try timestamp first, then date
-        if (evt.timestamp) {
+        // Use timelineAt as single source of truth
+        if (evt.timelineAt) {
+          eventDate = new Date(evt.timelineAt);
+        } else if (evt.timestamp) {
           eventDate = new Date(evt.timestamp);
         } else if (evt.date) {
           eventDate = new Date(evt.date);
@@ -859,7 +861,7 @@
       
       // Filter events for tomorrow
       const tomorrowEvents = allEvents.filter(evt => {
-        const ts = evt.timestamp || (evt.date ? new Date(evt.date).getTime() : 0);
+        const ts = evt.timelineAt ? Date.parse(evt.timelineAt) : (evt.timestamp || 0);
         return ts >= tomorrowStart && ts <= tomorrowEnd;
       });
       
@@ -884,10 +886,10 @@
         summaryEl.style.display = "block";
       }
 
-      // Sort by timestamp (oldest first)
+      // Sort by timelineAt (oldest first)
       allEvents.sort((a, b) => {
-        const tsA = a.timestamp || (a.date ? new Date(a.date).getTime() : 0);
-        const tsB = b.timestamp || (b.date ? new Date(b.date).getTime() : 0);
+        const tsA = a.timelineAt ? Date.parse(a.timelineAt) : (a.timestamp || 0);
+        const tsB = b.timelineAt ? Date.parse(b.timelineAt) : (b.timestamp || 0);
         return tsA - tsB;
       });
 
@@ -915,7 +917,7 @@
   }
   
   // Language change handler
-  window.onLanguageChange = function() {
+  window.onI18nUpdated = function(lang) {
     // Update page title
     const titleEl = document.getElementById("pageTitle");
     const headingEl = document.getElementById("pageHeading");
@@ -925,11 +927,6 @@
     if (headingEl) headingEl.textContent = i18n.t("dashboard.title");
     if (upcomingTitleEl) upcomingTitleEl.textContent = i18n.t("dashboard.upcoming.title");
     if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = i18n.t("dashboard.upcoming.subtitle");
-    
-    // Update data-i18n attributes (timeline summary badges, etc.)
-    if (window.i18n && window.i18n.updatePage) {
-      window.i18n.updatePage();
-    }
     
     // Reload clinic info and events (this will re-render timeline with new language)
     loadClinicInfo();

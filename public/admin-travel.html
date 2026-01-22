@@ -1042,6 +1042,9 @@
     const pid = $("patientId").value.trim();
     if(!pid) return setStatus("patientId boş", false);
 
+    const token = getAdminToken();
+    if (!token) return setStatus("missing token (admin_token). Lütfen admin login olun.", false);
+
     // editPolicy is determined by patient - admin cannot change it
     // Always use existing editPolicy from state (loaded from backend)
     // Do NOT read from dropdowns - they are disabled and for display only
@@ -1142,14 +1145,14 @@
     try{
       const r = await fetch(endpoint(pid), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders({ "Content-Type": "application/json", Accept: "application/json" }),
         body: JSON.stringify(payload)
       });
       const text = await r.text();
       if(!r.ok) throw new Error(`HTTP ${r.status} → ${text}`);
 
       let j = null;
-      try { j = JSON.parse(text); } catch {}
+      try { j = JSON.parse(text); } catch (e) { console.error("[ADMIN-TRAVEL] Failed to parse JSON response:", e, { text }); }
       if (j && j.travel) normalizeFromServer(j.travel);
 
       setStatus("POST başarılı. Kaydedildi.");

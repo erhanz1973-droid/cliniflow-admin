@@ -364,7 +364,9 @@
         if (!pid) return;
         const a = document.querySelector('.nav a[href="/admin-travel.html"]');
         if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
-      } catch {}
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] bindNavTravelLink failed:", e);
+      }
     })();
 
     const API_BASE = window.API_BASE || window.location.origin || 'https://cliniflow-admin.onrender.com';
@@ -876,14 +878,20 @@
         const label = e.target.options[e.target.selectedIndex]?.text || '';
         const name = label.split('(')[0].trim();
         if (name) localStorage.setItem('selected_patient_name', name);
-      } catch {}
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] failed to persist selected patient:", e);
+      }
       loadHealthForm();
     });
 
     document.getElementById('patient-id').addEventListener('change', (e) => {
       const pid = (e.target.value || '').trim();
       if (!pid) return;
-      try { localStorage.setItem('selected_patient_id', pid); } catch {}
+      try {
+        localStorage.setItem('selected_patient_id', pid);
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] failed to persist selected patient id:", e);
+      }
       const select = document.getElementById('patient-select');
       if (select) select.value = pid;
     });
