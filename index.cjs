@@ -2318,7 +2318,8 @@ app.get("/api/admin/patients", requireAdminToken, async (req, res) => {
       const createdAt = p.created_at ? new Date(p.created_at).getTime() : (p.createdAt || 0);
       return {
         ...p,
-        patientId: p.id || p.patient_id || p.patientId,
+        // Prefer legacy app id (p_xxx) if present
+        patientId: p.patient_id || p.patientId || p.id,
         createdAt,
       };
     });
@@ -2348,243 +2349,47 @@ app.get("/api/admin/patients", requireAdminToken, async (req, res) => {
 });
 
 // ================== ADMIN APPROVE ==================
-app.post("/api/admin/approve", (req, res) => {
-  const { requestId, patientId } = req.body || {};
-  // PRIORITY: Use patientId first if available (more reliable), then requestId
-  if (!requestId && !patientId) {
-    return res.status(400).json({ ok: false, error: "requestId_or_patientId_required" });
+// Supabase is the single source of truth in production.
+// IMPORTANT:
+// - No file writes (PAT_FILE / REG_FILE / TOK_FILE) here.
+// - Update happens in Supabase ONLY.
+app.post("/api/admin/approve", requireAdminToken, async (req, res) => {
+  try {
+    const { patientId } = req.body || {};
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+
+    if (!req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+
+    console.log("[SUPABASE] approving patient", { patientId, clinic_id: req.clinicId });
+
+    const { error } = await supabase
+      .from("patients")
+      .update({
+        status: "APPROVED",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("patient_id", patientId)
+      .eq("clinic_id", req.clinicId);
+
+    if (error) {
+      console.error("[SUPABASE] approve failed:", error);
+      return res.status(500).json({ ok: false, error: "approve_failed" });
+    }
+
+    console.log("[SUPABASE] patient approved:", patientId);
+    return res.json({ ok: true, patientId, status: "APPROVED" });
+  } catch (e) {
+    console.error("[SUPABASE] approve exception:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-
-  console.log(`[APPROVE] ========== START APPROVE ==========`);
-  console.log(`[APPROVE] Request body:`, JSON.stringify({ requestId, patientId }, null, 2));
-  console.log(`[APPROVE] Will search with patientId: ${patientId}, requestId: ${requestId}`);
-
-  const regsRaw = readJson(REG_FILE, {});
-  let r = null;
-  
-  console.log(`[APPROVE] registrations.json type: ${Array.isArray(regsRaw) ? 'array' : typeof regsRaw}`);
-  if (Array.isArray(regsRaw)) {
-    console.log(`[APPROVE] registrations.json array length: ${regsRaw.length}`);
-  } else if (regsRaw && typeof regsRaw === "object") {
-    console.log(`[APPROVE] registrations.json object keys count: ${Object.keys(regsRaw).length}`);
-    console.log(`[APPROVE] First 5 keys:`, Object.keys(regsRaw).slice(0, 5));
-  }
-
-  // PRIORITY: Search by patientId first (more reliable), then by requestId
-  // First, try to find in registrations.json
-  if (Array.isArray(regsRaw)) {
-    console.log(`[APPROVE] registrations.json is an array with ${regsRaw.length} items`);
-    
-    // PRIORITY 1: Search by patientId (most reliable)
-    if (patientId) {
-      r = regsRaw.find((x) => x && (x.patientId === patientId || x.requestId === patientId)) || null;
-      if (r) {
-        console.log(`[APPROVE] ✅ Found in array by patientId:`, { requestId: r.requestId, patientId: r.patientId });
-      } else {
-        console.log(`[APPROVE] ❌ Not found in array by patientId: ${patientId}`);
-      }
-    }
-    
-    // PRIORITY 2: Search by requestId (if different from patientId)
-    if (!r && requestId && requestId !== patientId) {
-      r = regsRaw.find((x) => x && x.requestId === requestId) || null;
-      if (r) {
-        console.log(`[APPROVE] ✅ Found in array by requestId:`, { requestId: r.requestId, patientId: r.patientId });
-      } else {
-        console.log(`[APPROVE] ❌ Not found in array by requestId: ${requestId}`);
-      }
-    }
-    
-  } else if (regsRaw && typeof regsRaw === "object") {
-    console.log(`[APPROVE] registrations.json is an object with ${Object.keys(regsRaw).length} keys`);
-    
-    // PRIORITY 1: Search by patientId in values (also check requestId field)
-    if (patientId) {
-      r = Object.values(regsRaw).find((x) => x && (x.patientId === patientId || x.requestId === patientId)) || null;
-      if (r) {
-        console.log(`[APPROVE] ✅ Found in object by patientId:`, { requestId: r.requestId, patientId: r.patientId });
-      } else {
-        console.log(`[APPROVE] ❌ Not found in object by patientId: ${patientId}`);
-      }
-    }
-    
-    // PRIORITY 2: Try requestId as key (if different from patientId)
-    if (!r && requestId && requestId !== patientId) {
-      r = regsRaw[requestId] || null;
-      if (r) {
-        console.log(`[APPROVE] ✅ Found in object by requestId key:`, { requestId: r.requestId, patientId: r.patientId });
-      }
-    }
-    
-    // PRIORITY 3: Search all values by requestId (if different from patientId)
-    if (!r && requestId && requestId !== patientId) {
-      r = Object.values(regsRaw).find((x) => x && x.requestId === requestId) || null;
-      if (r) {
-        console.log(`[APPROVE] ✅ Found in object by requestId value:`, { requestId: r.requestId, patientId: r.patientId });
-      } else {
-        console.log(`[APPROVE] ❌ Not found in object by requestId: ${requestId}`);
-      }
-    }
-  } else {
-    console.log(`[APPROVE] registrations.json is empty or invalid`);
-  }
-
-  // If not found in registrations, try patients.json
-  // PRIORITY: If we have patientId, use it directly (most reliable)
-  if (!r?.patientId) {
-    console.log(`[APPROVE] Registration not found, checking patients.json`);
-    const patients = readJson(PAT_FILE, {});
-    console.log(`[APPROVE] Total patients in patients.json: ${Object.keys(patients).length}`);
-    console.log(`[APPROVE] Available patient IDs (first 10):`, Object.keys(patients).slice(0, 10));
-    
-    let patient = null;
-    
-    // PRIORITY 1: If we have patientId from request, use it directly (most reliable)
-    if (patientId) {
-      // Try direct key lookup first
-      patient = patients[patientId] || null;
-      if (patient) {
-        console.log(`[APPROVE] ✅ Found patient directly by patientId key: ${patientId}`);
-      } else {
-        // Try searching by patientId field in all patients
-        console.log(`[APPROVE] Direct lookup failed, searching by patientId field...`);
-        for (const pid in patients) {
-          const p = patients[pid];
-          if (p && (pid === patientId || p.patientId === patientId)) {
-            patient = p;
-            console.log(`[APPROVE] ✅ Found patient by searching: ${pid} (patientId field: ${p.patientId})`);
-            break;
-          }
-        }
-        if (!patient) {
-          console.log(`[APPROVE] ❌ Patient not found by patientId: ${patientId}`);
-        }
-      }
-    }
-    
-    // PRIORITY 2: Search all patients by patientId field (if patientId not found by direct lookup)
-    if (!patient && patientId) {
-      for (const pid in patients) {
-        const p = patients[pid];
-        if (p && (pid === patientId || p.patientId === patientId)) {
-          patient = p;
-          console.log(`[APPROVE] ✅ Found patient by searching with patientId: ${pid} (patientId: ${p.patientId})`);
-          break;
-        }
-      }
-    }
-    
-    // PRIORITY 3: Try requestId as search key (last resort)
-    if (!patient && requestId) {
-      patient = patients[requestId] || null;
-      if (patient) {
-        console.log(`[APPROVE] ✅ Found patient by requestId as key: ${requestId}`);
-      }
-    }
-    
-    // PRIORITY 4: Last resort - Search all registrations to find patientId from requestId (any format)
-    if (!patient && requestId) {
-      console.log(`[APPROVE] Last resort: Searching all registrations for requestId: ${requestId}`);
-      const allRegs = readJson(REG_FILE, {});
-      const regList = Array.isArray(allRegs) ? allRegs : Object.values(allRegs);
-      const foundReg = regList.find((reg) => reg && reg.requestId === requestId);
-      if (foundReg && foundReg.patientId) {
-        patient = patients[foundReg.patientId] || null;
-        if (patient) {
-          console.log(`[APPROVE] ✅ Found patient via registration lookup: ${foundReg.patientId}`);
-          // Use the found registration
-          r = foundReg;
-        } else {
-          console.log(`[APPROVE] ❌ Found registration but patient not found: ${foundReg.patientId}`);
-        }
-      } else {
-        console.log(`[APPROVE] ❌ Registration not found with requestId: ${requestId}`);
-      }
-    }
-    
-    if (patient) {
-      console.log(`[APPROVE] Found patient directly in patients.json, creating registration entry`);
-      // Create a registration entry for this patient
-      const patientIdToUse = patient.patientId || patientId;
-      const newReg = {
-        requestId: requestId || `req_${patientIdToUse}`,
-        patientId: patientIdToUse,
-        name: patient.name || "",
-        phone: patient.phone || "",
-        status: "PENDING",
-        clinicCode: patient.clinicCode || null,
-        createdAt: patient.createdAt || now(),
-        updatedAt: now(),
-      };
-      
-      // Add to registrations
-      const regs = readJson(REG_FILE, {});
-      if (Array.isArray(regs)) {
-        regs.push(newReg);
-        writeJson(REG_FILE, regs);
-      } else {
-        const regsObj = regs || {};
-        regsObj[newReg.requestId] = newReg;
-        writeJson(REG_FILE, regsObj);
-      }
-      
-      r = newReg;
-      console.log(`[APPROVE] Created registration entry:`, newReg);
-    } else {
-      const availableIds = Object.keys(patients).slice(0, 10);
-      console.log(`[APPROVE] Patient not found in patients.json.`);
-      console.log(`[APPROVE] Searched for: requestId=${requestId}, patientId=${patientId}`);
-      console.log(`[APPROVE] Available patient IDs (first 10):`, availableIds);
-      const errorMessage = `Patient not found. Searched with: ${JSON.stringify({ requestId, patientId })}. Available patient IDs: ${availableIds.join(", ")}`;
-      return res.status(404).json({ 
-        ok: false, 
-        error: "not_found", 
-        message: errorMessage 
-      });
-    }
-  }
-
-  // patient APPROVED
-  const patients = readJson(PAT_FILE, {});
-  patients[r.patientId] = {
-    ...(patients[r.patientId] || { patientId: r.patientId, createdAt: now() }),
-    name: r.name || patients[r.patientId]?.name || "",
-    phone: r.phone || patients[r.patientId]?.phone || "",
-    status: "APPROVED",
-    updatedAt: now(),
-  };
-  writeJson(PAT_FILE, patients);
-
-  // tokens for patient -> APPROVED
-  const tokens = readJson(TOK_FILE, {});
-  let upgradedTokens = 0;
-  for (const tk of Object.keys(tokens)) {
-    if (tokens[tk]?.patientId === r.patientId) {
-      tokens[tk].role = "APPROVED";
-      upgradedTokens++;
-      console.log(`[APPROVE] Upgraded token: ${tk.substring(0, 10)}... for patientId: ${r.patientId}`);
-    }
-  }
-  writeJson(TOK_FILE, tokens);
-  console.log(`[APPROVE] Total tokens upgraded: ${upgradedTokens} for patientId: ${r.patientId}`);
-
-  // registrations update
-  if (Array.isArray(regsRaw)) {
-    regsRaw.forEach((x) => {
-      if (x && x.patientId === r.patientId) {
-        x.status = "APPROVED";
-        x.updatedAt = now();
-        x.requestId = x.requestId || requestId;
-      }
-    });
-    writeJson(REG_FILE, regsRaw);
-  } else {
-    const key = r.requestId || requestId;
-    regsRaw[key] = { ...r, status: "APPROVED", updatedAt: now(), requestId: key };
-    writeJson(REG_FILE, regsRaw);
-  }
-
-  res.json({ ok: true, patientId: r.patientId, status: "APPROVED", upgradedTokens });
 });
 
 // ================== PATIENT TRAVEL ==================
