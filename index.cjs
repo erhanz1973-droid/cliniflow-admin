@@ -2786,6 +2786,7 @@ async function saveTravelHandler(req, res) {
     // "clinic" vs "patient" is what we show in UI/labels
     const actor = req.isAdmin ? "clinic" : "patient";
     const nowTs = now();
+    const hasIncoming = (k) => Object.prototype.hasOwnProperty.call(incoming, k);
 
     // PRODUCTION: Supabase is source of truth
     if (isSupabaseEnabled()) {
@@ -2816,25 +2817,43 @@ async function saveTravelHandler(req, res) {
 
       const existingTravel = isPlainObject(p?.travel) ? p.travel : {};
       const base = deepMerge(defaultTravelData(patientId), existingTravel);
-      let payload = deepMerge(base, incoming);
+
+      // CRITICAL: Never let one actor overwrite the other's fields.
+      // - Admin may only update: hotel, airportPickup
+      // - Patient may only update: flights/flight, notes, editPolicy
+      // Missing fields MUST be preserved; forbidden fields are ignored (not deleted).
+      const patch = {};
+      if (req.isAdmin) {
+        if (hasIncoming("hotel")) patch.hotel = incoming.hotel;
+        if (hasIncoming("airportPickup")) patch.airportPickup = incoming.airportPickup;
+        // Admin cannot change editPolicy or patient-controlled fields
+      } else {
+        if (hasIncoming("notes")) patch.notes = incoming.notes;
+        if (hasIncoming("flights")) patch.flights = incoming.flights;
+        if (hasIncoming("flight")) patch.flight = incoming.flight;
+        // Patient can set editPolicy (patient-controlled)
+        if (hasIncoming("editPolicy")) patch.editPolicy = incoming.editPolicy;
+      }
+
+      const touched = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+      let payload = deepMerge(base, patch);
 
       payload.patientId = patientId;
       payload.schemaVersion = payload.schemaVersion || base.schemaVersion || 1;
       payload.updatedAt = nowTs;
 
-      // Normalize airportPickup to support both legacy + v2 keys
-      if (payload.airportPickup && isPlainObject(payload.airportPickup)) {
+      // Normalize airportPickup ONLY when it was explicitly patched (prevents accidental changes/deletes)
+      if (touched("airportPickup") && payload.airportPickup && isPlainObject(payload.airportPickup)) {
         payload.airportPickup = normalizeAirportPickup(payload.airportPickup, actor);
       }
 
       // Persist new flight model while keeping legacy `flights[]`
       // If legacy flights[] was updated and flight wasn't explicitly provided, derive flight.arrival/departure
-      const has = (k) => Object.prototype.hasOwnProperty.call(incoming, k);
-      if (has("flights") && !has("flight")) {
+      if (touched("flights") && !touched("flight")) {
         const derived = deriveFlightFromFlights(payload.flights);
         const baseFlight = isPlainObject(base.flight) ? base.flight : {};
         payload.flight = deepMerge(baseFlight, derived);
-      } else if (has("flight") && isPlainObject(payload.flight)) {
+      } else if (touched("flight") && isPlainObject(payload.flight)) {
         // normalize common field names (flightNo/flightNumber) on legs
         payload.flight = {
           ...payload.flight,
@@ -2845,10 +2864,10 @@ async function saveTravelHandler(req, res) {
 
       // Update enteredBy for touched areas
       payload.enteredBy = isPlainObject(base.enteredBy) ? { ...base.enteredBy } : {};
-      if (has("hotel")) payload.enteredBy.hotel = actor;
-      if (has("airportPickup")) payload.enteredBy.airportPickup = actor;
-      if (has("flight") || has("flights")) payload.enteredBy.flight = actor;
-      if (has("notes")) payload.enteredBy.notes = actor;
+      if (touched("hotel")) payload.enteredBy.hotel = actor;
+      if (touched("airportPickup")) payload.enteredBy.airportPickup = actor;
+      if (touched("flight") || touched("flights")) payload.enteredBy.flight = actor;
+      if (touched("notes")) payload.enteredBy.notes = actor;
 
       // Completion flags
       const isFormCompleted = computeFormCompleted(payload);
@@ -2932,27 +2951,39 @@ async function saveTravelHandler(req, res) {
     const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
     const existing = readJson(travelFile, {});
     const base = deepMerge(defaultTravelData(patientId), existing);
-    let payload = deepMerge(base, incoming);
+    // Apply the same actor-based patch rules for file fallback.
+    const patch = {};
+    if (req.isAdmin) {
+      if (hasIncoming("hotel")) patch.hotel = incoming.hotel;
+      if (hasIncoming("airportPickup")) patch.airportPickup = incoming.airportPickup;
+    } else {
+      if (hasIncoming("notes")) patch.notes = incoming.notes;
+      if (hasIncoming("flights")) patch.flights = incoming.flights;
+      if (hasIncoming("flight")) patch.flight = incoming.flight;
+      if (hasIncoming("editPolicy")) patch.editPolicy = incoming.editPolicy;
+    }
+    const touched = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+
+    let payload = deepMerge(base, patch);
     payload.patientId = patientId;
     payload.schemaVersion = payload.schemaVersion || base.schemaVersion || 1;
     payload.updatedAt = nowTs;
 
-    if (payload.airportPickup && isPlainObject(payload.airportPickup)) {
+    if (touched("airportPickup") && payload.airportPickup && isPlainObject(payload.airportPickup)) {
       payload.airportPickup = normalizeAirportPickup(payload.airportPickup, actor);
     }
 
     payload.enteredBy = isPlainObject(base.enteredBy) ? { ...base.enteredBy } : {};
-    const has = (k) => Object.prototype.hasOwnProperty.call(incoming, k);
-    if (has("hotel")) payload.enteredBy.hotel = actor;
-    if (has("airportPickup")) payload.enteredBy.airportPickup = actor;
-    if (has("flight") || has("flights")) payload.enteredBy.flight = actor;
-    if (has("notes")) payload.enteredBy.notes = actor;
+    if (touched("hotel")) payload.enteredBy.hotel = actor;
+    if (touched("airportPickup")) payload.enteredBy.airportPickup = actor;
+    if (touched("flight") || touched("flights")) payload.enteredBy.flight = actor;
+    if (touched("notes")) payload.enteredBy.notes = actor;
 
-    if (has("flights") && !has("flight")) {
+    if (touched("flights") && !touched("flight")) {
       const derived = deriveFlightFromFlights(payload.flights);
       const baseFlight = isPlainObject(base.flight) ? base.flight : {};
       payload.flight = deepMerge(baseFlight, derived);
-    } else if (has("flight") && isPlainObject(payload.flight)) {
+    } else if (touched("flight") && isPlainObject(payload.flight)) {
       payload.flight = {
         ...payload.flight,
         arrival: normalizeFlightLeg(payload.flight.arrival) || payload.flight.arrival,
@@ -3272,6 +3303,13 @@ async function saveTreatmentV1Handler(req, res) {
         code: fetchErr.code,
         details: fetchErr.details,
       });
+      if (isMissingColumnError(fetchErr, "treatment")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_column_missing",
+          message: "Supabase schema missing: patients.treatment. Run migration 005_add_patient_treatment.sql",
+        });
+      }
       if (String(fetchErr.code || "") === "PGRST116") {
         return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
@@ -3297,6 +3335,13 @@ async function saveTreatmentV1Handler(req, res) {
         code: saveErr.code,
         details: saveErr.details,
       });
+      if (isMissingColumnError(saveErr, "treatment")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_column_missing",
+          message: "Supabase schema missing: patients.treatment. Run migration 005_add_patient_treatment.sql",
+        });
+      }
       return res.status(500).json({ ok: false, error: "treatment_save_failed" });
     }
 
@@ -3306,6 +3351,51 @@ async function saveTreatmentV1Handler(req, res) {
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
+
+// GET /api/patient/:patientId/treatment (v1 JSONB, Supabase source of truth)
+app.get("/api/patient/:patientId/treatment", requireAdminOrPatientToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    // Patient can only access their own record
+    if (!req.isAdmin && req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      // No silent fallback in production; treatment must be persisted in Supabase
+      return res.status(500).json(supabaseDisabledPayload("treatment"));
+    }
+
+    const clinicFilter = req.isAdmin ? req.clinicId : null;
+    const { data: p, error } = await fetchPatientTreatmentRowSupabase(patientId, clinicFilter);
+    if (error) {
+      console.error("[TREATMENT] Supabase fetch failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      if (isMissingColumnError(error, "treatment")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_column_missing",
+          message: "Supabase schema missing: patients.treatment. Run migration 005_add_patient_treatment.sql",
+        });
+      }
+      if (String(error.code || "") === "PGRST116") {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+      return res.status(500).json({ ok: false, error: "treatment_fetch_failed" });
+    }
+
+    const merged = deepMerge(defaultTreatmentV1(), isPlainObject(p?.treatment) ? p.treatment : {});
+    return res.json({ ok: true, treatment: merged });
+  } catch (e) {
+    console.error("[TREATMENT] GET error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
 
 // POST / PUT /api/patient/:patientId/treatment (new persistence endpoint)
 app.post("/api/patient/:patientId/treatment", requireAdminOrPatientToken, saveTreatmentV1Handler);
@@ -4079,6 +4169,15 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       if (!r1.error) {
         supabaseTreatments = r1.data?.treatments || null;
       } else {
+        // If schema is missing, do NOT fall back to ephemeral disk in production.
+        if (isMissingColumnError(r1.error, "treatments")) {
+          return res.status(500).json({
+            ok: false,
+            error: "treatments_column_missing",
+            message:
+              "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
+          });
+        }
         const msg = String(r1.error?.message || "");
         const isMissingPatientIdCol =
           msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
@@ -4095,6 +4194,13 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
           const r2 = await q2.single();
           if (!r2.error) {
             supabaseTreatments = r2.data?.treatments || null;
+          } else if (isMissingColumnError(r2.error, "treatments")) {
+            return res.status(500).json({
+              ok: false,
+              error: "treatments_column_missing",
+              message:
+                "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
+            });
           }
         }
       }
@@ -4370,6 +4476,14 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
+      if (isMissingColumnError(supabaseError, "treatments")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatments_column_missing",
+          message:
+            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
+        });
+      }
       // In production, do NOT silently fall back to ephemeral disk.
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
@@ -4530,6 +4644,14 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
+      if (isMissingColumnError(supabaseError, "treatments")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatments_column_missing",
+          message:
+            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
+        });
+      }
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
 
@@ -4644,6 +4766,14 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
+      if (isMissingColumnError(supabaseError, "treatments")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatments_column_missing",
+          message:
+            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
+        });
+      }
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
 
