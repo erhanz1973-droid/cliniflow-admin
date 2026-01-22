@@ -3402,13 +3402,11 @@ app.post("/api/patient/:patientId/treatment", requireAdminOrPatientToken, saveTr
 app.put("/api/patient/:patientId/treatment", requireAdminOrPatientToken, saveTreatmentV1Handler);
 
 // ================== PATIENT HEALTH FORM ==================
-async function fetchPatientHealthRowSupabase(patientId) {
+async function fetchPatientHealthRowSupabase(patientId, clinicIdOrNull) {
   // Prefer `patient_id` when available; fall back to `id`.
-  const r1 = await supabase
-    .from("patients")
-    .select("id, patient_id, health")
-    .eq("patient_id", patientId)
-    .single();
+  let q1 = supabase.from("patients").select("id, clinic_id, patient_id, health").eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.single();
 
   if (!r1.error) return { data: r1.data, key: "patient_id" };
 
@@ -3418,11 +3416,9 @@ async function fetchPatientHealthRowSupabase(patientId) {
   const isNotFound = String(r1.error?.code || "") === "PGRST116";
   if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
 
-  const r2 = await supabase
-    .from("patients")
-    .select("id, health")
-    .eq("id", patientId)
-    .single();
+  let q2 = supabase.from("patients").select("id, clinic_id, health").eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.single();
   if (!r2.error) return { data: r2.data, key: "id" };
   return { error: r2.error };
 }
@@ -3700,32 +3696,77 @@ app.put("/api/patient/:patientId/health", requireToken, async (req, res) => {
 });
 
 // GET /api/admin/patients/:patientId/health
-app.get("/api/admin/patients/:patientId/health", requireAdminAuth, (req, res) => {
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
-  const patient = getPatientRecordById(patientId);
-  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
-  const patientClinic = String(patient.clinicCode || patient.clinic_code || "").trim().toUpperCase();
-  const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
-  if (clinicCode && patientClinic && clinicCode !== patientClinic) {
-    return res.status(403).json({ ok: false, error: "patient_not_in_clinic" });
-  }
+    // PRODUCTION: Supabase is source of truth (admin must see persisted health data)
+    if (isSupabaseEnabled()) {
+      const clinicFilter = req.clinicId || null;
+      const { data: p, error } = await fetchPatientHealthRowSupabase(patientId, clinicFilter);
+      if (error) {
+        console.error("[ADMIN HEALTH] Supabase fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        if (isMissingColumnError(error, "health")) {
+          return res.status(500).json({
+            ok: false,
+            error: "health_column_missing",
+            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
+          });
+        }
+        if (String(error.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "health_fetch_failed" });
+      }
 
-  const HEALTH_DIR = ensureHealthDir();
-  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
-  if (!fs.existsSync(filePath)) {
-    return res.json({ ok: true, formData: null, isComplete: false });
+      const health = isPlainObject(p?.health) ? p.health : {};
+      return res.json({
+        ok: true,
+        formData: health.formData || {},
+        isComplete: health.isComplete === true,
+        completedAt: health.completedAt || null,
+        updatedAt: health.updatedAt || null,
+        createdAt: health.createdAt || null,
+      });
+    }
+
+    if (!canUseFileFallback()) {
+      console.error("[ADMIN HEALTH] Supabase disabled (file fallback disabled)");
+      return res.status(500).json(supabaseDisabledPayload("health"));
+    }
+
+    // Legacy fallback (file-based) – dev only
+    const patient = getPatientRecordById(patientId);
+    if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
+    const patientClinic = String(patient.clinicCode || patient.clinic_code || "").trim().toUpperCase();
+    const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
+    if (clinicCode && patientClinic && clinicCode !== patientClinic) {
+      return res.status(403).json({ ok: false, error: "patient_not_in_clinic" });
+    }
+
+    const HEALTH_DIR = ensureHealthDir();
+    const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+    if (!fs.existsSync(filePath)) {
+      return res.json({ ok: true, formData: null, isComplete: false });
+    }
+    const data = readJson(filePath, {});
+    return res.json({
+      ok: true,
+      formData: data.formData || {},
+      isComplete: data.isComplete || false,
+      completedAt: data.completedAt || null,
+      updatedAt: data.updatedAt || null,
+      createdAt: data.createdAt || null,
+    });
+  } catch (e) {
+    console.error("[ADMIN HEALTH] GET error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-  const data = readJson(filePath, {});
-  return res.json({
-    ok: true,
-    formData: data.formData || {},
-    isComplete: data.isComplete || false,
-    completedAt: data.completedAt || null,
-    updatedAt: data.updatedAt || null,
-    createdAt: data.createdAt || null,
-  });
 });
 
 // GET /api/health-form/schema
