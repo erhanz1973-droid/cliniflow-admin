@@ -1070,27 +1070,32 @@ app.post("/api/register", async (req, res) => {
       clinicId: supabaseClinicId,
     });
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("patients")
       .insert({
-        id: patientId,
         name: String(name || ""),
         phone: phoneNormalized,
         email: emailNormalized,
         clinic_id: supabaseClinicId, // ⚠️ KRİTİK
         status: "PENDING",
         created_at: new Date().toISOString(),
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error("[SUPABASE] ❌ patient insert failed:", error);
+      console.error("[SUPABASE] ❌ patient insert failed FULL ERROR", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
       return res.status(500).json({
         ok: false,
         error: "patient_insert_failed",
       });
     }
 
-    console.log("[SUPABASE] ✅ patient inserted:", patientId);
+    console.log("[SUPABASE] ✅ patient inserted:", data?.id);
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -1471,27 +1476,32 @@ app.post("/api/patient/register", async (req, res) => {
       clinicId: supabaseClinicId,
     });
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("patients")
       .insert({
-        id: patientId,
         name: String(name || ""),
         phone: phoneNormalized,
         email: emailNormalized,
         clinic_id: supabaseClinicId, // ⚠️ KRİTİK
         status: "PENDING",
         created_at: new Date().toISOString(),
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
-      console.error("[SUPABASE] ❌ patient insert failed:", error);
+      console.error("[SUPABASE] ❌ patient insert failed FULL ERROR", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
       return res.status(500).json({
         ok: false,
         error: "patient_insert_failed",
       });
     }
 
-    console.log("[SUPABASE] ✅ patient inserted:", patientId);
+    console.log("[SUPABASE] ✅ patient inserted:", data?.id);
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
