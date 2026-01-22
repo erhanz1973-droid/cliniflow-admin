@@ -52,6 +52,7 @@ const {
 } = require("./lib/supabase");
 
 const app = express();
+console.log("[MESSAGES] fallback insert enabled: v2");
 const server = http.createServer(app);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
