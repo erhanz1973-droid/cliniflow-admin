@@ -213,7 +213,7 @@
           <span>|</span>
           <span>EN</span>
         </div>
-        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+        <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
       </div>
     </nav>
 
@@ -280,6 +280,15 @@
     
     function getAdminToken() {
       return localStorage.getItem('admin_token') || '';
+    }
+    function logout() {
+      try {
+        localStorage.removeItem("admin_token");
+        console.log("[LOGOUT] Admin token cleared");
+      } catch (e) {
+        console.error("[LOGOUT] Error clearing token:", e);
+      }
+      window.location.href = "/admin-login.html";
     }
 
     function showError(msg) {

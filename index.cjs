@@ -33,6 +33,8 @@ const {
   createPatient,
   updatePatient,
   countPatientsByClinic,
+  getChatMessagesByPatient,
+  createChatMessage,
   // OTP fonksiyonları DEVRE DIŞI - Sadece file-based OTP kullanılıyor
   // createOTP: createOTPInDB,
   // getOTPByEmail: getOTPByEmailFromDB,
@@ -1143,27 +1145,100 @@ app.post("/api/register", async (req, res) => {
       
       // Create referral record if inviter found
       if (inviterPatientId) {
-        const referrals = readJson(REF_FILE, []);
-        const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-        
-        const newReferral = {
-          id: rid("ref"),
-          inviterPatientId,
-          inviterPatientName,
-          invitedPatientId: patientId,
-          invitedPatientName: String(name || ""),
-          status: "PENDING",
-          createdAt: now(),
-          inviterDiscountPercent: null,
-          invitedDiscountPercent: null,
-          discountPercent: null,
-          checkInAt: null,
-          approvedAt: null,
-        };
-        
-        referralList.push(newReferral);
-        writeJson(REF_FILE, referralList);
-        console.log(`[REGISTER] Created referral: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+        // PRODUCTION: Self-referral check
+        if (inviterPatientId === patientId) {
+          console.log(`[REGISTER] ❌ Self-referral blocked: inviter=${inviterPatientId}, invited=${patientId}`);
+          // Don't fail registration, just skip referral creation
+        } else {
+          // PRODUCTION: Check for existing referral (UNIQUE constraint)
+          let existingReferral = null;
+          
+          // SUPABASE: Check for existing referral
+          if (isSupabaseEnabled() && supabaseClinicId) {
+            try {
+              const { data: existing, error: checkError } = await supabase
+                .from('referrals')
+                .select('*')
+                .eq('clinic_id', supabaseClinicId)
+                .eq('referrer_patient_id', inviterPatientId)
+                .eq('referred_patient_id', patientId)
+                .is('deleted_at', null)
+                .maybeSingle();
+              
+              if (!checkError && existing) {
+                existingReferral = existing;
+                console.log(`[REGISTER] Existing referral found in Supabase: ${existing.id}`);
+              }
+            } catch (e) {
+              console.error(`[REGISTER] Error checking Supabase for existing referral:`, e);
+            }
+          }
+          
+          // FILE-BASED: Check for existing referral
+          if (!existingReferral) {
+            const referrals = readJson(REF_FILE, []);
+            const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+            existingReferral = referralList.find(
+              (r) => r && 
+              (r.inviterPatientId || r.inviter_patient_id) === inviterPatientId &&
+              (r.invitedPatientId || r.invited_patient_id) === patientId &&
+              !r.deleted_at
+            );
+          }
+          
+          if (existingReferral) {
+            console.log(`[REGISTER] ⚠️ Referral already exists for inviter=${inviterPatientId}, invited=${patientId}, skipping creation`);
+          } else {
+            // Create new referral
+            const referralCode = `REF_${inviterPatientId}_${patientId}_${now()}`;
+            
+            // SUPABASE: Primary source of truth
+            if (isSupabaseEnabled() && supabaseClinicId) {
+              try {
+                const referralData = {
+                  clinic_id: supabaseClinicId,
+                  referrer_patient_id: inviterPatientId,
+                  referred_patient_id: patientId,
+                  referral_code: referralCode,
+                  status: 'PENDING',
+                  inviter_discount_percent: null,
+                  invited_discount_percent: null,
+                  discount_percent: null
+                };
+                
+                const created = await createReferralInDB(referralData);
+                console.log(`[REGISTER] ✅ Created referral in Supabase: ${created?.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+              } catch (supabaseError) {
+                console.error(`[REGISTER] ❌ Failed to create referral in Supabase:`, supabaseError.message);
+                // Fall through to file-based
+              }
+            }
+            
+            // FILE-BASED: Fallback
+            const referrals = readJson(REF_FILE, []);
+            const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+            
+            const newReferral = {
+              id: rid("ref"),
+              inviterPatientId,
+              inviterPatientName,
+              invitedPatientId: patientId,
+              invitedPatientName: String(name || ""),
+              status: "PENDING",
+              createdAt: now(),
+              inviterDiscountPercent: null,
+              invitedDiscountPercent: null,
+              discountPercent: null,
+              checkInAt: null,
+              approvedAt: null,
+              clinicCode: validatedClinicCode,
+            };
+            
+            referralList.push(newReferral);
+            writeJson(REF_FILE, referralList);
+            console.log(`[REGISTER] Created referral in file: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+          }
+        }
       } else {
         console.log(`[REGISTER] Referral code not found: ${refCode}`);
       }
@@ -1469,9 +1544,95 @@ app.post("/api/patient/register", async (req, res) => {
           approvedAt: null,
         };
         
-        referralList.push(newReferral);
-        writeJson(REF_FILE, referralList);
-        console.log(`[PATIENT/REGISTER] Created referral: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+        // PRODUCTION: Self-referral check
+        if (inviterPatientId === patientId) {
+          console.log(`[PATIENT/REGISTER] ❌ Self-referral blocked: inviter=${inviterPatientId}, invited=${patientId}`);
+          // Don't fail registration, just skip referral creation
+        } else {
+          // PRODUCTION: Check for existing referral (UNIQUE constraint)
+          let existingReferral = null;
+          
+          // SUPABASE: Check for existing referral
+          if (isSupabaseEnabled() && supabaseClinicId) {
+            try {
+              const { data: existing, error: checkError } = await supabase
+                .from('referrals')
+                .select('*')
+                .eq('clinic_id', supabaseClinicId)
+                .eq('referrer_patient_id', inviterPatientId)
+                .eq('referred_patient_id', patientId)
+                .is('deleted_at', null)
+                .maybeSingle();
+              
+              if (!checkError && existing) {
+                existingReferral = existing;
+                console.log(`[PATIENT/REGISTER] Existing referral found in Supabase: ${existing.id}`);
+              }
+            } catch (e) {
+              console.error(`[PATIENT/REGISTER] Error checking Supabase for existing referral:`, e);
+            }
+          }
+          
+          // FILE-BASED: Check for existing referral
+          if (!existingReferral) {
+            existingReferral = referralList.find(
+              (r) => r && 
+              (r.inviterPatientId || r.inviter_patient_id) === inviterPatientId &&
+              (r.invitedPatientId || r.invited_patient_id) === patientId &&
+              !r.deleted_at
+            );
+          }
+          
+          if (existingReferral) {
+            console.log(`[PATIENT/REGISTER] ⚠️ Referral already exists for inviter=${inviterPatientId}, invited=${patientId}, skipping creation`);
+          } else {
+            // Create new referral
+            const referralCode = `REF_${inviterPatientId}_${patientId}_${now()}`;
+            
+            // SUPABASE: Primary source of truth
+            if (isSupabaseEnabled() && supabaseClinicId) {
+              try {
+                const referralData = {
+                  clinic_id: supabaseClinicId,
+                  referrer_patient_id: inviterPatientId,
+                  referred_patient_id: patientId,
+                  referral_code: referralCode,
+                  status: 'PENDING',
+                  inviter_discount_percent: null,
+                  invited_discount_percent: null,
+                  discount_percent: null
+                };
+                
+                const created = await createReferralInDB(referralData);
+                console.log(`[PATIENT/REGISTER] ✅ Created referral in Supabase: ${created?.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+              } catch (supabaseError) {
+                console.error(`[PATIENT/REGISTER] ❌ Failed to create referral in Supabase:`, supabaseError.message);
+                // Fall through to file-based
+              }
+            }
+            
+            // FILE-BASED: Fallback
+            const newReferral = {
+              id: rid("ref"),
+              inviterPatientId,
+              inviterPatientName,
+              invitedPatientId: patientId,
+              invitedPatientName: String(name || ""),
+              status: "PENDING",
+              createdAt: now(),
+              inviterDiscountPercent: null,
+              invitedDiscountPercent: null,
+              discountPercent: null,
+              checkInAt: null,
+              approvedAt: null,
+              clinicCode: validatedClinicCode,
+            };
+            
+            referralList.push(newReferral);
+            writeJson(REF_FILE, referralList);
+            console.log(`[PATIENT/REGISTER] Created referral in file: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+          }
+        }
       }
     } catch (err) {
       console.error("[PATIENT/REGISTER] Referral creation error:", err);
@@ -3014,7 +3175,8 @@ function updatePatientOralHealthScores(patientId) {
 
 // ================== PATIENT TREATMENTS ==================
 // GET /api/patient/:patientId/treatments
-app.get("/api/patient/:patientId/treatments", (req, res) => {
+// Optional auth: Admin token OR patient token accepted
+app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   const patientId = req.params.patientId;
   const method = req.method;
   const url = req.url;
@@ -3030,6 +3192,92 @@ app.get("/api/patient/:patientId/treatments", (req, res) => {
     origin: headers.origin,
     "user-agent": headers["user-agent"]?.substring(0, 50),
   });
+  
+  // Optional auth: Try admin token first, then patient token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      
+      // Check if it's an admin token (has clinicCode)
+      if (decoded.clinicCode) {
+        console.log(`[TREATMENTS GET] Admin token detected, clinicCode: ${decoded.clinicCode}`);
+        // Use requireAdminToken logic
+        const clinicCode = decoded.clinicCode;
+        if (isSupabaseEnabled()) {
+          const clinic = await getClinicByCode(clinicCode);
+          if (clinic) {
+            req.clinicId = clinic.id;
+            req.clinicCode = clinic.clinic_code;
+            req.clinicStatus = clinic.settings?.status || "ACTIVE";
+            req.clinic = clinic;
+            req.isAdmin = true;
+            console.log(`[TREATMENTS GET] ✅ Admin auth successful`);
+            return next();
+          }
+        }
+        // File fallback for admin
+        const clinics = readJson(CLINICS_FILE, {});
+        const code = String(clinicCode).toUpperCase();
+        for (const cid in clinics) {
+          const c = clinics[cid];
+          if (c && (c.clinicCode || c.code) && String(c.clinicCode || c.code).toUpperCase() === code) {
+            req.clinicId = cid;
+            req.clinicCode = c.clinicCode || c.code;
+            req.clinicStatus = c.status || "ACTIVE";
+            req.clinic = c;
+            req.isAdmin = true;
+            console.log(`[TREATMENTS GET] ✅ Admin auth successful (file)`);
+            return next();
+          }
+        }
+      }
+      
+      // Check if it's a patient token (has patientId)
+      if (decoded.patientId) {
+        console.log(`[TREATMENTS GET] Patient token detected, patientId: ${decoded.patientId}`);
+        // Verify patient can only access their own treatments
+        if (decoded.patientId !== patientId) {
+          return res.status(403).json({ ok: false, error: "patient_id_mismatch", message: "Bu hasta bilgilerine erişim yetkiniz yok." });
+        }
+        req.patientId = decoded.patientId;
+        req.isAdmin = false;
+        console.log(`[TREATMENTS GET] ✅ Patient auth successful`);
+        return next();
+      }
+    } catch (jwtError) {
+      // JWT verification failed, try patient token fallback
+      console.log(`[TREATMENTS GET] JWT verification failed, trying patient token fallback`);
+    }
+  }
+  
+  // Try patient token (legacy tokens.json)
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const altToken = req.headers["x-patient-token"] || "";
+  const finalToken = token || altToken;
+  
+  if (finalToken) {
+    const tokens = readJson(TOK_FILE, {});
+    const t = tokens[finalToken];
+    if (t?.patientId) {
+      if (t.patientId !== patientId) {
+        return res.status(403).json({ ok: false, error: "patient_id_mismatch", message: "Bu hasta bilgilerine erişim yetkiniz yok." });
+      }
+      req.patientId = t.patientId;
+      req.isAdmin = false;
+      console.log(`[TREATMENTS GET] ✅ Patient auth successful (legacy token)`);
+      return next();
+    }
+  }
+  
+  // No valid token found
+  console.log(`[TREATMENTS GET] ❌ No valid token found`);
+  return res.status(401).json({ ok: false, error: "unauthorized", message: "Token bulunamadı veya geçersiz." });
+}, (req, res) => {
+  // Continue with endpoint logic
+  const patientId = req.params.patientId;
   
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
   if (!fs.existsSync(TREATMENTS_DIR)) {
@@ -4313,19 +4561,46 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
 
 // ================== REFERRALS ==================
 // GET /api/admin/referrals?status=PENDING|APPROVED|REJECTED
-app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
+app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
   try {
     const status = req.query.status;
-    const clinicCode = req.clinicCode; // Get clinic code from auth middleware
-    const clinicId = req.clinicId;
     
-    if (!clinicCode && !clinicId) {
+    // PRODUCTION: Clinic isolation - use req.clinic.id (UUID) from requireAdminToken
+    if (!req.clinic || !req.clinicId) {
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated", message: "Klinik kimlik doğrulaması yapılmadı." });
     }
     
+    const clinicId = req.clinicId; // UUID from Supabase or file-based ID
+    const clinicCode = req.clinicCode;
+    
     console.log(`[REFERRALS] Fetching referrals for clinic: code=${clinicCode}, id=${clinicId}`);
     
-    // Get all referrals
+    // SUPABASE: Primary source of truth
+    if (isSupabaseEnabled()) {
+      try {
+        const referrals = await getReferralsByClinicFromDB(clinicId);
+        let items = referrals || [];
+        
+        // Filter by status if provided
+        if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
+          items = items.filter((r) => r.status === status);
+        }
+        
+        // Exclude soft-deleted referrals
+        items = items.filter((r) => !r.deleted_at);
+        
+        // Sort by created date (newest first)
+        items.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+        
+        console.log(`[REFERRALS] Returning ${items.length} referrals from Supabase for clinic ${clinicCode}`);
+        return res.json({ ok: true, items });
+      } catch (supabaseError) {
+        console.error(`[REFERRALS] Supabase error:`, supabaseError.message);
+        // Fall through to file-based
+      }
+    }
+    
+    // FILE-BASED: Fallback
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     
@@ -4348,8 +4623,9 @@ app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
     console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
     
     // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
+    // CRITICAL: Clinic isolation - never trust body/query params
     let items = list.filter((x) => {
-      if (!x) return false;
+      if (!x || x.deleted_at) return false; // Exclude soft-deleted
       const inviterId = x.inviterPatientId || x.inviter_patient_id;
       const invitedId = x.invitedPatientId || x.invited_patient_id;
       
@@ -4365,14 +4641,14 @@ app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
     });
     
     // Apply status filter if provided
-    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
+    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
       items = items.filter((x) => x && x.status === status);
     }
     
     console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
     
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    res.json({ items });
+    res.json({ ok: true, items });
   } catch (error) {
     console.error("Referrals list error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -4380,8 +4656,9 @@ app.get("/api/admin/referrals", requireAdminAuth, (req, res) => {
 });
 
 // GET /api/patient/:patientId/referrals
+// PRODUCTION: Admin only - patient token access FORBIDDEN
 // Get referrals where this patient is the inviter OR the invited patient
-app.get("/api/patient/:patientId/referrals", (req, res) => {
+app.get("/api/patient/:patientId/referrals", requireAdminToken, (req, res) => {
   console.log(`[GET /api/patient/:patientId/referrals] ========== START ==========`);
   console.log(`[GET /api/patient/:patientId/referrals] URL: ${req.url}`);
   console.log(`[GET /api/patient/:patientId/referrals] Method: ${req.method}`);
@@ -4452,41 +4729,132 @@ app.get("/api/patient/:patientId/referrals", (req, res) => {
 });
 
 // PATCH /api/admin/referrals/:id/approve
-app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, (req, res) => {
+app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
     
+    // PRODUCTION: Clinic isolation - use req.clinic.id
+    if (!req.clinic || !req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+    
+    // PRODUCTION: Discount validation - 0-50% range (server-side)
     const inviterDiscountPercent = body.inviterDiscountPercent != null ? Number(body.inviterDiscountPercent) : null;
     const invitedDiscountPercent = body.invitedDiscountPercent != null ? Number(body.invitedDiscountPercent) : null;
     const discountPercent = body.discountPercent != null ? Number(body.discountPercent) : null;
     
-    // Validasyon
-    if (inviterDiscountPercent != null && (Number.isNaN(inviterDiscountPercent) || inviterDiscountPercent < 0 || inviterDiscountPercent > 99)) {
-      return res.status(400).json({ error: "inviterDiscountPercent must be 0..99" });
+    // Validasyon - 0-50% range (fraud prevention)
+    if (inviterDiscountPercent != null && (Number.isNaN(inviterDiscountPercent) || inviterDiscountPercent < 0 || inviterDiscountPercent > 50)) {
+      return res.status(400).json({ ok: false, error: "inviterDiscountPercent must be 0..50" });
     }
-    if (invitedDiscountPercent != null && (Number.isNaN(invitedDiscountPercent) || invitedDiscountPercent < 0 || invitedDiscountPercent > 99)) {
-      return res.status(400).json({ error: "invitedDiscountPercent must be 0..99" });
+    if (invitedDiscountPercent != null && (Number.isNaN(invitedDiscountPercent) || invitedDiscountPercent < 0 || invitedDiscountPercent > 50)) {
+      return res.status(400).json({ ok: false, error: "invitedDiscountPercent must be 0..50" });
     }
-    if (discountPercent != null && (Number.isNaN(discountPercent) || discountPercent < 0 || discountPercent > 99)) {
-      return res.status(400).json({ error: "discountPercent must be 0..99" });
+    if (discountPercent != null && (Number.isNaN(discountPercent) || discountPercent < 0 || discountPercent > 50)) {
+      return res.status(400).json({ ok: false, error: "discountPercent must be 0..50" });
     }
     
     // En az bir indirim yüzdesi belirtilmeli
     if (inviterDiscountPercent == null && invitedDiscountPercent == null && discountPercent == null) {
-      return res.status(400).json({ error: "At least one discount percent must be provided" });
+      return res.status(400).json({ ok: false, error: "At least one discount percent must be provided" });
     }
     
+    // SUPABASE: Primary source of truth
+    if (isSupabaseEnabled()) {
+      try {
+        // Get referral from Supabase
+        const { data: referral, error: fetchError } = await supabase
+          .from('referrals')
+          .select('*')
+          .eq('id', id)
+          .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
+          .is('deleted_at', null) // Exclude soft-deleted
+          .single();
+        
+        if (fetchError || !referral) {
+          return res.status(404).json({ ok: false, error: "referral_not_found" });
+        }
+        
+        // PRODUCTION: Self-referral check
+        if (referral.referrer_patient_id === referral.referred_patient_id) {
+          return res.status(400).json({ ok: false, error: "self_referral_forbidden", message: "Kendi kendine referral yapılamaz." });
+        }
+        
+        // PRODUCTION: State machine - only PENDING can be approved
+        if (referral.status !== "PENDING") {
+          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
+        }
+        
+        // Calculate discount
+        let finalInviterPercent = inviterDiscountPercent;
+        let finalInvitedPercent = invitedDiscountPercent;
+        let finalDiscountPercent = discountPercent;
+        
+        if (finalInviterPercent == null && finalInvitedPercent == null) {
+          finalInviterPercent = finalDiscountPercent;
+          finalInvitedPercent = finalDiscountPercent;
+        } else if (finalInviterPercent == null) {
+          finalInviterPercent = finalInvitedPercent;
+        } else if (finalInvitedPercent == null) {
+          finalInvitedPercent = finalInviterPercent;
+        }
+        
+        if (finalDiscountPercent == null) {
+          finalDiscountPercent = Math.round((finalInviterPercent + finalInvitedPercent) / 2);
+        }
+        
+        // Update in Supabase
+        const { data: updated, error: updateError } = await supabase
+          .from('referrals')
+          .update({
+            status: 'APPROVED',
+            inviter_discount_percent: finalInviterPercent,
+            invited_discount_percent: finalInvitedPercent,
+            discount_percent: finalDiscountPercent,
+            approved_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error(`[REFERRAL APPROVE] Supabase error:`, updateError);
+          return res.status(500).json({ ok: false, error: "update_failed" });
+        }
+        
+        console.log(`[REFERRAL APPROVE] ✅ Approved referral ${id} in Supabase`);
+        
+        // TODO: Audit log - referral_approved event
+        
+        return res.json({ ok: true, item: updated });
+      } catch (supabaseError) {
+        console.error(`[REFERRAL APPROVE] Supabase error:`, supabaseError);
+        // Fall through to file-based
+      }
+    }
+    
+    // FILE-BASED: Fallback
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     const idx = list.findIndex((x) => x && x.id === id);
     
     if (idx < 0) {
-      return res.status(404).json({ error: "not found" });
+      return res.status(404).json({ ok: false, error: "referral_not_found" });
     }
     
-    if (list[idx].status !== "PENDING") {
-      return res.status(409).json({ error: "only PENDING can be approved" });
+    const referral = list[idx];
+    
+    // PRODUCTION: Self-referral check
+    if (referral.inviterPatientId === referral.invitedPatientId) {
+      return res.status(400).json({ ok: false, error: "self_referral_forbidden", message: "Kendi kendine referral yapılamaz." });
+    }
+    
+    // PRODUCTION: State machine - only PENDING can be approved
+    if (referral.status !== "PENDING") {
+      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
     }
     
     // Güncelleme
@@ -4524,19 +4892,81 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, (req, res) => {
 });
 
 // PATCH /api/admin/referrals/:id/reject
-app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, (req, res) => {
+app.patch("/api/admin/referrals/:id/reject", requireAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // PRODUCTION: Clinic isolation - use req.clinic.id
+    if (!req.clinic || !req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+    
+    // SUPABASE: Primary source of truth
+    if (isSupabaseEnabled()) {
+      try {
+        // Get referral from Supabase
+        const { data: referral, error: fetchError } = await supabase
+          .from('referrals')
+          .select('*')
+          .eq('id', id)
+          .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
+          .is('deleted_at', null) // Exclude soft-deleted
+          .single();
+        
+        if (fetchError || !referral) {
+          return res.status(404).json({ ok: false, error: "referral_not_found" });
+        }
+        
+        // PRODUCTION: State machine - only PENDING can be rejected
+        if (referral.status !== "PENDING") {
+          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral reddedilebilir. Mevcut durum: ${referral.status}` });
+        }
+        
+        // Update in Supabase
+        const { data: updated, error: updateError } = await supabase
+          .from('referrals')
+          .update({
+            status: 'REJECTED',
+            inviter_discount_percent: null,
+            invited_discount_percent: null,
+            discount_percent: null,
+            approved_at: null,
+            rejected_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+          .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error(`[REFERRAL REJECT] Supabase error:`, updateError);
+          return res.status(500).json({ ok: false, error: "update_failed" });
+        }
+        
+        console.log(`[REFERRAL REJECT] ✅ Rejected referral ${id} in Supabase`);
+        
+        // TODO: Audit log - referral_rejected event
+        
+        return res.json({ ok: true, item: updated });
+      } catch (supabaseError) {
+        console.error(`[REFERRAL REJECT] Supabase error:`, supabaseError);
+        // Fall through to file-based
+      }
+    }
+    
+    // FILE-BASED: Fallback
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     const idx = list.findIndex((x) => x && x.id === id);
     
     if (idx < 0) {
-      return res.status(404).json({ error: "not found" });
+      return res.status(404).json({ ok: false, error: "referral_not_found" });
     }
     
+    // PRODUCTION: State machine - only PENDING can be rejected
     if (list[idx].status !== "PENDING") {
-      return res.status(409).json({ error: "only PENDING can be rejected" });
+      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral reddedilebilir. Mevcut durum: ${list[idx].status}` });
     }
     
     list[idx] = {
@@ -4546,6 +4976,7 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, (req, res) => {
       inviterDiscountPercent: null,
       invitedDiscountPercent: null,
       approvedAt: null,
+      rejectedAt: now(),
     };
     
     writeJson(REF_FILE, list);
@@ -4725,7 +5156,7 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
 
 // GET /api/admin/referral-events
 // Get all referral events (admin view)
-app.get("/api/admin/referral-events", requireAdminAuth, (req, res) => {
+app.get("/api/admin/referral-events", requireAdminToken, (req, res) => {
   try {
     const events = readJson(REF_EVENT_FILE, []);
     const eventList = Array.isArray(events) ? events : Object.values(events);

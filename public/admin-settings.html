@@ -226,7 +226,7 @@
           <span>|</span>
           <span id="lang-en" onclick="if(window.i18n) window.i18n.setLang('en')">EN</span>
         </div>
-        <a href="/admin-login.html" class="nav-link secondary" data-i18n="dashboard.nav.login">Logout</a>
+        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
     </div>
     </nav>
 
@@ -337,6 +337,15 @@
       el.style.opacity = brandingLocked ? "0.6" : "1";
       el.style.cursor = brandingLocked ? "not-allowed" : "text";
     });
+  }
+  function logout() {
+    try {
+      localStorage.removeItem("admin_token");
+      console.log("[LOGOUT] Admin token cleared");
+    } catch (e) {
+      console.error("[LOGOUT] Error clearing token:", e);
+    }
+    window.location.href = "/admin-login.html";
   }
   async function loadClinicSettings() {
     try {

@@ -251,6 +251,14 @@
   document.getElementById("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     
+    // Clear any existing admin token before login
+    try {
+      localStorage.removeItem("admin_token");
+      console.log("[LOGIN] Cleared existing admin token before login");
+    } catch (e) {
+      console.error("[LOGIN] Error clearing token:", e);
+    }
+    
     const submitBtn = document.getElementById("submit-btn");
     const clinicCode = document.getElementById("clinicCode").value.trim().toUpperCase();
     const password = document.getElementById("password").value;

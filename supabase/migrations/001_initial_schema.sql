@@ -99,13 +99,43 @@ CREATE TABLE IF NOT EXISTS referrals (
   referrer_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
   referred_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
   referral_code TEXT NOT NULL,
-  status TEXT DEFAULT 'PENDING', -- PENDING, CONVERTED, EXPIRED
+  status TEXT DEFAULT 'PENDING', -- PENDING, APPROVED, REJECTED, USED
   reward_status TEXT DEFAULT 'PENDING', -- PENDING, PAID, CANCELLED
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  inviter_discount_percent DECIMAL(5,2), -- 0-50% range
+  invited_discount_percent DECIMAL(5,2), -- 0-50% range
+  discount_percent DECIMAL(5,2), -- Combined discount
+  approved_at TIMESTAMPTZ,
+  used_at TIMESTAMPTZ,
+  rejected_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ, -- Soft delete
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  -- UNIQUE constraint: Same inviter + invited combination only once
+  UNIQUE(referrer_patient_id, referred_patient_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_referrals_clinic_id ON referrals(clinic_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_referral_code ON referrals(referral_code);
+CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
+CREATE INDEX IF NOT EXISTS idx_referrals_deleted_at ON referrals(deleted_at) WHERE deleted_at IS NULL;
+
+-- ================== CHAT MESSAGES TABLE ==================
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
+  patient_id TEXT REFERENCES patients(id) ON DELETE CASCADE,
+  sender_type TEXT NOT NULL, -- 'admin' | 'patient'
+  text TEXT,
+  file_url TEXT,
+  file_name TEXT,
+  file_type TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_clinic_id ON chat_messages(clinic_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_patient_id ON chat_messages(patient_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at);
 
 -- ================== PUSH SUBSCRIPTIONS TABLE ==================
 CREATE TABLE IF NOT EXISTS push_subscriptions (
