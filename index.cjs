@@ -1748,18 +1748,26 @@ function requireToken(req, res, next) {
   const tokens = readJson(TOK_FILE, {});
   const t = tokens[finalToken];
   if (!t?.patientId) {
-    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 20)}... (not found in tokens.json)`);
-    console.log(`[AUTH] Available tokens: ${Object.keys(tokens).length} tokens`);
-    console.log(`[AUTH] Token length: ${finalToken.length}, starts with: ${finalToken.substring(0, 5)}`);
-    
-    // Check if token might be a JWT (starts with eyJ)
+    // New mobile flow uses JWT patient tokens (from /auth/verify-otp)
     if (finalToken.startsWith("eyJ")) {
-      console.log("[AUTH] Token appears to be JWT format, but requireToken only supports legacy tokens");
-      console.log("[AUTH] Patient should use /api/patient/login to get a valid token");
+      try {
+        const decoded = jwt.verify(finalToken, JWT_SECRET);
+        const pid = decoded?.patientId;
+        if (pid) {
+          req.patientId = pid;
+          req.role = decoded?.role || decoded?.status || "PENDING";
+          req.tokenType = "jwt_patient";
+          return next();
+        }
+      } catch (e) {
+        console.log("[AUTH] JWT verify failed:", e?.name, e?.message);
+      }
     }
-    
-    return res.status(401).json({ 
-      ok: false, 
+
+    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 20)}... (not found in tokens.json and not valid JWT patient token)`);
+    console.log(`[AUTH] Available legacy tokens: ${Object.keys(tokens).length}`);
+    return res.status(401).json({
+      ok: false,
       error: "bad_token",
       message: "Geçersiz token. Lütfen tekrar giriş yapın."
     });
@@ -1767,6 +1775,7 @@ function requireToken(req, res, next) {
 
   req.patientId = t.patientId;
   req.role = t.role || "PENDING";
+  req.tokenType = "legacy_patient";
   next();
 }
 
@@ -2212,87 +2221,107 @@ app.post("/api/patient/login", (req, res) => {
 });
 
 // ================== PATIENT ME (alias) ==================
-app.get("/api/patient/me", requireToken, (req, res) => {
-  const patients = readJson(PAT_FILE, {});
-  const p = patients[req.patientId] || null;
+app.get("/api/patient/me", requireToken, async (req, res) => {
+  try {
+    // Supabase is the single source of truth in production
+    if (isSupabaseEnabled()) {
+      const { data: p, error: pErr } = await supabase
+        .from("patients")
+        .select("id,patient_id,name,phone,email,status,clinic_id,created_at,updated_at")
+        .eq("patient_id", req.patientId)
+        .single();
 
-  // Priority: patient.status > token.role > "PENDING"
-  const finalStatus = p?.status || req.role || "PENDING";
-  
-  console.log(`[ME] patientId: ${req.patientId}, patient.status: ${p?.status}, token.role: ${req.role}, finalStatus: ${finalStatus}`);
+      if (pErr) {
+        console.error("[ME] Supabase patient fetch failed", {
+          message: pErr.message,
+          code: pErr.code,
+          details: pErr.details,
+        });
+        return res.status(500).json({ ok: false, error: "patient_fetch_failed" });
+      }
 
-  const clinicCode = p?.clinicCode || p?.clinic_code || "";
-  let clinicPlan = p?.clinicPlan || "FREE";
-  
-  // Load clinic branding info (for all plans, not just PRO)
-  let branding = null;
-  if (clinicCode) {
-    try {
-      // First try CLINICS_FILE (multi-clinic system)
-      const clinics = readJson(CLINICS_FILE, {});
-      let clinic = null;
-      
-      // Find clinic by clinicCode in CLINICS_FILE
-      for (const [clinicId, clinicData] of Object.entries(clinics)) {
-        if (clinicData && (clinicData.clinicCode === clinicCode || clinicData.code === clinicCode)) {
-          clinic = clinicData;
-          break;
+      let clinicCode = "";
+      let clinicPlan = "FREE";
+      let branding = null;
+
+      if (p?.clinic_id) {
+        const { data: c, error: cErr } = await supabase
+          .from("clinics")
+          .select("id,clinic_code,plan,name,phone,address,settings")
+          .eq("id", p.clinic_id)
+          .single();
+
+        if (cErr) {
+          console.error("[ME] Supabase clinic fetch failed", {
+            message: cErr.message,
+            code: cErr.code,
+            details: cErr.details,
+          });
+        } else if (c) {
+          clinicCode = c.clinic_code || "";
+          clinicPlan = c.plan || "FREE";
+          const b = c.settings?.branding || null;
+          branding = b
+            ? b
+            : {
+                clinicName: c.name || "",
+                clinicLogoUrl: "",
+                address: c.address || "",
+                googleMapLink: "",
+                primaryColor: undefined,
+                secondaryColor: undefined,
+                welcomeMessage: "",
+                showPoweredBy: true,
+                phone: c.phone || "",
+              };
         }
       }
-      
-      // If not found in CLINICS_FILE, try CLINIC_FILE (single-clinic system)
-      if (!clinic) {
-        const singleClinic = readJson(CLINIC_FILE, {});
-        if (singleClinic && (singleClinic.clinicCode === clinicCode || !clinicCode)) {
-          clinic = singleClinic;
-        }
-      }
-      
-      if (clinic) {
-        // Get clinicPlan from clinic if not set in patient
-        if (!p?.clinicPlan) {
-          clinicPlan = clinic.plan || clinic.subscriptionPlan || clinicPlan;
-        }
-        
-        branding = {
-          clinicName: clinic.branding?.clinicName || clinic.name || "",
-          clinicLogoUrl: clinic.branding?.clinicLogoUrl || clinic.logoUrl || "",
-          address: clinic.branding?.address || clinic.address || "",
-          googleMapLink: clinic.branding?.googleMapLink || clinic.googleMapsUrl || "",
-          primaryColor: clinic.branding?.primaryColor,
-          secondaryColor: clinic.branding?.secondaryColor,
-          welcomeMessage: clinic.branding?.welcomeMessage,
-          showPoweredBy: clinic.branding?.showPoweredBy !== false,
-          phone: clinic.phone || "",
-        };
-        console.log(`[ME] Branding loaded for clinicCode: ${clinicCode}, clinicPlan: ${clinicPlan}, clinicLogoUrl: ${branding.clinicLogoUrl}, clinicName: ${branding.clinicName}`);
-      } else {
-        console.log(`[ME] Clinic not found for clinicCode: ${clinicCode}`);
-      }
-    } catch (error) {
-      console.error("[ME] Error loading clinic branding:", error);
+
+      const finalStatus = p?.status || "PENDING";
+      return res.json({
+        ok: true,
+        patientId: req.patientId,
+        role: finalStatus,
+        status: finalStatus,
+        name: p?.name || "",
+        phone: p?.phone || "",
+        email: p?.email || "",
+        clinicCode,
+        clinicPlan,
+        branding,
+        financialSnapshot: {
+          totalEstimatedCost: 0,
+          totalPaid: 0,
+          remainingBalance: 0,
+        },
+      });
     }
+
+    // Legacy fallback (file-based)
+    const patients = readJson(PAT_FILE, {});
+    const p = patients[req.patientId] || null;
+    const finalStatus = p?.status || req.role || "PENDING";
+    return res.json({
+      ok: true,
+      patientId: req.patientId,
+      role: finalStatus,
+      status: finalStatus,
+      name: p?.name || "",
+      phone: p?.phone || "",
+      email: p?.email || "",
+      clinicCode: p?.clinicCode || p?.clinic_code || "",
+      clinicPlan: p?.clinicPlan || "FREE",
+      branding: null,
+      financialSnapshot: p?.financialSnapshot || {
+        totalEstimatedCost: 0,
+        totalPaid: 0,
+        remainingBalance: 0,
+      },
+    });
+  } catch (e) {
+    console.error("[ME] /api/patient/me error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-
-  // Load financial snapshot from patient data
-  const financialSnapshot = p?.financialSnapshot || {
-    totalEstimatedCost: 0,
-    totalPaid: 0,
-    remainingBalance: 0,
-  };
-
-  res.json({
-    ok: true,
-    patientId: req.patientId,
-    role: finalStatus, // Return the final status as role too
-    status: finalStatus, // Return the final status
-    name: p?.name || "",
-    phone: p?.phone || "",
-    clinicCode: clinicCode,
-    clinicPlan: clinicPlan,
-    branding: branding,
-    financialSnapshot: financialSnapshot,
-  });
 });
 
 // ================== ADMIN LIST ==================
