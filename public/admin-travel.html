@@ -1001,7 +1001,9 @@
 
     try{
       console.log("[ADMIN-TRAVEL] loadTravel - fetching from:", endpoint(pid));
-      const r = await fetch(endpoint(pid));
+      const r = await fetch(endpoint(pid), {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       console.log("[ADMIN-TRAVEL] loadTravel - received response:", j);

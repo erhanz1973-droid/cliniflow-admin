@@ -2422,18 +2422,63 @@ app.post("/api/admin/approve", requireAdminToken, async (req, res) => {
 });
 
 // ================== PATIENT TRAVEL ==================
-// GET /api/patient/:patientId/travel
-app.get("/api/patient/:patientId/travel", (req, res) => {
-  const patientId = req.params.patientId;
-  const TRAVEL_DIR = path.join(DATA_DIR, "travel");
-  if (!fs.existsSync(TRAVEL_DIR)) fs.mkdirSync(TRAVEL_DIR, { recursive: true });
-  
-  const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
-  const defaultData = {
+async function requireAdminOrPatientToken(req, res, next) {
+  const auth = req.headers.authorization || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const altToken = req.headers["x-patient-token"] || "";
+  const finalToken = bearer || altToken;
+
+  if (!finalToken) {
+    return res.status(401).json({ ok: false, error: "missing_token", message: "Token bulunamadı" });
+  }
+
+  // If this is a JWT and contains clinicCode, treat it as an admin token.
+  // Otherwise fall back to patient token flow.
+  if (finalToken.startsWith("eyJ")) {
+    try {
+      const decoded = jwt.verify(finalToken, JWT_SECRET);
+      if (decoded?.clinicCode) {
+        req.isAdmin = true;
+        return requireAdminToken(req, res, next);
+      }
+    } catch (e) {
+      // fallthrough
+    }
+  }
+
+  req.isAdmin = false;
+  return requireToken(req, res, next);
+}
+
+function isPlainObject(x) {
+  return x !== null && typeof x === "object" && !Array.isArray(x);
+}
+
+function deepMerge(base, patch) {
+  const a = isPlainObject(base) ? base : {};
+  const b = isPlainObject(patch) ? patch : {};
+  const out = { ...a };
+  for (const k of Object.keys(b)) {
+    const bv = b[k];
+    const av = out[k];
+    if (Array.isArray(bv)) {
+      out[k] = bv; // replace arrays
+    } else if (isPlainObject(bv) && isPlainObject(av)) {
+      out[k] = deepMerge(av, bv);
+    } else {
+      out[k] = bv;
+    }
+  }
+  return out;
+}
+
+function defaultTravelData(patientId) {
+  return {
     schemaVersion: 1,
     updatedAt: now(),
     patientId,
     hotel: null,
+    flight: {},
     flights: [],
     notes: "",
     airportPickup: null,
@@ -2443,183 +2488,565 @@ app.get("/api/patient/:patientId/travel", (req, res) => {
       airportPickup: "ADMIN",
       notes: "ADMIN",
     },
+    enteredBy: {},
+    events: [],
+    formCompleted: false,
+    formCompletedAt: null,
   };
-  
-  const data = readJson(travelFile, defaultData);
-  
-  // Ensure formCompleted and formCompletedAt fields exist
-  if (data.formCompleted === undefined) {
-    // Check if form is completed (backward compatibility)
-    const hasHotel = data.hotel && data.hotel.checkIn && data.hotel.checkOut;
-    const hasOutboundFlight = Array.isArray(data.flights) && 
-      data.flights.some(f => (f.type || "OUTBOUND") === "OUTBOUND" && f.date);
-    data.formCompleted = hasHotel && hasOutboundFlight;
-    if (data.formCompleted && !data.formCompletedAt) {
-      data.formCompletedAt = data.updatedAt || now();
-    }
+}
+
+function computeFormCompleted(travel) {
+  const hasHotel = travel?.hotel && travel.hotel.checkIn && travel.hotel.checkOut;
+  const hasOutboundFlight =
+    Array.isArray(travel?.flights) &&
+    travel.flights.some((f) => (f.type || "OUTBOUND") === "OUTBOUND" && f.date);
+  return hasHotel && hasOutboundFlight;
+}
+
+function normalizeAirportPickup(pickup, pickupBy) {
+  if (!isPlainObject(pickup)) return pickup;
+  const p = { ...pickup };
+
+  // Keep legacy keys working while introducing v2 keys
+  if (p.contactName === undefined && p.name) p.contactName = p.name;
+  if (p.name === undefined && p.contactName) p.name = p.contactName;
+
+  if (p.contactPhone === undefined && p.phone) p.contactPhone = p.phone;
+  if (p.phone === undefined && p.contactPhone) p.phone = p.contactPhone;
+
+  if (p.pickupBy === undefined && pickupBy) p.pickupBy = pickupBy;
+
+  if (p.enabled === undefined) {
+    p.enabled = Boolean(
+      p.name ||
+        p.phone ||
+        p.contactName ||
+        p.contactPhone ||
+        p.vehicle ||
+        p.vehicleInfo ||
+        p.plate ||
+        p.meetingPoint ||
+        p.note ||
+        p.notes
+    );
   }
-  
-  console.log(`[GET /travel/${patientId}] airportPickup in data:`, data?.airportPickup);
-  console.log(`[GET /travel/${patientId}] data keys:`, Object.keys(data));
-  console.log(`[GET /travel/${patientId}] Form completed: ${data.formCompleted}, completedAt: ${data.formCompletedAt}`);
-  res.json(data);
+
+  return p;
+}
+
+function normalizeFlightLeg(leg) {
+  if (!isPlainObject(leg)) return null;
+  const out = { ...leg };
+  if (out.flightNumber === undefined && out.flightNo) out.flightNumber = out.flightNo;
+  if (out.flightNo === undefined && out.flightNumber) out.flightNo = out.flightNumber;
+  return out;
+}
+
+function deriveFlightFromFlights(flights) {
+  const list = Array.isArray(flights) ? flights : [];
+  const isArrival = (t) => ["ARRIVAL", "OUTBOUND", "INBOUND"].includes(String(t || "").toUpperCase());
+  const isDeparture = (t) => ["DEPARTURE", "RETURN"].includes(String(t || "").toUpperCase());
+
+  const arrival = list.find((f) => isArrival(f?.type));
+  const departure = list.find((f) => isDeparture(f?.type));
+
+  const toLeg = (f) => {
+    if (!isPlainObject(f)) return null;
+    return {
+      airline: f.airline,
+      flightNumber: f.flightNumber || f.flightNo,
+      from: f.from,
+      to: f.to,
+      date: f.date,
+      time: f.time,
+    };
+  };
+
+  const out = {};
+  const a = toLeg(arrival);
+  const d = toLeg(departure);
+  if (a) out.arrival = a;
+  if (d) out.departure = d;
+  return out;
+}
+
+async function fetchPatientTravelRowSupabase(patientId, clinicIdOrNull) {
+  // Prefer `patient_id` when available; fall back to `id`.
+  let q1 = supabase
+    .from("patients")
+    .select("id, clinic_id, travel, patient_id")
+    .eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.single();
+
+  if (!r1.error) return { data: r1.data, key: "patient_id" };
+
+  const msg = String(r1.error?.message || "");
+  const isMissingPatientIdCol = msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+  const isNotFound = String(r1.error?.code || "") === "PGRST116";
+  if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
+
+  let q2 = supabase.from("patients").select("id, clinic_id, travel").eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.single();
+  if (!r2.error) return { data: r2.data, key: "id" };
+  return { error: r2.error };
+}
+
+async function updatePatientTravelRowSupabase(patientId, clinicIdOrNull, updatedTravel) {
+  // Prefer `patient_id` when available; fall back to `id`.
+  let q1 = supabase
+    .from("patients")
+    .update({ travel: updatedTravel, updated_at: new Date().toISOString() })
+    .eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.select("*").single();
+  if (!r1.error) return { data: r1.data, key: "patient_id" };
+
+  const msg = String(r1.error?.message || "");
+  const isMissingPatientIdCol = msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+  const isNotFound = String(r1.error?.code || "") === "PGRST116";
+  if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
+
+  let q2 = supabase
+    .from("patients")
+    .update({ travel: updatedTravel, updated_at: new Date().toISOString() })
+    .eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.select("*").single();
+  if (!r2.error) return { data: r2.data, key: "id" };
+  return { error: r2.error };
+}
+
+// GET /api/patient/:patientId/travel
+app.get("/api/patient/:patientId/travel", requireAdminOrPatientToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    // Patient can only access their own record
+    if (!req.isAdmin && req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    // PRODUCTION: Supabase is source of truth
+    if (isSupabaseEnabled()) {
+      const clinicFilter = req.isAdmin ? req.clinicId : null;
+      const { data: p, error } = await fetchPatientTravelRowSupabase(patientId, clinicFilter);
+      if (error) {
+        console.error("[TRAVEL] Supabase fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        if (String(error.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "travel_fetch_failed" });
+      }
+
+      const merged = deepMerge(defaultTravelData(patientId), p?.travel || {});
+      // Backward compatibility: compute completion flags if missing
+      if (merged.formCompleted === undefined || merged.formCompletedAt === undefined) {
+        const done = computeFormCompleted(merged);
+        merged.formCompleted = done;
+        if (done && !merged.formCompletedAt) merged.formCompletedAt = merged.updatedAt || now();
+        if (!done) merged.formCompletedAt = null;
+      }
+      merged.patientId = patientId;
+      return res.json(merged);
+    }
+
+    // Legacy fallback (file-based)
+    const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+    if (!fs.existsSync(TRAVEL_DIR)) fs.mkdirSync(TRAVEL_DIR, { recursive: true });
+    const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
+    const data = deepMerge(defaultTravelData(patientId), readJson(travelFile, {}));
+    if (data.formCompleted === undefined || data.formCompletedAt === undefined) {
+      const done = computeFormCompleted(data);
+      data.formCompleted = done;
+      if (done && !data.formCompletedAt) data.formCompletedAt = data.updatedAt || now();
+      if (!done) data.formCompletedAt = null;
+    }
+    data.patientId = patientId;
+    return res.json(data);
+  } catch (e) {
+    console.error("[TRAVEL] GET error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
 });
+
+async function saveTravelHandler(req, res) {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    // Patient can only modify their own record
+    if (!req.isAdmin && req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    const incomingRaw = isPlainObject(req.body) ? req.body : {};
+    // Never trust client-controlled enteredBy
+    const { enteredBy: _ignoreEnteredBy, ...incoming } = incomingRaw;
+
+    // "clinic" vs "patient" is what we show in UI/labels
+    const actor = req.isAdmin ? "clinic" : "patient";
+    const nowTs = now();
+
+    // PRODUCTION: Supabase is source of truth
+    if (isSupabaseEnabled()) {
+      const clinicFilter = req.isAdmin ? req.clinicId : null;
+      const { data: p, error: fetchErr } = await fetchPatientTravelRowSupabase(patientId, clinicFilter);
+      if (fetchErr) {
+        console.error("[TRAVEL] Supabase fetch before save failed", {
+          message: fetchErr.message,
+          code: fetchErr.code,
+          details: fetchErr.details,
+        });
+        if (String(fetchErr.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "travel_fetch_failed" });
+      }
+
+      const existingTravel = isPlainObject(p?.travel) ? p.travel : {};
+      const base = deepMerge(defaultTravelData(patientId), existingTravel);
+      let payload = deepMerge(base, incoming);
+
+      payload.patientId = patientId;
+      payload.schemaVersion = payload.schemaVersion || base.schemaVersion || 1;
+      payload.updatedAt = nowTs;
+
+      // Normalize airportPickup to support both legacy + v2 keys
+      if (payload.airportPickup && isPlainObject(payload.airportPickup)) {
+        payload.airportPickup = normalizeAirportPickup(payload.airportPickup, actor);
+      }
+
+      // Persist new flight model while keeping legacy `flights[]`
+      // If legacy flights[] was updated and flight wasn't explicitly provided, derive flight.arrival/departure
+      const has = (k) => Object.prototype.hasOwnProperty.call(incoming, k);
+      if (has("flights") && !has("flight")) {
+        const derived = deriveFlightFromFlights(payload.flights);
+        const baseFlight = isPlainObject(base.flight) ? base.flight : {};
+        payload.flight = deepMerge(baseFlight, derived);
+      } else if (has("flight") && isPlainObject(payload.flight)) {
+        // normalize common field names (flightNo/flightNumber) on legs
+        payload.flight = {
+          ...payload.flight,
+          arrival: normalizeFlightLeg(payload.flight.arrival) || payload.flight.arrival,
+          departure: normalizeFlightLeg(payload.flight.departure) || payload.flight.departure,
+        };
+      }
+
+      // Update enteredBy for touched areas
+      payload.enteredBy = isPlainObject(base.enteredBy) ? { ...base.enteredBy } : {};
+      if (has("hotel")) payload.enteredBy.hotel = actor;
+      if (has("airportPickup")) payload.enteredBy.airportPickup = actor;
+      if (has("flight") || has("flights")) payload.enteredBy.flight = actor;
+      if (has("notes")) payload.enteredBy.notes = actor;
+
+      // Completion flags
+      const isFormCompleted = computeFormCompleted(payload);
+      payload.formCompleted = isFormCompleted;
+      if (isFormCompleted && !base.formCompletedAt) payload.formCompletedAt = nowTs;
+      else if (isFormCompleted && base.formCompletedAt) payload.formCompletedAt = base.formCompletedAt;
+      else payload.formCompletedAt = null;
+
+      const { data: updatedPatient, error: saveErr } = await updatePatientTravelRowSupabase(
+        patientId,
+        clinicFilter,
+        payload
+      );
+      if (saveErr) {
+        console.error("[TRAVEL] Supabase save failed", {
+          message: saveErr.message,
+          code: saveErr.code,
+          details: saveErr.details,
+          hint: saveErr.hint,
+        });
+        if (String(saveErr.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "travel_save_failed" });
+      }
+
+      // Notifications must never break the API
+      try {
+        const hadAirportPickup =
+          base?.airportPickup && (base.airportPickup.name || base.airportPickup.phone);
+        const hasAirportPickup =
+          payload?.airportPickup && (payload.airportPickup.name || payload.airportPickup.phone);
+        if (
+          hasAirportPickup &&
+          (!hadAirportPickup ||
+            JSON.stringify(base?.airportPickup) !== JSON.stringify(payload.airportPickup))
+        ) {
+          const pickupName = payload.airportPickup.name || "Karşılayıcı";
+          const pickupPhone = payload.airportPickup.phone || "";
+          const notificationTitle = "🚗 Havalimanı Karşılama Bilgisi";
+          const notificationMessage = `Havalimanı karşılama bilgileriniz güncellendi. ${pickupName}${
+            pickupPhone ? ` (${pickupPhone})` : ""
+          } sizi karşılayacak.`;
+
+          sendPushNotification(patientId, notificationTitle, notificationMessage, {
+            icon: "/icon-192x192.png",
+            badge: "/badge-72x72.png",
+            url: "/travel",
+            data: { type: "AIRPORT_PICKUP", patientId, from: "CLINIC" },
+          }).catch((err) => {
+            console.error(`[TRAVEL/${patientId}] Failed to send airport pickup notification:`, err);
+          });
+        }
+      } catch (e) {
+        console.error(`[TRAVEL/${patientId}] Notification logic error (ignored):`, e);
+      }
+
+      return res.json({ ok: true, saved: true, travel: updatedPatient?.travel || payload, patient: updatedPatient });
+    }
+
+    // Legacy fallback (file-based) — only when Supabase is disabled
+    const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+    if (!fs.existsSync(TRAVEL_DIR)) fs.mkdirSync(TRAVEL_DIR, { recursive: true });
+    const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
+    const existing = readJson(travelFile, {});
+    const base = deepMerge(defaultTravelData(patientId), existing);
+    let payload = deepMerge(base, incoming);
+    payload.patientId = patientId;
+    payload.schemaVersion = payload.schemaVersion || base.schemaVersion || 1;
+    payload.updatedAt = nowTs;
+
+    if (payload.airportPickup && isPlainObject(payload.airportPickup)) {
+      payload.airportPickup = normalizeAirportPickup(payload.airportPickup, actor);
+    }
+
+    payload.enteredBy = isPlainObject(base.enteredBy) ? { ...base.enteredBy } : {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(incoming, k);
+    if (has("hotel")) payload.enteredBy.hotel = actor;
+    if (has("airportPickup")) payload.enteredBy.airportPickup = actor;
+    if (has("flight") || has("flights")) payload.enteredBy.flight = actor;
+    if (has("notes")) payload.enteredBy.notes = actor;
+
+    if (has("flights") && !has("flight")) {
+      const derived = deriveFlightFromFlights(payload.flights);
+      const baseFlight = isPlainObject(base.flight) ? base.flight : {};
+      payload.flight = deepMerge(baseFlight, derived);
+    } else if (has("flight") && isPlainObject(payload.flight)) {
+      payload.flight = {
+        ...payload.flight,
+        arrival: normalizeFlightLeg(payload.flight.arrival) || payload.flight.arrival,
+        departure: normalizeFlightLeg(payload.flight.departure) || payload.flight.departure,
+      };
+    }
+
+    const done = computeFormCompleted(payload);
+    payload.formCompleted = done;
+    if (done && !base.formCompletedAt) payload.formCompletedAt = nowTs;
+    else if (done && base.formCompletedAt) payload.formCompletedAt = base.formCompletedAt;
+    else payload.formCompletedAt = null;
+    writeJson(travelFile, payload);
+    return res.json({ ok: true, saved: true, travel: payload });
+  } catch (e) {
+    console.error("[TRAVEL] SAVE error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+}
 
 // POST /api/patient/:patientId/travel
-app.post("/api/patient/:patientId/travel", async (req, res) => {
-  const patientId = req.params.patientId;
-  const TRAVEL_DIR = path.join(DATA_DIR, "travel");
-  if (!fs.existsSync(TRAVEL_DIR)) fs.mkdirSync(TRAVEL_DIR, { recursive: true });
-  
-  const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
-  const existing = readJson(travelFile, {});
-  
-  // Debug: airportPickup'ı kontrol et
-  console.log(`[POST /travel/${patientId}] req.body type:`, typeof req.body);
-  console.log(`[POST /travel/${patientId}] req.body keys:`, req.body ? Object.keys(req.body) : 'null');
-  console.log(`[POST /travel/${patientId}] airportPickup in req.body:`, req.body?.airportPickup);
-  console.log(`[POST /travel/${patientId}] airportPickup type:`, typeof req.body?.airportPickup);
-  console.log(`[POST /travel/${patientId}] airportPickup !== undefined:`, req.body?.airportPickup !== undefined);
-  console.log(`[POST /travel/${patientId}] existing airportPickup:`, existing?.airportPickup);
-  
-  // Eğer req.body'de hotel/flights/notes varsa kullan, yoksa mevcut verileri koru
-  // airportPickup için: req.body'de varsa kullan, yoksa existing'den al, o da yoksa null
-  let airportPickupValue = null;
-  if (req.body?.airportPickup !== undefined) {
-    airportPickupValue = req.body.airportPickup; // null, obje, veya başka bir değer olabilir
-    console.log(`[POST /travel/${patientId}] Using req.body.airportPickup`);
-  } else if (existing?.airportPickup !== undefined) {
-    airportPickupValue = existing.airportPickup;
-    console.log(`[POST /travel/${patientId}] Using existing.airportPickup`);
-  } else {
-    console.log(`[POST /travel/${patientId}] airportPickup will be null`);
-  }
-  
-  console.log(`[POST /travel/${patientId}] airportPickupValue determined:`, JSON.stringify(airportPickupValue, null, 2));
-  
-  // Debug: Check hotel and flights in req.body
-  console.log(`[POST /travel/${patientId}] req.body.hotel:`, JSON.stringify(req.body?.hotel, null, 2));
-  console.log(`[POST /travel/${patientId}] req.body.flights:`, JSON.stringify(req.body?.flights, null, 2));
-  console.log(`[POST /travel/${patientId}] existing.hotel:`, JSON.stringify(existing?.hotel, null, 2));
-  console.log(`[POST /travel/${patientId}] existing.flights:`, JSON.stringify(existing?.flights, null, 2));
-  
-  const payload = {
-    schemaVersion: req.body?.schemaVersion || existing.schemaVersion || 1,
-    updatedAt: now(),
-    patientId,
-    hotel: req.body?.hotel !== undefined ? req.body.hotel : (existing.hotel || null),
-    flights: req.body?.flights !== undefined 
-      ? (Array.isArray(req.body.flights) ? req.body.flights : [])
-      : (Array.isArray(existing.flights) ? existing.flights : []),
-    notes: req.body?.notes !== undefined 
-      ? String(req.body.notes || "")
-      : String(existing.notes || ""),
-    airportPickup: airportPickupValue,
-    editPolicy: req.body?.editPolicy || existing.editPolicy || {
-      hotel: "ADMIN",
-      flights: "ADMIN",
-      airportPickup: "ADMIN",
-      notes: "ADMIN",
-    },
-    events: req.body?.events !== undefined
-      ? (Array.isArray(req.body.events) ? req.body.events : [])
-      : (Array.isArray(existing.events) ? existing.events : []),
+app.post("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
+// PUT /api/patient/:patientId/travel
+app.put("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
+
+// ================== PATIENT TREATMENT (v1 JSONB, Supabase persistence) ==================
+function defaultTreatmentV1() {
+  return {
+    teeth: {},
+    summary: {},
+    lastUpdatedAt: null,
   };
-  
-  console.log(`[POST /travel/${patientId}] Final payload airportPickup:`, JSON.stringify(payload.airportPickup, null, 2));
-  console.log(`[POST /travel/${patientId}] Full payload keys:`, Object.keys(payload));
-  console.log(`[POST /travel/${patientId}] Payload has airportPickup:`, payload.hasOwnProperty('airportPickup'));
-  console.log(`[POST /travel/${patientId}] Payload airportPickup type:`, typeof payload.airportPickup);
-  console.log(`[POST /travel/${patientId}] Payload airportPickup value:`, payload.airportPickup);
-  
-  // airportPickup'ı her zaman payload'a ekle (null olsa bile)
-  if (!payload.hasOwnProperty('airportPickup')) {
-    console.log(`[POST /travel/${patientId}] WARNING: airportPickup missing from payload, adding null`);
-    payload.airportPickup = null;
-  }
-  
-  // Payload'ı JSON string'e çevirip kontrol et
-  const payloadString = JSON.stringify(payload, null, 2);
-  console.log(`[POST /travel/${patientId}] Payload JSON string contains airportPickup:`, payloadString.includes('airportPickup'));
-  console.log(`[POST /travel/${patientId}] Final payload hotel:`, JSON.stringify(payload.hotel, null, 2));
-  console.log(`[POST /travel/${patientId}] Final payload flights:`, JSON.stringify(payload.flights, null, 2));
-  
-  // Check if form is completed
-  // Form is considered complete if:
-  // - Hotel has checkIn and checkOut dates
-  // - At least one outbound flight exists
-  const hasHotel = payload.hotel && payload.hotel.checkIn && payload.hotel.checkOut;
-  const hasOutboundFlight = Array.isArray(payload.flights) && 
-    payload.flights.some(f => (f.type || "OUTBOUND") === "OUTBOUND" && f.date);
-  const isFormCompleted = hasHotel && hasOutboundFlight;
-  
-  // Add form completion status
-  payload.formCompleted = isFormCompleted;
-  if (isFormCompleted && !existing.formCompletedAt) {
-    // First time completion
-    payload.formCompletedAt = now();
-  } else if (isFormCompleted && existing.formCompletedAt) {
-    // Already completed, keep original completion time
-    payload.formCompletedAt = existing.formCompletedAt;
-  } else if (!isFormCompleted) {
-    // Not completed, remove completion time
-    payload.formCompletedAt = null;
-  }
-  
-  // SUPABASE: Update patient travel data (PRIMARY - production source of truth)
-  if (isSupabaseEnabled()) {
-    try {
-      console.log(`[POST /travel/${patientId}] Updating travel data in Supabase...`);
-      await updatePatient(patientId, { travel: payload });
-      console.log(`[POST /travel/${patientId}] ✅ Travel data updated in Supabase`);
-    } catch (supabaseError) {
-      console.error(`[POST /travel/${patientId}] ❌ Failed to update travel in Supabase:`, supabaseError.message);
-      // Continue with file-based storage as fallback
+}
+
+function normalizeTreatmentStatusV1(status) {
+  const s = String(status || "").trim().toLowerCase();
+  if (!s) return null;
+  // keep free-form but normalize some common legacy values
+  if (s === "planned" || s === "plan" || s === "pln") return "planned";
+  if (s === "completed" || s === "done" || s === "complete") return "completed";
+  if (s === "in_progress" || s === "inprogress" || s === "progress") return "in_progress";
+  return s;
+}
+
+function normalizeProcedureNameV1(type) {
+  const t = String(type || "").trim().toLowerCase();
+  if (!t) return null;
+  return t.replaceAll(" ", "_");
+}
+
+function legacyTreatmentsToTreatmentV1(legacyPayload, enteredBy) {
+  const legacy = isPlainObject(legacyPayload) ? legacyPayload : {};
+  const teethArr = Array.isArray(legacy.teeth) ? legacy.teeth : [];
+  const out = defaultTreatmentV1();
+
+  const teeth = {};
+  let totalCost = 0;
+  let currency = null;
+  let hasAnyPrice = false;
+
+  for (const tooth of teethArr) {
+    const toothId = String(tooth?.toothId || "").trim();
+    if (!toothId) continue;
+    const procs = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+    const mapped = [];
+    for (const p of procs) {
+      const procName = normalizeProcedureNameV1(p?.type);
+      const status = normalizeTreatmentStatusV1(p?.status);
+      const date = p?.date || p?.scheduledAt || null;
+      const clinicNote = p?.notes || p?.note || p?.clinicNote || "";
+      if (!procName && !status && !date && !clinicNote) continue;
+
+      // Best-effort pricing aggregation
+      const tp = p?.total_price;
+      const cp = p?.currency;
+      if (tp !== undefined && tp !== null && Number.isFinite(Number(tp))) {
+        totalCost += Number(tp);
+        hasAnyPrice = true;
+      }
+      if (cp && typeof cp === "string") {
+        const c = cp.trim().toUpperCase();
+        currency = currency || c;
+        if (currency !== c) currency = null; // mixed currency -> unknown
+      }
+
+      mapped.push({
+        procedure: procName,
+        status: status || undefined,
+        date: date || undefined,
+        clinicNote: clinicNote || undefined,
+      });
     }
+    if (mapped.length) teeth[toothId] = mapped;
   }
 
-  // FILE-BASED: Fallback storage (for backward compatibility)
-  writeJson(travelFile, payload);
-  console.log(`[POST /travel/${patientId}] File written, verifying...`);
-  const verify = readJson(travelFile, {});
-  console.log(`[POST /travel/${patientId}] Verified airportPickup in file:`, verify?.airportPickup);
-  console.log(`[POST /travel/${patientId}] Verified file keys:`, Object.keys(verify));
-  console.log(`[POST /travel/${patientId}] Form completed: ${isFormCompleted}, completedAt: ${payload.formCompletedAt}`);
-  
-  // Send push notification if airport pickup info was added/updated
-  const hadAirportPickup = existing?.airportPickup && 
-    (existing.airportPickup.name || existing.airportPickup.phone);
-  const hasAirportPickup = payload.airportPickup && 
-    (payload.airportPickup.name || payload.airportPickup.phone);
-  
-  // Send notification if:
-  // 1. Airport pickup info was just added (didn't exist before, exists now)
-  // 2. Or airport pickup info was updated (existed before, exists now, but changed)
-  if (hasAirportPickup && (!hadAirportPickup || JSON.stringify(existing?.airportPickup) !== JSON.stringify(payload.airportPickup))) {
-    const pickupName = payload.airportPickup.name || "Karşılayıcı";
-    const pickupPhone = payload.airportPickup.phone || "";
-    const notificationTitle = "🚗 Havalimanı Karşılama Bilgisi";
-    const notificationMessage = `Havalimanı karşılama bilgileriniz güncellendi. ${pickupName}${pickupPhone ? ` (${pickupPhone})` : ""} sizi karşılayacak.`;
-    
-    // Send push notification asynchronously (don't wait for it)
-    sendPushNotification(patientId, notificationTitle, notificationMessage, {
-      icon: "/icon-192x192.png",
-      badge: "/badge-72x72.png",
-      url: "/travel",
-      data: {
-        type: "AIRPORT_PICKUP",
-        patientId: patientId,
-        from: "CLINIC"
+  out.teeth = teeth;
+  out.summary = {
+    ...(hasAnyPrice ? { totalCost: Math.round(totalCost * 100) / 100 } : {}),
+    ...(currency ? { currency } : {}),
+    ...(enteredBy ? { enteredBy } : {}),
+  };
+  out.lastUpdatedAt = new Date().toISOString();
+
+  return out;
+}
+
+async function fetchPatientTreatmentRowSupabase(patientId, clinicIdOrNull) {
+  // Prefer `patient_id` when available; fall back to `id`.
+  let q1 = supabase
+    .from("patients")
+    .select("id, clinic_id, treatment, patient_id")
+    .eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.single();
+  if (!r1.error) return { data: r1.data, key: "patient_id" };
+
+  const msg = String(r1.error?.message || "");
+  const isMissingPatientIdCol = msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+  const isNotFound = String(r1.error?.code || "") === "PGRST116";
+  if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
+
+  let q2 = supabase.from("patients").select("id, clinic_id, treatment").eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.single();
+  if (!r2.error) return { data: r2.data, key: "id" };
+  return { error: r2.error };
+}
+
+async function updatePatientTreatmentRowSupabase(patientId, clinicIdOrNull, updatedTreatment) {
+  // Prefer `patient_id` when available; fall back to `id`.
+  let q1 = supabase
+    .from("patients")
+    .update({ treatment: updatedTreatment, updated_at: new Date().toISOString() })
+    .eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.select("*").single();
+  if (!r1.error) return { data: r1.data, key: "patient_id" };
+
+  const msg = String(r1.error?.message || "");
+  const isMissingPatientIdCol = msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+  const isNotFound = String(r1.error?.code || "") === "PGRST116";
+  if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
+
+  let q2 = supabase
+    .from("patients")
+    .update({ treatment: updatedTreatment, updated_at: new Date().toISOString() })
+    .eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.select("*").single();
+  if (!r2.error) return { data: r2.data, key: "id" };
+  return { error: r2.error };
+}
+
+async function saveTreatmentV1Handler(req, res) {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    // Patient can only modify their own record
+    if (!req.isAdmin && req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_disabled" });
+    }
+
+    const incoming = isPlainObject(req.body) ? req.body : {};
+    const clinicFilter = req.isAdmin ? req.clinicId : null;
+
+    const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, clinicFilter);
+    if (fetchErr) {
+      console.error("[TREATMENT] Supabase fetch failed", {
+        message: fetchErr.message,
+        code: fetchErr.code,
+        details: fetchErr.details,
+      });
+      if (String(fetchErr.code || "") === "PGRST116") {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
-    }).catch(err => {
-      console.error(`[POST /travel/${patientId}] Failed to send airport pickup notification:`, err);
-    });
-    
-    console.log(`[POST /travel/${patientId}] Airport pickup notification sent`);
+      return res.status(500).json({ ok: false, error: "treatment_fetch_failed" });
+    }
+
+    const existing = isPlainObject(p?.treatment) ? p.treatment : {};
+    const updated = deepMerge(existing, incoming);
+    updated.lastUpdatedAt = new Date().toISOString();
+
+    // If summary exists but enteredBy isn't set, set it based on actor
+    const actor = req.isAdmin ? "clinic" : "patient";
+    if (updated.summary === undefined) updated.summary = {};
+    if (isPlainObject(updated.summary) && !updated.summary.enteredBy) {
+      // Only set if there was a change payload that likely modifies treatment
+      if (Object.keys(incoming || {}).length > 0) updated.summary.enteredBy = actor;
+    }
+
+    const { data: updatedPatient, error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, clinicFilter, updated);
+    if (saveErr) {
+      console.error("[TREATMENT] Supabase save failed", {
+        message: saveErr.message,
+        code: saveErr.code,
+        details: saveErr.details,
+      });
+      return res.status(500).json({ ok: false, error: "treatment_save_failed" });
+    }
+
+    return res.json({ ok: true, saved: true, patient: updatedPatient });
+  } catch (e) {
+    console.error("[TREATMENT] POST/PUT error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-  
-  res.json({ ok: true, saved: true, travel: payload });
-});
+}
+
+// POST / PUT /api/patient/:patientId/treatment (new persistence endpoint)
+app.post("/api/patient/:patientId/treatment", requireAdminOrPatientToken, saveTreatmentV1Handler);
+app.put("/api/patient/:patientId/treatment", requireAdminOrPatientToken, saveTreatmentV1Handler);
 
 // ================== PATIENT HEALTH FORM ==================
 function getPatientRecordById(patientId) {
@@ -3293,7 +3720,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   // No valid token found
   console.log(`[TREATMENTS GET] ❌ No valid token found`);
   return res.status(401).json({ ok: false, error: "unauthorized", message: "Token bulunamadı veya geçersiz." });
-}, (req, res) => {
+}, async (req, res) => {
   // Continue with endpoint logic
   const patientId = req.params.patientId;
   
@@ -3315,8 +3742,51 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     formCompleted: false,
     formCompletedAt: null,
   };
-  
-  const data = readJson(treatmentsFile, defaultData);
+
+  // PRODUCTION: Prefer Supabase (single source of truth) while keeping legacy response shape
+  let supabaseTreatments = null;
+  if (isSupabaseEnabled()) {
+    try {
+      // If admin, isolate by clinic_id; if patient, no clinic filter needed
+      const clinicFilter = req.isAdmin ? req.clinicId : null;
+
+      // Prefer `patient_id` when available; fall back to `id`.
+      let q1 = supabase
+        .from("patients")
+        .select("id, clinic_id, treatments, patient_id")
+        .eq("patient_id", patientId);
+      if (clinicFilter) q1 = q1.eq("clinic_id", clinicFilter);
+      const r1 = await q1.single();
+
+      if (!r1.error) {
+        supabaseTreatments = r1.data?.treatments || null;
+      } else {
+        const msg = String(r1.error?.message || "");
+        const isMissingPatientIdCol =
+          msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+        const isNotFound = String(r1.error?.code || "") === "PGRST116";
+        if (!isMissingPatientIdCol && !isNotFound) {
+          console.error("[TREATMENTS GET] Supabase fetch failed", {
+            message: r1.error.message,
+            code: r1.error.code,
+            details: r1.error.details,
+          });
+        } else {
+          let q2 = supabase.from("patients").select("id, clinic_id, treatments").eq("id", patientId);
+          if (clinicFilter) q2 = q2.eq("clinic_id", clinicFilter);
+          const r2 = await q2.single();
+          if (!r2.error) {
+            supabaseTreatments = r2.data?.treatments || null;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[TREATMENTS GET] Supabase fetch exception (ignored):", e?.message || e);
+    }
+  }
+
+  const source = isPlainObject(supabaseTreatments) ? supabaseTreatments : readJson(treatmentsFile, defaultData);
+  const data = deepMerge(defaultData, source);
   
   // Ensure data structure is correct
   if (!data.patientId) {
@@ -3577,6 +4047,33 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
       console.error(`[TREATMENTS POST] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
       // Continue with file-based storage as fallback
     }
+
+    // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
+    try {
+      const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
+      const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
+      if (fetchErr) {
+        console.error("[TREATMENTS POST] treatment(v1) fetch failed (ignored)", {
+          message: fetchErr.message,
+          code: fetchErr.code,
+          details: fetchErr.details,
+        });
+      } else {
+        const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
+        const mergedV1 = deepMerge(existingV1, patchV1);
+        mergedV1.lastUpdatedAt = new Date().toISOString();
+        const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
+        if (saveErr) {
+          console.error("[TREATMENTS POST] treatment(v1) save failed (ignored)", {
+            message: saveErr.message,
+            code: saveErr.code,
+            details: saveErr.details,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[TREATMENTS POST] treatment(v1) sync exception (ignored):", e?.message || e);
+    }
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -3697,6 +4194,33 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
       console.error(`[TREATMENTS PUT] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
       // Continue with file-based storage as fallback
     }
+
+    // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
+    try {
+      const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
+      const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
+      if (fetchErr) {
+        console.error("[TREATMENTS PUT] treatment(v1) fetch failed (ignored)", {
+          message: fetchErr.message,
+          code: fetchErr.code,
+          details: fetchErr.details,
+        });
+      } else {
+        const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
+        const mergedV1 = deepMerge(existingV1, patchV1);
+        mergedV1.lastUpdatedAt = new Date().toISOString();
+        const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
+        if (saveErr) {
+          console.error("[TREATMENTS PUT] treatment(v1) save failed (ignored)", {
+            message: saveErr.message,
+            code: saveErr.code,
+            details: saveErr.details,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[TREATMENTS PUT] treatment(v1) sync exception (ignored):", e?.message || e);
+    }
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -3774,6 +4298,33 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     } catch (supabaseError) {
       console.error(`[TREATMENTS DELETE] ❌ Failed to update treatments in Supabase:`, supabaseError.message);
       // Continue with file-based storage as fallback
+    }
+
+    // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
+    try {
+      const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
+      const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
+      if (fetchErr) {
+        console.error("[TREATMENTS DELETE] treatment(v1) fetch failed (ignored)", {
+          message: fetchErr.message,
+          code: fetchErr.code,
+          details: fetchErr.details,
+        });
+      } else {
+        const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
+        const mergedV1 = deepMerge(existingV1, patchV1);
+        mergedV1.lastUpdatedAt = new Date().toISOString();
+        const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
+        if (saveErr) {
+          console.error("[TREATMENTS DELETE] treatment(v1) save failed (ignored)", {
+            message: saveErr.message,
+            code: saveErr.code,
+            details: saveErr.details,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[TREATMENTS DELETE] treatment(v1) sync exception (ignored):", e?.message || e);
     }
   }
 
@@ -4673,10 +5224,127 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
   }
 });
 
+function mapReferralRowToLegacyItem(r) {
+  if (!r) return null;
+  const createdAt =
+    r.createdAt ||
+    (r.created_at ? Date.parse(r.created_at) : null) ||
+    (r.updated_at ? Date.parse(r.updated_at) : null) ||
+    now();
+
+  return {
+    id: r.id,
+    status: r.status,
+    inviterPatientId: r.referrer_patient_id || r.inviter_patient_id,
+    invitedPatientId: r.referred_patient_id || r.invited_patient_id || null,
+    referralCode: r.referral_code,
+    createdAt,
+    // v2 reward fields (optional)
+    rewardAmount: r.reward_amount ?? null,
+    rewardCurrency: r.reward_currency ?? "EUR",
+    completedAt: r.completed_at || null,
+  };
+}
+
+async function getPatientClinicIdForReferral(patientId) {
+  // Best-effort: derive clinic_id from patients table for admin isolation/reporting
+  try {
+    // Prefer patient_id when available; fall back to id
+    const q1 = await supabase
+      .from("patients")
+      .select("clinic_id, patient_id, id")
+      .eq("patient_id", patientId)
+      .single();
+    if (!q1.error && q1.data?.clinic_id) return q1.data.clinic_id;
+
+    const msg = String(q1.error?.message || "");
+    const isMissingPatientIdCol =
+      msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+    const isNotFound = String(q1.error?.code || "") === "PGRST116";
+    if (q1.error && !isMissingPatientIdCol && !isNotFound) return null;
+
+    const q2 = await supabase
+      .from("patients")
+      .select("clinic_id, id")
+      .eq("id", patientId)
+      .single();
+    if (!q2.error && q2.data?.clinic_id) return q2.data.clinic_id;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function generateReferralCodeV2() {
+  // Short, URL-safe code. Collision is guarded by DB unique index + retry.
+  const bytes = crypto.randomBytes(6).toString("base64").replaceAll("+", "").replaceAll("/", "").replaceAll("=", "");
+  return `R_${bytes.substring(0, 10).toUpperCase()}`;
+}
+
+// POST /api/referral/invite
+// Patient creates an invite; legacy flow continues to work in parallel.
+app.post("/api/referral/invite", requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || "").trim();
+    if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_disabled" });
+
+    const clinicId = await getPatientClinicIdForReferral(patientId);
+
+    let lastErr = null;
+    for (let i = 0; i < 6; i++) {
+      const referral_code = generateReferralCodeV2();
+      const insertPayload = {
+        // keep existing schema fields (clinic_id is optional)
+        ...(clinicId ? { clinic_id: clinicId } : {}),
+        referrer_patient_id: patientId,
+        referral_code,
+        status: "invited",
+        reward_currency: "EUR",
+      };
+
+      const { data, error } = await supabase
+        .from("referrals")
+        .insert(insertPayload)
+        .select("*")
+        .single();
+
+      if (!error) {
+        return res.json({
+          ok: true,
+          referralId: data.id,
+          referralCode: data.referral_code,
+          item: mapReferralRowToLegacyItem(data),
+        });
+      }
+
+      lastErr = error;
+      // Unique violation -> retry with a new code
+      if (String(error.code || "") === "23505") continue;
+
+      console.error("[REFERRAL] Supabase save failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      return res.status(500).json({ ok: false, error: "referral_invite_failed" });
+    }
+
+    console.error("[REFERRAL] Supabase save failed (exhausted retries)", {
+      message: lastErr?.message,
+      code: lastErr?.code,
+      details: lastErr?.details,
+    });
+    return res.status(500).json({ ok: false, error: "referral_invite_failed" });
+  } catch (e) {
+    console.error("[REFERRAL] invite error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // GET /api/patient/:patientId/referrals
-// PRODUCTION: Admin only - patient token access FORBIDDEN
-// Get referrals where this patient is the inviter OR the invited patient
-app.get("/api/patient/:patientId/referrals", requireAdminToken, (req, res) => {
+// Get referrals where this patient is the inviter OR the invited patient (legacy-compatible)
+app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (req, res) => {
   console.log(`[GET /api/patient/:patientId/referrals] ========== START ==========`);
   console.log(`[GET /api/patient/:patientId/referrals] URL: ${req.url}`);
   console.log(`[GET /api/patient/:patientId/referrals] Method: ${req.method}`);
@@ -4694,6 +5362,38 @@ app.get("/api/patient/:patientId/referrals", requireAdminToken, (req, res) => {
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
     
+    // Patient can only access their own referrals (admin can access any)
+    if (!req.isAdmin && String(req.patientId || "").trim() !== String(patientId || "").trim()) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    // PRODUCTION: Supabase is source of truth
+    if (isSupabaseEnabled()) {
+      const normalizedPatientId = String(patientId || "").trim();
+      let q = supabase
+        .from("referrals")
+        .select("*")
+        .or(`referrer_patient_id.eq.${normalizedPatientId},referred_patient_id.eq.${normalizedPatientId}`);
+
+      // Admin isolation: if we have clinic_id, scope query
+      if (req.isAdmin && req.clinicId) q = q.eq("clinic_id", req.clinicId);
+
+      const { data, error } = await q.order("created_at", { ascending: false });
+      if (error) {
+        console.error("[REFERRALS] Supabase fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        return res.status(500).json({ ok: false, error: "referrals_fetch_failed" });
+      }
+
+      let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
+      if (status) items = items.filter((x) => x.status === status);
+      return res.json({ ok: true, items });
+    }
+
+    // Legacy file fallback
     const raw = readJson(REF_FILE, []);
     const list = Array.isArray(raw) ? raw : Object.values(raw);
     console.log(`[GET /api/patient/:patientId/referrals] Total referrals in DB: ${list.length}`);
@@ -4743,6 +5443,50 @@ app.get("/api/patient/:patientId/referrals", requireAdminToken, (req, res) => {
   } catch (error) {
     console.error("[GET /api/patient/:patientId/referrals] Error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// PUT /api/referral/:referralId
+// Status updates (registered/completed/cancelled). Admin only by default.
+app.put("/api/referral/:referralId", requireAdminOrPatientToken, async (req, res) => {
+  try {
+    const referralId = String(req.params.referralId || "").trim();
+    if (!referralId) return res.status(400).json({ ok: false, error: "referral_id_required" });
+    if (!req.isAdmin) return res.status(403).json({ ok: false, error: "forbidden" });
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_disabled" });
+
+    const body = isPlainObject(req.body) ? req.body : {};
+    const nextStatus = body.status ? String(body.status).trim().toLowerCase() : "";
+    const allowed = new Set(["invited", "registered", "completed", "cancelled"]);
+    if (!allowed.has(nextStatus)) {
+      return res.status(400).json({ ok: false, error: "invalid_status" });
+    }
+
+    const update = {
+      status: nextStatus,
+      ...(body.reward_amount !== undefined ? { reward_amount: body.reward_amount } : {}),
+      ...(body.reward_currency ? { reward_currency: String(body.reward_currency).trim().toUpperCase() } : {}),
+      ...(nextStatus === "completed" ? { completed_at: new Date().toISOString() } : {}),
+      updated_at: new Date().toISOString(),
+    };
+
+    let q = supabase.from("referrals").update(update).eq("id", referralId);
+    if (req.clinicId) q = q.eq("clinic_id", req.clinicId);
+
+    const { data, error } = await q.select("*").single();
+    if (error) {
+      console.error("[REFERRAL] Supabase save failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      return res.status(500).json({ ok: false, error: "referral_update_failed" });
+    }
+
+    return res.json({ ok: true, item: mapReferralRowToLegacyItem(data), referral: data });
+  } catch (e) {
+    console.error("[REFERRAL] update error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
