@@ -2772,7 +2772,9 @@ function isMissingColumnError(error, columnName) {
   const details = String(error?.details || "");
   const hint = String(error?.hint || "");
   const combined = `${msg} ${details} ${hint}`.toLowerCase();
-  return combined.includes("does not exist") && combined.includes(String(columnName || "").toLowerCase());
+  const code = String(error?.code || "");
+  if (!columnName) return code === "PGRST204";
+  return code === "PGRST204" && combined.includes(String(columnName || "").toLowerCase());
 }
 
 function deepMerge(base, patch) {
