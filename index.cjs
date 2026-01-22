@@ -2267,31 +2267,48 @@ app.get("/api/admin/registrations", (req, res) => {
   res.json({ ok: true, list });
 });
 
-app.get("/api/admin/patients", requireAdminToken, (req, res) => {
-  const raw = readJson(REG_FILE, {});
-  const list = Array.isArray(raw) ? raw : Object.values(raw);
-  const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
-  const filtered = clinicCode
-    ? list.filter((r) => String(r?.clinicCode || r?.clinic_code || "").trim().toUpperCase() === clinicCode)
-    : list;
-  filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  
-  // Add oral health scores to each patient
-  const patientsWithScores = filtered.map(patient => {
-    const patientId = patient.patientId || patient.id || "";
-    if (patientId) {
-      const scores = calculateOralHealthScore(patientId);
-      return {
-        ...patient,
-        beforeScore: scores.beforeScore,
-        afterScore: scores.afterScore,
-        oralHealthCompleted: scores.completed
-      };
+app.get("/api/admin/patients", requireAdminToken, async (req, res) => {
+  try {
+    // PRODUCTION: Supabase only, file-based disabled
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
     }
-    return patient;
-  });
-  
-  res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores }); // Both for compatibility
+    if (!req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+
+    const patients = await getPatientsByClinic(req.clinicId);
+    const normalized = (patients || []).map((p) => {
+      const createdAt = p.created_at ? new Date(p.created_at).getTime() : (p.createdAt || 0);
+      return {
+        ...p,
+        patientId: p.id || p.patient_id || p.patientId,
+        createdAt,
+      };
+    });
+
+    normalized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    // Add oral health scores to each patient (uses patientId)
+    const patientsWithScores = normalized.map((patient) => {
+      const patientId = patient.patientId || "";
+      if (patientId) {
+        const scores = calculateOralHealthScore(patientId);
+        return {
+          ...patient,
+          beforeScore: scores.beforeScore,
+          afterScore: scores.afterScore,
+          oralHealthCompleted: scores.completed,
+        };
+      }
+      return patient;
+    });
+
+    res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores });
+  } catch (error) {
+    console.error("[ADMIN PATIENTS] Supabase error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
 });
 
 // ================== ADMIN APPROVE ==================
