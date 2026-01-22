@@ -94,6 +94,37 @@ function isMissingColumnError(error, columnName) {
   return code === "PGRST204" && combined.includes(String(columnName || "").toLowerCase());
 }
 
+function getMissingColumnName(error) {
+  const msg = String(error?.message || "");
+  const match = msg.match(/'([^']+)'/);
+  return match?.[1] || null;
+}
+
+async function insertWithColumnPruning(payload) {
+  let current = { ...(payload || {}) };
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const { data, error } = await supabase
+      .from("messages")
+      .insert(current)
+      .select("*")
+      .single();
+
+    if (!error) return { data, error };
+    lastError = error;
+    if (!isMissingColumnError(error)) return { data: null, error };
+
+    const missingColumn = getMissingColumnName(error);
+    if (!missingColumn || !(missingColumn in current)) {
+      return { data: null, error };
+    }
+    delete current[missingColumn];
+  }
+
+  return { data: null, error: lastError };
+}
+
 function deriveMessageType(explicitType, attachment) {
   if (explicitType) return String(explicitType);
   if (!attachment) return "text";
@@ -198,11 +229,7 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
     message,
     attachments: attachments ?? null,
   };
-  const primaryResult = await supabase
-    .from("messages")
-    .insert(primaryPayload)
-    .select("*")
-    .single();
+  const primaryResult = await insertWithColumnPruning(primaryPayload);
 
   if (!primaryResult?.error) return primaryResult;
 
@@ -212,26 +239,21 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
   }
 
   const clinicCode = await resolveClinicCodeForPatient(patientId);
-  if (!clinicCode) {
-    return primaryResult;
-  }
 
   const fallbackPayload = {
-    message_id: rid("msg"),
     patient_id: patientId,
-    clinic_code: clinicCode,
+    ...(clinicCode ? { clinic_code: clinicCode } : {}),
+    message_id: rid("msg"),
     type: deriveMessageType(type, attachments),
+    message: String(message || ""),
     text: String(message || ""),
     attachment: attachments ?? null,
+    attachments: attachments ?? null,
     from_patient: String(sender || "").toLowerCase() === "patient",
     created_at: now(),
   };
 
-  return supabase
-    .from("messages")
-    .insert(fallbackPayload)
-    .select("*")
-    .single();
+  return insertWithColumnPruning(fallbackPayload);
 }
 
 // Super Admin ENV variables
