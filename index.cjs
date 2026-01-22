@@ -2771,8 +2771,103 @@ app.post("/api/patient/:patientId/health", requireToken, async (req, res) => {
 
 // PUT /api/patient/:patientId/health
 app.put("/api/patient/:patientId/health", requireToken, async (req, res) => {
-  // Same behavior as POST
-  return app._router.handle(req, res, () => {}); // placeholder
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    const formData = req.body?.formData || {};
+    const isComplete = req.body?.isComplete === true;
+    const nowTs = now();
+
+    if (isSupabaseEnabled()) {
+      // Fetch existing health to preserve createdAt/completedAt
+      const { data: existingRow, error: fetchErr } = await supabase
+        .from("patients")
+        .select("patient_id,health")
+        .eq("patient_id", patientId)
+        .single();
+
+      if (fetchErr) {
+        console.error("[HEALTH] Supabase fetch failed (PUT)", {
+          message: fetchErr.message,
+          code: fetchErr.code,
+          details: fetchErr.details,
+        });
+        if (String(fetchErr.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "health_fetch_failed" });
+      }
+
+      const existingHealth = existingRow?.health || {};
+      const payload = {
+        patientId,
+        formData,
+        isComplete,
+        createdAt: existingHealth.createdAt || nowTs,
+        updatedAt: nowTs,
+        completedAt: isComplete ? (existingHealth.completedAt || nowTs) : null,
+      };
+
+      const { data: updatedRow, error: updateErr } = await supabase
+        .from("patients")
+        .update({ health: payload, updated_at: new Date().toISOString() })
+        .eq("patient_id", patientId)
+        .select("patient_id,health")
+        .single();
+
+      if (updateErr) {
+        console.error("[HEALTH] Supabase save failed (PUT)", {
+          message: updateErr.message,
+          code: updateErr.code,
+          details: updateErr.details,
+          hint: updateErr.hint,
+        });
+        if (String(updateErr.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "health_save_failed" });
+      }
+
+      const health = updatedRow?.health || payload;
+      return res.json({
+        ok: true,
+        formData: health.formData || {},
+        isComplete: health.isComplete === true,
+        completedAt: health.completedAt || null,
+        updatedAt: health.updatedAt || nowTs,
+        createdAt: health.createdAt || nowTs,
+      });
+    }
+
+    // Legacy fallback (file-based)
+    const HEALTH_DIR = ensureHealthDir();
+    const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+    const existing = readJson(filePath, {});
+    const payload = {
+      patientId,
+      formData,
+      isComplete,
+      createdAt: existing.createdAt || nowTs,
+      updatedAt: nowTs,
+      completedAt: isComplete ? (existing.completedAt || nowTs) : null,
+    };
+    writeJson(filePath, payload);
+    return res.json({
+      ok: true,
+      formData: payload.formData,
+      isComplete: payload.isComplete,
+      completedAt: payload.completedAt,
+      updatedAt: payload.updatedAt,
+      createdAt: payload.createdAt,
+    });
+  } catch (e) {
+    console.error("[HEALTH] PUT error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
 });
 
 // GET /api/admin/patients/:patientId/health
