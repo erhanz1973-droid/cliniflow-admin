@@ -1472,9 +1472,14 @@ app.post("/api/patient/register", async (req, res) => {
       
       console.log(`[REGISTER /api/patient/register] Inserting patient to Supabase:`, JSON.stringify(patientData).substring(0, 200));
       const supabasePatient = await createPatient(patientData);
-      console.log(`[REGISTER /api/patient/register] ✅ Patient inserted to Supabase: ${supabasePatient?.id}`);
+      console.log(`[REGISTER /api/patient/register] ✅ Patient inserted to Supabase`, {
+        id: supabasePatient?.id,
+        clinic_id: supabasePatient?.clinic_id,
+        status: supabasePatient?.status,
+      });
     } catch (supabaseError) {
-      console.error(`[REGISTER /api/patient/register] ❌ Failed to insert patient to Supabase:`, supabaseError.message);
+      console.error(`[REGISTER /api/patient/register] ❌ Failed to insert patient to Supabase:`, supabaseError?.message || supabaseError);
+      console.error(`[REGISTER /api/patient/register] ❌ Supabase insert error details:`, supabaseError);
       // Continue with file-based storage as fallback
     }
   }
