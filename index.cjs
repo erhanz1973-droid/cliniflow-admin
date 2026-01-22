@@ -2637,106 +2637,142 @@ function ensureHealthDir() {
 }
 
 // GET /api/patient/:patientId/health
-app.get("/api/patient/:patientId/health", requireToken, (req, res) => {
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
-  if (req.patientId !== patientId) {
-    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
-  }
+app.get("/api/patient/:patientId/health", requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
 
-  const HEALTH_DIR = ensureHealthDir();
-  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
-  if (!fs.existsSync(filePath)) {
-    return res.json({ ok: true, formData: null, isComplete: false });
+    // PRODUCTION: Supabase is source of truth
+    if (isSupabaseEnabled()) {
+      const { data: p, error } = await supabase
+        .from("patients")
+        .select("patient_id,health")
+        .eq("patient_id", patientId)
+        .single();
+
+      if (error) {
+        console.error("[HEALTH] Supabase fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        if (String(error.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "health_fetch_failed" });
+      }
+
+      const health = p?.health || {};
+      return res.json({
+        ok: true,
+        formData: health.formData || {},
+        isComplete: health.isComplete === true,
+        completedAt: health.completedAt || null,
+        updatedAt: health.updatedAt || null,
+        createdAt: health.createdAt || null,
+      });
+    }
+
+    // Legacy fallback (file-based)
+    const HEALTH_DIR = ensureHealthDir();
+    const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+    if (!fs.existsSync(filePath)) {
+      return res.json({ ok: true, formData: null, isComplete: false });
+    }
+    const data = readJson(filePath, {});
+    return res.json({
+      ok: true,
+      formData: data.formData || {},
+      isComplete: data.isComplete || false,
+      completedAt: data.completedAt || null,
+      updatedAt: data.updatedAt || null,
+      createdAt: data.createdAt || null,
+    });
+  } catch (e) {
+    console.error("[HEALTH] GET error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-  const data = readJson(filePath, {});
-  return res.json({
-    ok: true,
-    formData: data.formData || {},
-    isComplete: data.isComplete || false,
-    completedAt: data.completedAt || null,
-    updatedAt: data.updatedAt || null,
-    createdAt: data.createdAt || null,
-  });
 });
 
 // POST /api/patient/:patientId/health
-app.post("/api/patient/:patientId/health", requireToken, (req, res) => {
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
-  if (req.patientId !== patientId) {
-    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+app.post("/api/patient/:patientId/health", requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    const formData = req.body?.formData || {};
+    const isComplete = req.body?.isComplete === true;
+    const nowTs = now();
+
+    const payload = {
+      patientId,
+      formData,
+      isComplete,
+      createdAt: nowTs,
+      updatedAt: nowTs,
+      completedAt: isComplete ? nowTs : null,
+    };
+
+    if (isSupabaseEnabled()) {
+      const { data, error } = await supabase
+        .from("patients")
+        .update({ health: payload, updated_at: new Date().toISOString() })
+        .eq("patient_id", patientId)
+        .select("patient_id,health")
+        .single();
+
+      if (error) {
+        console.error("[HEALTH] Supabase save failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
+        if (String(error.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        return res.status(500).json({ ok: false, error: "health_save_failed" });
+      }
+
+      const health = data?.health || payload;
+      return res.json({
+        ok: true,
+        formData: health.formData || {},
+        isComplete: health.isComplete === true,
+        completedAt: health.completedAt || null,
+        updatedAt: health.updatedAt || nowTs,
+        createdAt: health.createdAt || nowTs,
+      });
+    }
+
+    // Legacy fallback (file-based)
+    const HEALTH_DIR = ensureHealthDir();
+    const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
+    writeJson(filePath, payload);
+    return res.json({
+      ok: true,
+      formData: payload.formData,
+      isComplete: payload.isComplete,
+      completedAt: payload.completedAt,
+      updatedAt: payload.updatedAt,
+      createdAt: payload.createdAt,
+    });
+  } catch (e) {
+    console.error("[HEALTH] POST error:", e);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
-
-  const patient = getPatientRecordById(patientId);
-  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
-
-  const HEALTH_DIR = ensureHealthDir();
-  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
-  const existing = readJson(filePath, {});
-
-  const formData = req.body?.formData || {};
-  const isComplete = req.body?.isComplete === true;
-  const nowTs = now();
-  const payload = {
-    patientId,
-    clinicCode: patient.clinicCode || patient.clinic_code || null,
-    formData,
-    isComplete,
-    createdAt: existing.createdAt || nowTs,
-    updatedAt: nowTs,
-    completedAt: isComplete ? (existing.completedAt || nowTs) : null,
-  };
-  writeJson(filePath, payload);
-
-  return res.json({
-    ok: true,
-    formData: payload.formData,
-    isComplete: payload.isComplete,
-    completedAt: payload.completedAt,
-    updatedAt: payload.updatedAt,
-    createdAt: payload.createdAt,
-  });
 });
 
 // PUT /api/patient/:patientId/health
-app.put("/api/patient/:patientId/health", requireToken, (req, res) => {
+app.put("/api/patient/:patientId/health", requireToken, async (req, res) => {
   // Same behavior as POST
-  const patientId = String(req.params.patientId || "").trim();
-  if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
-  if (req.patientId !== patientId) {
-    return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
-  }
-
-  const patient = getPatientRecordById(patientId);
-  if (!patient) return res.status(404).json({ ok: false, error: "patient_not_found" });
-
-  const HEALTH_DIR = ensureHealthDir();
-  const filePath = path.join(HEALTH_DIR, `${patientId}.json`);
-  const existing = readJson(filePath, {});
-
-  const formData = req.body?.formData || {};
-  const isComplete = req.body?.isComplete === true;
-  const nowTs = now();
-  const payload = {
-    patientId,
-    clinicCode: patient.clinicCode || patient.clinic_code || null,
-    formData,
-    isComplete,
-    createdAt: existing.createdAt || nowTs,
-    updatedAt: nowTs,
-    completedAt: isComplete ? (existing.completedAt || nowTs) : null,
-  };
-  writeJson(filePath, payload);
-
-  return res.json({
-    ok: true,
-    formData: payload.formData,
-    isComplete: payload.isComplete,
-    completedAt: payload.completedAt,
-    updatedAt: payload.updatedAt,
-    createdAt: payload.createdAt,
-  });
+  return app._router.handle(req, res, () => {}); // placeholder
 });
 
 // GET /api/admin/patients/:patientId/health
