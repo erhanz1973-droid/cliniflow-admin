@@ -91,8 +91,9 @@ function isMissingColumnError(error, columnName) {
   const hint = String(error?.hint || "");
   const combined = `${msg} ${details} ${hint}`.toLowerCase();
   const code = String(error?.code || "");
-  if (!columnName) return code === "PGRST204";
-  return code === "PGRST204" && combined.includes(String(columnName || "").toLowerCase());
+  const isMissingCode = code === "PGRST204" || code === "42703";
+  if (!columnName) return isMissingCode;
+  return isMissingCode && combined.includes(String(columnName || "").toLowerCase());
 }
 
 function getMissingColumnName(error) {
@@ -2777,8 +2778,9 @@ function isMissingColumnError(error, columnName) {
   const hint = String(error?.hint || "");
   const combined = `${msg} ${details} ${hint}`.toLowerCase();
   const code = String(error?.code || "");
-  if (!columnName) return code === "PGRST204";
-  return code === "PGRST204" && combined.includes(String(columnName || "").toLowerCase());
+  const isMissingCode = code === "PGRST204" || code === "42703";
+  if (!columnName) return isMissingCode;
+  return isMissingCode && combined.includes(String(columnName || "").toLowerCase());
 }
 
 function deepMerge(base, patch) {
@@ -3503,10 +3505,10 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
         details: error.details,
       });
       if (isMissingColumnError(error, "treatment_events")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatment_events_column_missing",
-          message: "Supabase schema missing: patients.treatment_events. Run migration 007_add_patient_treatment_events.sql",
+        return res.json({
+          ok: true,
+          events: [],
+          warning: "treatment_events_column_missing",
         });
       }
       if (String(error.code || "") === "PGRST116") return res.status(404).json({ ok: false, error: "patient_not_found" });
@@ -3551,10 +3553,11 @@ app.put("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
         details: error.details,
       });
       if (isMissingColumnError(error, "treatment_events")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatment_events_column_missing",
-          message: "Supabase schema missing: patients.treatment_events. Run migration 007_add_patient_treatment_events.sql",
+        return res.json({
+          ok: true,
+          saved: false,
+          events,
+          warning: "treatment_events_column_missing",
         });
       }
       return res.status(500).json({ ok: false, error: "treatment_events_save_failed" });
