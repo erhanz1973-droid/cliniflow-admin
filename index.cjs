@@ -6668,6 +6668,50 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
       return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
     }
 
+    const respondFromFile = () => {
+      const raw = readJson(REF_FILE, []);
+      const list = Array.isArray(raw) ? raw : Object.values(raw);
+      console.log(`[GET /api/patient/:patientId/referrals] Total referrals in DB: ${list.length}`);
+
+      const normalizedPatientId = String(patientId || "").trim();
+      console.log(`[GET /api/patient/:patientId/referrals] Searching for patientId: "${normalizedPatientId}"`);
+
+      if (list.length > 0) {
+        console.log(`[GET /api/patient/:patientId/referrals] All referral patient IDs in DB:`, list.map((r) => ({
+          id: r.id,
+          inviterPatientId: r.inviterPatientId,
+          invitedPatientId: r.invitedPatientId,
+          inviterMatch: String(r.inviterPatientId || "").trim() === normalizedPatientId,
+          invitedMatch: String(r.invitedPatientId || "").trim() === normalizedPatientId,
+        })));
+      }
+
+      let items = list.filter((x) => {
+        if (!x) return false;
+        const inviterId = String(x.inviterPatientId || "").trim();
+        const invitedId = String(x.invitedPatientId || "").trim();
+        return inviterId === normalizedPatientId || invitedId === normalizedPatientId;
+      });
+      console.log(`[GET /api/patient/:patientId/referrals] Filtered referrals (inviter or invited): ${items.length}`);
+      console.log(`[GET /api/patient/:patientId/referrals] Referral details:`, items.map((r) => ({
+        id: r.id,
+        status: r.status,
+        inviterPatientId: r.inviterPatientId,
+        invitedPatientId: r.invitedPatientId,
+      })));
+
+      if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
+        const beforeFilter = items.length;
+        items = items.filter((x) => x.status === status);
+        console.log(`[GET /api/patient/:patientId/referrals] After status filter (${status}): ${items.length} (was ${beforeFilter})`);
+      }
+
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+      console.log(`[GET /api/patient/:patientId/referrals] Returning ${items.length} referrals for patient ${patientId}`);
+      return res.json({ ok: true, items, source: "file" });
+    };
+
     // PRODUCTION: Supabase is source of truth
     if (isSupabaseEnabled()) {
       const normalizedPatientId = String(patientId || "").trim();
@@ -6686,7 +6730,11 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
           code: error.code,
           details: error.details,
         });
-        return res.status(500).json({ ok: false, error: "referrals_fetch_failed" });
+        if (canUseFileFallback()) {
+          console.warn("[REFERRALS] Supabase fetch failed, using file fallback");
+          return respondFromFile();
+        }
+        return res.status(500).json({ ok: false, error: "referrals_fetch_failed", supabase: supabaseErrorPublic(error) });
       }
 
       let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
@@ -6695,52 +6743,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
     }
 
     // Legacy file fallback
-    const raw = readJson(REF_FILE, []);
-    const list = Array.isArray(raw) ? raw : Object.values(raw);
-    console.log(`[GET /api/patient/:patientId/referrals] Total referrals in DB: ${list.length}`);
-    
-    // Filter: referrals where this patient is the inviter OR the invited patient
-    // Normalize patientId for comparison (trim whitespace)
-    const normalizedPatientId = String(patientId || "").trim();
-    console.log(`[GET /api/patient/:patientId/referrals] Searching for patientId: "${normalizedPatientId}"`);
-    
-    // Log all referral patient IDs for debugging
-    if (list.length > 0) {
-      console.log(`[GET /api/patient/:patientId/referrals] All referral patient IDs in DB:`, list.map((r) => ({
-        id: r.id,
-        inviterPatientId: r.inviterPatientId,
-        invitedPatientId: r.invitedPatientId,
-        inviterMatch: String(r.inviterPatientId || "").trim() === normalizedPatientId,
-        invitedMatch: String(r.invitedPatientId || "").trim() === normalizedPatientId,
-      })));
-    }
-    
-    let items = list.filter((x) => {
-      if (!x) return false;
-      const inviterId = String(x.inviterPatientId || "").trim();
-      const invitedId = String(x.invitedPatientId || "").trim();
-      return inviterId === normalizedPatientId || invitedId === normalizedPatientId;
-    });
-    console.log(`[GET /api/patient/:patientId/referrals] Filtered referrals (inviter or invited): ${items.length}`);
-    console.log(`[GET /api/patient/:patientId/referrals] Referral details:`, items.map((r) => ({
-      id: r.id,
-      status: r.status,
-      inviterPatientId: r.inviterPatientId,
-      invitedPatientId: r.invitedPatientId,
-    })));
-    
-    // Optional status filter
-    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
-      const beforeFilter = items.length;
-      items = items.filter((x) => x.status === status);
-      console.log(`[GET /api/patient/:patientId/referrals] After status filter (${status}): ${items.length} (was ${beforeFilter})`);
-    }
-    
-    // Sort by created date (newest first)
-    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    
-    console.log(`[GET /api/patient/:patientId/referrals] Returning ${items.length} referrals for patient ${patientId}`);
-    res.json({ ok: true, items });
+    return respondFromFile();
   } catch (error) {
     console.error("[GET /api/patient/:patientId/referrals] Error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
