@@ -3512,6 +3512,28 @@ async function updatePatientTreatmentEventsRowSupabase(patientId, clinicIdOrNull
 }
 
 // ================== PATIENT TREATMENT EVENTS (independent from travel) ==================
+function mapTreatmentEventsForCalendar(rawEvents) {
+  const events = Array.isArray(rawEvents) ? rawEvents : [];
+  return events.map((event, index) => {
+    const startAt =
+      Number(event?.startAt || event?.startDate || event?.scheduledAt || event?.timestamp) ||
+      (event?.date
+        ? new Date(`${event.date}T${event.time || "00:00"}`).getTime()
+        : null);
+    const id = String(event?.id || `evt_${index}_${startAt || now()}`);
+    const type = String(event?.type || "TREATMENT");
+    const title = String(event?.title || type);
+    return {
+      ...event,
+      id,
+      type,
+      title,
+      startAt: startAt || undefined,
+      scheduledAt: event?.scheduledAt || undefined,
+    };
+  });
+}
+
 app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, async (req, res) => {
   try {
     const patientId = String(req.params.patientId || "").trim();
@@ -3550,7 +3572,7 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
       return res.status(500).json({ ok: false, error: "treatment_events_fetch_failed" });
     }
 
-    const events = Array.isArray(data?.treatment_events) ? data.treatment_events : [];
+    const events = mapTreatmentEventsForCalendar(data?.treatment_events);
     return res.json({ ok: true, events });
   } catch (e) {
     console.error("[TREATMENT_EVENTS] GET error:", e);
@@ -8887,16 +8909,43 @@ app.post("/api/admin/payment-success", requireAdminAuth, (req, res) => {
 
 // GET /api/admin/treatment-prices
 // Get clinic treatment price list (requires auth)
-app.get("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
+app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
   try {
-    const clinicCode = req.clinicCode;
-    const prices = readJson(TREATMENT_PRICES_FILE, {});
-    const clinicPrices = prices[clinicCode] || [];
-    
-    res.json({ 
-      ok: true, 
-      prices: clinicPrices,
-      clinicCode 
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
+    }
+
+    const clinicId = req.clinicId;
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    const { data, error } = await supabase
+      .from("treatment_prices")
+      .select("*")
+      .eq("clinic_id", clinicId);
+
+    if (error) {
+      console.error("[TREATMENT_PRICES] Supabase fetch failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      return res.status(500).json({ ok: false, error: "treatment_prices_fetch_failed" });
+    }
+
+    const prices = (data || []).map((row) => ({
+      id: row.id,
+      treatment_name: row.treatment_code || row.name || "",
+      default_price: row.price !== undefined && row.price !== null ? Number(row.price) : 0,
+      currency: row.currency || "EUR",
+      is_active: row.is_active !== undefined ? row.is_active !== false : true,
+    }));
+
+    res.json({
+      ok: true,
+      prices,
+      clinicCode: req.clinicCode,
     });
   } catch (error) {
     console.error("[TREATMENT_PRICES] Get error:", error);
@@ -8906,47 +8955,83 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
 
 // POST /api/admin/treatment-prices
 // Create or update treatment price (requires auth)
-app.post("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
+app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
   try {
-    const clinicCode = req.clinicCode;
-    const { id, treatment_name, default_price, currency, is_active } = req.body || {};
-    
-    if (!treatment_name || !default_price || !currency) {
-      return res.status(400).json({ ok: false, error: "missing_fields", message: "treatment_name, default_price, and currency are required" });
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
     }
-    
-    const prices = readJson(TREATMENT_PRICES_FILE, {});
-    if (!prices[clinicCode]) {
-      prices[clinicCode] = [];
+
+    const clinicId = req.clinicId;
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
     }
-    
-    const priceId = id || `price_${now()}_${crypto.randomBytes(4).toString("hex")}`;
-    const existingIndex = prices[clinicCode].findIndex(p => p.id === priceId);
-    
-    const priceItem = {
-      id: priceId,
-      treatment_name: String(treatment_name).trim(),
-      default_price: Number(default_price),
-      currency: String(currency).trim().toUpperCase(),
-      is_active: is_active !== false, // Default to true
-      updatedAt: now(),
-      createdAt: existingIndex >= 0 ? prices[clinicCode][existingIndex].createdAt : now(),
+
+    const { treatment_name, default_price, currency, is_active } = req.body || {};
+    const name = String(treatment_name || "").trim();
+    const priceValue = Number(default_price);
+    const currencyValue = String(currency || "").trim().toUpperCase();
+
+    if (!name || !currencyValue || Number.isNaN(priceValue)) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_fields",
+        message: "treatment_name, default_price, and currency are required",
+      });
+    }
+
+    const treatmentCode = name.toUpperCase();
+    const basePayload = {
+      clinic_id: clinicId,
+      treatment_code: treatmentCode,
+      name,
+      price: priceValue,
+      currency: currencyValue,
     };
-    
-    if (existingIndex >= 0) {
-      prices[clinicCode][existingIndex] = priceItem;
-    } else {
-      prices[clinicCode].push(priceItem);
+
+    const upsertPayload = {
+      ...basePayload,
+      ...(is_active !== undefined ? { is_active: is_active !== false } : {}),
+    };
+
+    let result = await supabase
+      .from("treatment_prices")
+      .upsert(upsertPayload, { onConflict: "clinic_id,treatment_code" })
+      .select("*")
+      .single();
+
+    if (result.error && isMissingColumnError(result.error, "is_active")) {
+      const { is_active: _ignored, ...retryPayload } = upsertPayload;
+      result = await supabase
+        .from("treatment_prices")
+        .upsert(retryPayload, { onConflict: "clinic_id,treatment_code" })
+        .select("*")
+        .single();
     }
-    
-    writeJson(TREATMENT_PRICES_FILE, prices);
-    
-    console.log(`[TREATMENT_PRICES] ${existingIndex >= 0 ? 'Updated' : 'Created'} price for clinic ${clinicCode}: ${treatment_name}`);
-    
-    res.json({ 
-      ok: true, 
-      price: priceItem,
-      message: existingIndex >= 0 ? "Price updated" : "Price created"
+
+    if (result.error) {
+      console.error("[TREATMENT_PRICES] Supabase upsert failed", {
+        message: result.error.message,
+        code: result.error.code,
+        details: result.error.details,
+      });
+      return res.status(500).json({ ok: false, error: "treatment_prices_save_failed" });
+    }
+
+    const row = result.data || {};
+    const responsePrice = {
+      id: row.id,
+      treatment_name: row.treatment_code || row.name || name,
+      default_price: row.price !== undefined && row.price !== null ? Number(row.price) : priceValue,
+      currency: row.currency || currencyValue,
+      is_active: row.is_active !== undefined ? row.is_active !== false : (is_active !== false),
+    };
+
+    console.log(`[TREATMENT_PRICES] Saved price for clinic ${req.clinicCode}: ${treatmentCode}`);
+
+    res.json({
+      ok: true,
+      price: responsePrice,
+      message: "Price saved",
     });
   } catch (error) {
     console.error("[TREATMENT_PRICES] Create/Update error:", error);
@@ -8956,30 +9041,43 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, (req, res) => {
 
 // DELETE /api/admin/treatment-prices/:id
 // Delete treatment price (requires auth)
-app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, (req, res) => {
+app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res) => {
   try {
-    const clinicCode = req.clinicCode;
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
+    }
+
+    const clinicId = req.clinicId;
     const { id } = req.params;
-    
+
     if (!id) {
       return res.status(400).json({ ok: false, error: "id_required", message: "Price ID is required" });
     }
-    
-    const prices = readJson(TREATMENT_PRICES_FILE, {});
-    if (!prices[clinicCode]) {
-      return res.status(404).json({ ok: false, error: "no_prices", message: "No prices found for this clinic" });
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
     }
-    
-    const index = prices[clinicCode].findIndex(p => p.id === id);
-    if (index < 0) {
+
+    const { data, error } = await supabase
+      .from("treatment_prices")
+      .delete()
+      .eq("clinic_id", clinicId)
+      .eq("id", id)
+      .select("id");
+
+    if (error) {
+      console.error("[TREATMENT_PRICES] Supabase delete failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+      return res.status(500).json({ ok: false, error: "treatment_prices_delete_failed" });
+    }
+
+    if (!data || data.length === 0) {
       return res.status(404).json({ ok: false, error: "price_not_found", message: "Price not found" });
     }
-    
-    prices[clinicCode].splice(index, 1);
-    writeJson(TREATMENT_PRICES_FILE, prices);
-    
-    console.log(`[TREATMENT_PRICES] Deleted price ${id} for clinic ${clinicCode}`);
-    
+
+    console.log(`[TREATMENT_PRICES] Deleted price ${id} for clinic ${req.clinicCode}`);
     res.json({ ok: true, message: "Price deleted" });
   } catch (error) {
     console.error("[TREATMENT_PRICES] Delete error:", error);
