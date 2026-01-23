@@ -343,6 +343,59 @@ function supabaseErrorPublic(err) {
   };
 }
 
+async function fetchTreatmentPricesMap(clinicId) {
+  if (!isSupabaseEnabled() || !clinicId) return {};
+  const { data, error } = await supabase
+    .from("treatment_prices")
+    .select("*")
+    .eq("clinic_id", clinicId);
+  if (error) {
+    console.error("[TREATMENT_PRICES] Supabase fetch failed", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+    });
+    return {};
+  }
+
+  const map = {};
+  (data || []).forEach((row) => {
+    const keyRaw = row?.treatment_code || row?.type || row?.name || "";
+    const key = String(keyRaw).trim().toUpperCase();
+    if (!key) return;
+    const isActive = row?.is_active !== undefined ? row.is_active !== false : true;
+    if (!isActive) return;
+    const priceVal =
+      row?.price !== undefined && row?.price !== null
+        ? Number(row.price)
+        : row?.default_price !== undefined && row?.default_price !== null
+          ? Number(row.default_price)
+          : null;
+    if (!Number.isFinite(priceVal)) return;
+    map[key] = {
+      price: priceVal,
+      currency: row?.currency || "EUR",
+    };
+  });
+  return map;
+}
+
+function applyEventPrices(events, priceMap) {
+  const list = Array.isArray(events) ? events : [];
+  if (!priceMap || Object.keys(priceMap).length === 0) return list;
+  return list.map((event) => {
+    if (event?.price != null) return event;
+    const key = String(event?.type || "").trim().toUpperCase();
+    const match = priceMap[key];
+    if (!match) return event;
+    return {
+      ...event,
+      price: match.price,
+      currency: match.currency,
+    };
+  });
+}
+
 // Normalize phone number: remove +90, leading 0, spaces, and keep only digits
 function normalizePhone(phone) {
   if (!phone) return "";
@@ -3613,6 +3666,15 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
     }
 
     const clinicFilter = req.isAdmin ? req.clinicId : null;
+    let clinicIdForPrices = clinicFilter;
+    if (!clinicIdForPrices) {
+      try {
+        const patient = await getPatientById(patientId);
+        clinicIdForPrices = patient?.clinic_id || null;
+      } catch {}
+    }
+
+    const priceMap = clinicIdForPrices ? await fetchTreatmentPricesMap(clinicIdForPrices) : {};
     const { data, error } = await fetchPatientTreatmentEventsRowSupabase(patientId, clinicFilter);
     if (error) {
       console.error("[TREATMENT_EVENTS] Supabase fetch failed", {
@@ -3642,7 +3704,7 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
       return res.status(500).json({ ok: false, error: "treatment_events_fetch_failed" });
     }
 
-    const events = mapTreatmentEventsForCalendar(data?.treatment_events);
+    const events = applyEventPrices(mapTreatmentEventsForCalendar(data?.treatment_events), priceMap);
     return res.json({ ok: true, events });
   } catch (e) {
     console.error("[TREATMENT_EVENTS] GET error:", e);
@@ -4826,9 +4888,16 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   
   // Load treatment events from dedicated store (independent from travel)
   let treatmentEvents = [];
+  let clinicIdForPrices = req.isAdmin ? req.clinicId : null;
   if (isSupabaseEnabled()) {
     try {
       const clinicFilter = req.isAdmin ? req.clinicId : null;
+      if (!clinicIdForPrices) {
+        try {
+          const patient = await getPatientById(patientId);
+          clinicIdForPrices = patient?.clinic_id || null;
+        } catch {}
+      }
       const { data: row, error } = await fetchPatientTreatmentEventsRowSupabase(patientId, clinicFilter);
       if (!error) {
         treatmentEvents = Array.isArray(row?.treatment_events) ? row.treatment_events : [];
@@ -4850,7 +4919,12 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     } catch {}
   }
 
-  data.events = treatmentEvents;
+  if (isSupabaseEnabled() && clinicIdForPrices) {
+    const priceMap = await fetchTreatmentPricesMap(clinicIdForPrices);
+    data.events = applyEventPrices(treatmentEvents, priceMap);
+  } else {
+    data.events = treatmentEvents;
+  }
   
   console.log(`[TREATMENTS GET] ========== END ==========`);
   
@@ -6715,31 +6789,42 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
     // PRODUCTION: Supabase is source of truth
     if (isSupabaseEnabled()) {
       const normalizedPatientId = String(patientId || "").trim();
-      let q = supabase
-        .from("referrals")
-        .select("*")
-        .or(`referrer_patient_id.eq.${normalizedPatientId},referred_patient_id.eq.${normalizedPatientId}`);
+      const queryVariants = [
+        `referrer_patient_id.eq.${normalizedPatientId},referred_patient_id.eq.${normalizedPatientId}`,
+        `inviter_patient_id.eq.${normalizedPatientId},invited_patient_id.eq.${normalizedPatientId}`,
+        `inviterPatientId.eq.${normalizedPatientId},invitedPatientId.eq.${normalizedPatientId}`,
+      ];
 
-      // Admin isolation: if we have clinic_id, scope query
-      if (req.isAdmin && req.clinicId) q = q.eq("clinic_id", req.clinicId);
-
-      const { data, error } = await q.order("created_at", { ascending: false });
-      if (error) {
-        console.error("[REFERRALS] Supabase fetch failed", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-        });
-        if (canUseFileFallback()) {
-          console.warn("[REFERRALS] Supabase fetch failed, using file fallback");
-          return respondFromFile();
+      let lastError = null;
+      for (const orClause of queryVariants) {
+        let q = supabase.from("referrals").select("*").or(orClause);
+        if (req.isAdmin && req.clinicId) q = q.eq("clinic_id", req.clinicId);
+        const { data, error } = await q.order("created_at", { ascending: false });
+        if (!error) {
+          let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
+          if (status) items = items.filter((x) => x.status === status);
+          return res.json({ ok: true, items });
         }
-        return res.status(500).json({ ok: false, error: "referrals_fetch_failed", supabase: supabaseErrorPublic(error) });
+        lastError = error;
+        if (!isMissingColumnError(error)) {
+          console.error("[REFERRALS] Supabase fetch failed", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+          });
+          break;
+        }
       }
 
-      let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
-      if (status) items = items.filter((x) => x.status === status);
-      return res.json({ ok: true, items });
+      if (canUseFileFallback()) {
+        console.warn("[REFERRALS] Supabase fetch failed, using file fallback");
+        return respondFromFile();
+      }
+      return res.status(500).json({
+        ok: false,
+        error: "referrals_fetch_failed",
+        supabase: supabaseErrorPublic(lastError),
+      });
     }
 
     // Legacy file fallback
@@ -7295,6 +7380,7 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
 
     // PRODUCTION: Supabase patients are source of truth
     if (isSupabaseEnabled() && req.clinicId) {
+      const priceMap = await fetchTreatmentPricesMap(req.clinicId);
       const useFileFallback = canUseFileFallback();
       const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 
@@ -7432,7 +7518,7 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
             tEvents = fileEvents;
           }
         }
-        tEvents = mapTreatmentEventsForCalendar(tEvents);
+        tEvents = applyEventPrices(mapTreatmentEventsForCalendar(tEvents), priceMap);
         tEvents.forEach((e) => {
           const iso =
             toIso(e?.startAt) ||

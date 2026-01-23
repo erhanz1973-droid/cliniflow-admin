@@ -772,6 +772,11 @@
       
       const eventIcon = getEventIcon(evt.type, evt.eventType);
       const patientName = evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '';
+      const priceText = evt.price ? `💰 ${Number(evt.price).toLocaleString()} ${evt.currency || ""}`.trim() : "";
+      const descriptionText = [
+        evt.description ? evt.description : "",
+        priceText
+      ].filter(Boolean).join(" • ");
       
       return `
         <div class="${itemClasses}" data-event-index="${index}" style="${itemStyle}" ${isClickable ? `onclick="window.location.href='${escapedUrl}'"` : ''}>
@@ -786,7 +791,7 @@
               </div>
               <div class="item-meta" ${metaStyle}>
                 ${patientName || ''}
-              ${evt.description ? ` • ${evt.description}` : ""}
+              ${descriptionText ? ` • ${descriptionText}` : ""}
             </div>
           </div>
           <div>
