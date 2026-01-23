@@ -3444,6 +3444,36 @@ async function fetchPatientTreatmentsRowSupabase(patientId, clinicIdOrNull) {
   return { error: r2.error };
 }
 
+async function loadExistingTreatmentsPayload(patientId, clinicIdOrNull, treatmentsFile, fallbackPayload) {
+  if (isSupabaseEnabled()) {
+    let { data: row, error } = await fetchPatientTreatmentsRowSupabase(patientId, clinicIdOrNull);
+    if (error && String(error.code || "") === "PGRST116" && clinicIdOrNull) {
+      // Retry without clinic filter to avoid overwriting when clinic_id is missing/mismatched.
+      const retry = await fetchPatientTreatmentsRowSupabase(patientId, null);
+      row = retry.data;
+      error = retry.error;
+    }
+
+    if (!error && row && isPlainObject(row.treatments)) {
+      return row.treatments;
+    }
+
+    if (error && !isMissingColumnError(error, "treatments")) {
+      console.error("[TREATMENTS] Failed to load existing treatments from Supabase", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+    }
+  }
+
+  if (canUseFileFallback()) {
+    return readJson(treatmentsFile, fallbackPayload);
+  }
+
+  return fallbackPayload;
+}
+
 async function fetchPatientTreatmentRowSupabase(patientId, clinicIdOrNull) {
   // Prefer `patient_id` when available; fall back to `id`.
   let q1 = supabase
@@ -4840,8 +4870,12 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
   console.log(`[TREATMENTS POST] Treatments file path: ${treatmentsFile}`);
-  
-  const existing = readJson(treatmentsFile, { teeth: [] });
+  const existing = await loadExistingTreatmentsPayload(
+    patientId,
+    req.isAdmin ? req.clinicId : null,
+    treatmentsFile,
+    { teeth: [] }
+  );
   console.log(`[TREATMENTS POST] Existing data:`, {
     teethCount: existing.teeth?.length || 0,
     totalProcedures: existing.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0,
@@ -5046,7 +5080,12 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
-  const existing = readJson(treatmentsFile, { teeth: [] });
+  const existing = await loadExistingTreatmentsPayload(
+    patientId,
+    req.isAdmin ? req.clinicId : null,
+    treatmentsFile,
+    { teeth: [] }
+  );
   
   let teeth = Array.isArray(existing.teeth) ? existing.teeth : [];
   let found = false;
@@ -5191,7 +5230,12 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
   if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
-  const existing = readJson(treatmentsFile, { teeth: [] });
+  const existing = await loadExistingTreatmentsPayload(
+    patientId,
+    req.isAdmin ? req.clinicId : null,
+    treatmentsFile,
+    { teeth: [] }
+  );
   
   let teeth = Array.isArray(existing.teeth) ? existing.teeth : [];
   let found = false;

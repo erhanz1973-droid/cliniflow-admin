@@ -472,6 +472,11 @@
   
   // All procedure types from shared/procedures.js
   const PROCEDURE_TYPES = [
+    // EVENTS (Treatment Events)
+    { type: "TREATMENT", label: "Treatment Event", category: "EVENTS" },
+    { type: "CONSULT", label: "Consultation", category: "EVENTS" },
+    { type: "FOLLOWUP", label: "Follow-up", category: "EVENTS" },
+    { type: "LAB", label: "Lab / Scan", category: "EVENTS" },
     // PROSTHETIC
     { type: "CROWN", label: "Crown (Kuron)", category: "PROSTHETIC" },
     { type: "TEMP_CROWN", label: "Temporary Crown (Geçici kuron)", category: "PROSTHETIC" },
@@ -560,14 +565,16 @@
       byCategory[proc.category].push(proc);
     });
 
-    const categories = ["PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"];
+    const categories = ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"];
     const categoryLabels = window.i18n ? {
+      "EVENTS": window.i18n.t('settings.categoryLabels.EVENTS'),
       "PROSTHETIC": window.i18n.t('settings.categoryLabels.PROSTHETIC'),
       "RESTORATIVE": window.i18n.t('settings.categoryLabels.RESTORATIVE'),
       "ENDODONTIC": window.i18n.t('settings.categoryLabels.ENDODONTIC'),
       "SURGICAL": window.i18n.t('settings.categoryLabels.SURGICAL'),
       "IMPLANT": window.i18n.t('settings.categoryLabels.IMPLANT')
     } : {
+      "EVENTS": "Events (Etkinlikler)",
       "PROSTHETIC": "Prosthetic (Protez)",
       "RESTORATIVE": "Restorative (Restoratif)",
       "ENDODONTIC": "Endodontic (Endodontik)",
