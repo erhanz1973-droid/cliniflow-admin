@@ -268,7 +268,14 @@ const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
 const SUPER_ADMIN_JWT_SECRET = process.env.SUPER_ADMIN_JWT_SECRET || "super-admin-secret-key-change-in-production";
 
 // ================== MIDDLEWARE ==================
-app.use(cors());
+const corsOptions = {
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
 
 // ================== STATIC ADMIN FILES ==================
@@ -3415,6 +3422,28 @@ async function saveTreatmentsSupabaseWithFallback(patientId, payload, enteredBy)
   }
 }
 
+async function fetchPatientTreatmentsRowSupabase(patientId, clinicIdOrNull) {
+  // Prefer `patient_id` when available; fall back to `id`.
+  let q1 = supabase
+    .from("patients")
+    .select("id, clinic_id, treatments, patient_id")
+    .eq("patient_id", patientId);
+  if (clinicIdOrNull) q1 = q1.eq("clinic_id", clinicIdOrNull);
+  const r1 = await q1.single();
+  if (!r1.error) return { data: r1.data, key: "patient_id" };
+
+  const msg = String(r1.error?.message || "");
+  const isMissingPatientIdCol = msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
+  const isNotFound = String(r1.error?.code || "") === "PGRST116";
+  if (!isMissingPatientIdCol && !isNotFound) return { error: r1.error };
+
+  let q2 = supabase.from("patients").select("id, clinic_id, treatments").eq("id", patientId);
+  if (clinicIdOrNull) q2 = q2.eq("clinic_id", clinicIdOrNull);
+  const r2 = await q2.single();
+  if (!r2.error) return { data: r2.data, key: "id" };
+  return { error: r2.error };
+}
+
 async function fetchPatientTreatmentRowSupabase(patientId, clinicIdOrNull) {
   // Prefer `patient_id` when available; fall back to `id`.
   let q1 = supabase
@@ -3562,6 +3591,17 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
         details: error.details,
       });
       if (isMissingColumnError(error, "treatment_events")) {
+        if (canUseFileFallback()) {
+          const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+          if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
+          const eventsFile = path.join(TREATMENTS_DIR, `${patientId}.events.json`);
+          const data = readJson(eventsFile, []);
+          return res.json({
+            ok: true,
+            events: Array.isArray(data) ? data : [],
+            warning: "treatment_events_column_missing_file_fallback",
+          });
+        }
         return res.json({
           ok: true,
           events: [],
@@ -3610,6 +3650,18 @@ app.put("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
         details: error.details,
       });
       if (isMissingColumnError(error, "treatment_events")) {
+        if (canUseFileFallback()) {
+          const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+          if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
+          const eventsFile = path.join(TREATMENTS_DIR, `${patientId}.events.json`);
+          writeJson(eventsFile, events);
+          return res.json({
+            ok: true,
+            saved: true,
+            events,
+            warning: "treatment_events_column_missing_file_fallback",
+          });
+        }
         return res.json({
           ok: true,
           saved: false,
@@ -4589,17 +4641,17 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
     return res.status(500).json(supabaseDisabledPayload("treatments"));
   }
-  
+
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
   if (!fs.existsSync(TREATMENTS_DIR)) {
     console.log(`[TREATMENTS GET] Creating treatments directory: ${TREATMENTS_DIR}`);
     fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   }
-  
+
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
   console.log(`[TREATMENTS GET] Treatments file path: ${treatmentsFile}`);
   console.log(`[TREATMENTS GET] File exists: ${fs.existsSync(treatmentsFile)}`);
-  
+
   const defaultData = {
     schemaVersion: 1,
     updatedAt: now(),
@@ -4610,58 +4662,62 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   };
 
   const warnings = [];
+  let source = defaultData;
 
-  // PRODUCTION: Prefer Supabase (single source of truth) while keeping legacy response shape
-  let supabaseTreatments = null;
   if (isSupabaseEnabled()) {
     try {
-      // If admin, isolate by clinic_id; if patient, no clinic filter needed
       const clinicFilter = req.isAdmin ? req.clinicId : null;
-
-      // Prefer `patient_id` when available; fall back to `id`.
-      let q1 = supabase
-        .from("patients")
-        .select("id, clinic_id, treatments, patient_id")
-        .eq("patient_id", patientId);
-      if (clinicFilter) q1 = q1.eq("clinic_id", clinicFilter);
-      const r1 = await q1.single();
-
-      if (!r1.error) {
-        supabaseTreatments = r1.data?.treatments || null;
-      } else {
-        if (isMissingColumnError(r1.error, "treatments")) {
-          warnings.push("treatments_column_missing");
-          supabaseTreatments = readJson(treatmentsFile, defaultData);
-          // Continue without failing; file fallback keeps UI functional.
-        }
-        const msg = String(r1.error?.message || "");
-        const isMissingPatientIdCol =
-          msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
-        const isNotFound = String(r1.error?.code || "") === "PGRST116";
-        if (!isMissingPatientIdCol && !isNotFound && !isMissingColumnError(r1.error, "treatments")) {
-          console.error("[TREATMENTS GET] Supabase fetch failed", {
-            message: r1.error.message,
-            code: r1.error.code,
-            details: r1.error.details,
+      const { data: row, error } = await fetchPatientTreatmentsRowSupabase(patientId, clinicFilter);
+      if (error) {
+        if (isMissingColumnError(error, "treatments")) {
+          return res.status(500).json({
+            ok: false,
+            error: "treatments_column_missing",
+            message: "Supabase schema missing: patients.treatments. Apply migration to add treatments JSONB column.",
+            supabase: supabaseErrorPublic(error),
           });
-        } else {
-          let q2 = supabase.from("patients").select("id, clinic_id, treatments").eq("id", patientId);
-          if (clinicFilter) q2 = q2.eq("clinic_id", clinicFilter);
-          const r2 = await q2.single();
-          if (!r2.error) {
-            supabaseTreatments = r2.data?.treatments || null;
-          } else if (isMissingColumnError(r2.error, "treatments")) {
-            warnings.push("treatments_column_missing");
-            supabaseTreatments = readJson(treatmentsFile, defaultData);
-          }
         }
+        if (String(error.code || "") === "PGRST116") {
+          return res.status(404).json({ ok: false, error: "patient_not_found" });
+        }
+        console.error("[TREATMENTS GET] Supabase fetch failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        return res.status(500).json({ ok: false, error: "treatments_fetch_failed" });
+      }
+
+      const supaPayload = isPlainObject(row?.treatments) ? row.treatments : null;
+      const hasSupabaseTeeth = Array.isArray(supaPayload?.teeth) && supaPayload.teeth.length > 0;
+
+      if (!hasSupabaseTeeth && canUseFileFallback() && fs.existsSync(treatmentsFile)) {
+        const filePayload = readJson(treatmentsFile, defaultData);
+        if (isPlainObject(filePayload)) {
+          try {
+            await updatePatient(patientId, { treatments: filePayload });
+            source = filePayload;
+            warnings.push("treatments_migrated_from_file");
+          } catch (e) {
+            console.error("[TREATMENTS GET] Supabase migration from file failed", {
+              message: e?.message || e,
+            });
+            source = supaPayload || defaultData;
+          }
+        } else {
+          source = supaPayload || defaultData;
+        }
+      } else {
+        source = supaPayload || defaultData;
       }
     } catch (e) {
-      console.error("[TREATMENTS GET] Supabase fetch exception (ignored):", e?.message || e);
+      console.error("[TREATMENTS GET] Supabase fetch exception:", e?.message || e);
+      return res.status(500).json({ ok: false, error: "treatments_fetch_failed" });
     }
+  } else if (canUseFileFallback()) {
+    source = readJson(treatmentsFile, defaultData);
   }
 
-  const source = isPlainObject(supabaseTreatments) ? supabaseTreatments : readJson(treatmentsFile, defaultData);
   const data = deepMerge(defaultData, source);
   if (warnings.length > 0) {
     data.warning = warnings.join(",");
@@ -4919,16 +4975,6 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     payload.formCompletedAt = null;
   }
 
-  // Always persist to JSON file first (quick-fix mode)
-  try {
-    writeJson(treatmentsFile, payload);
-    console.log(`[TREATMENTS POST] Data saved to file.`);
-  } catch (fileErr) {
-    console.error("[TREATMENTS POST] File save failed", {
-      message: fileErr?.message || fileErr,
-    });
-  }
-  
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
@@ -4939,12 +4985,12 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
         `[TREATMENTS POST] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.warn("[TREATMENTS] Supabase update skipped", {
+      console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      // Do not fail the request when Supabase is unavailable or schema-mismatched.
+      return res.status(500).json({ ok: false, error: "treatments_save_failed", supabase: supabaseErrorPublic(supabaseError) });
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -4975,7 +5021,13 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     }
     console.log(`[TREATMENTS POST] ========== END ==========`);
   } else {
-    console.warn("[TREATMENTS POST] Supabase disabled; file-based save used.");
+    if (!canUseFileFallback()) {
+      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+      return res.status(500).json(supabaseDisabledPayload("treatments"));
+    }
+
+    // FILE-BASED: Fallback storage (only when Supabase disabled)
+    writeJson(treatmentsFile, payload);
     console.log(`[TREATMENTS POST] ========== END ==========`);
   }
   
@@ -5071,16 +5123,6 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
     payload.formCompletedAt = null;
   }
 
-  // Always persist to JSON file first (quick-fix mode)
-  try {
-    writeJson(treatmentsFile, payload);
-    console.log(`[TREATMENTS PUT] Data saved to file.`);
-  } catch (fileErr) {
-    console.error("[TREATMENTS PUT] File save failed", {
-      message: fileErr?.message || fileErr,
-    });
-  }
-  
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
@@ -5091,12 +5133,12 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
         `[TREATMENTS PUT] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.warn("[TREATMENTS] Supabase update skipped", {
+      console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      // Do not fail the request when Supabase is unavailable or schema-mismatched.
+      return res.status(500).json({ ok: false, error: "treatments_save_failed", supabase: supabaseErrorPublic(supabaseError) });
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -5126,7 +5168,13 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
       console.error("[TREATMENTS PUT] treatment(v1) sync exception (ignored):", e?.message || e);
     }
   } else {
-    console.warn("[TREATMENTS PUT] Supabase disabled; file-based save used.");
+    if (!canUseFileFallback()) {
+      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+      return res.status(500).json(supabaseDisabledPayload("treatments"));
+    }
+
+    // FILE-BASED: Fallback storage (only when Supabase disabled)
+    writeJson(treatmentsFile, payload);
   }
   
   // Update patient oral health scores after treatment plan update
@@ -5192,16 +5240,6 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     payload.formCompletedAt = null;
   }
 
-  // Always persist to JSON file first (quick-fix mode)
-  try {
-    writeJson(treatmentsFile, payload);
-    console.log(`[TREATMENTS DELETE] Data saved to file.`);
-  } catch (fileErr) {
-    console.error("[TREATMENTS DELETE] File save failed", {
-      message: fileErr?.message || fileErr,
-    });
-  }
-  
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
@@ -5212,12 +5250,12 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
         `[TREATMENTS DELETE] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.warn("[TREATMENTS] Supabase update skipped", {
+      console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      // Do not fail the request when Supabase is unavailable or schema-mismatched.
+      return res.status(500).json({ ok: false, error: "treatments_save_failed", supabase: supabaseErrorPublic(supabaseError) });
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -5247,7 +5285,13 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
       console.error("[TREATMENTS DELETE] treatment(v1) sync exception (ignored):", e?.message || e);
     }
   } else {
-    console.warn("[TREATMENTS DELETE] Supabase disabled; file-based save used.");
+    if (!canUseFileFallback()) {
+      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+      return res.status(500).json(supabaseDisabledPayload("treatments"));
+    }
+
+    // FILE-BASED: Fallback storage (only when Supabase disabled)
+    writeJson(treatmentsFile, payload);
   }
   
   // Update patient oral health scores after procedure deletion
@@ -7204,6 +7248,9 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
 
     // PRODUCTION: Supabase patients are source of truth
     if (isSupabaseEnabled() && req.clinicId) {
+      const useFileFallback = canUseFileFallback();
+      const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+
       // Build events from Supabase patient JSON fields (travel / treatments / treatment_events)
       const clinicPatients = await getPatientsByClinic(req.clinicId);
       const list = Array.isArray(clinicPatients) ? clinicPatients : [];
@@ -7293,7 +7340,15 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
         }
 
         // TREATMENT PROCEDURES (legacy: patients.treatments payload)
-        const treatments = p?.treatments || {};
+        let treatments = p?.treatments || {};
+        if (useFileFallback) {
+          const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
+          const hasSupabaseTreatments = Array.isArray(treatments?.teeth) && treatments.teeth.length > 0;
+          if (!hasSupabaseTreatments && fs.existsSync(treatmentsFile)) {
+            const fileTreatments = readJson(treatmentsFile, {});
+            if (fileTreatments?.teeth) treatments = fileTreatments;
+          }
+        }
         const teeth = Array.isArray(treatments?.teeth) ? treatments.teeth : [];
         teeth.forEach((tooth) => {
           const toothId = tooth?.toothId;
@@ -7321,9 +7376,23 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
         });
 
         // TREATMENT EVENTS (patients.treatment_events)
-        const tEvents = Array.isArray(p?.treatment_events) ? p.treatment_events : [];
+        let tEvents = p?.treatment_events;
+        if (useFileFallback) {
+          const eventsFile = path.join(TREATMENTS_DIR, `${patientId}.events.json`);
+          const hasSupabaseEvents = Array.isArray(tEvents) && tEvents.length > 0;
+          if (!hasSupabaseEvents && fs.existsSync(eventsFile)) {
+            const fileEvents = readJson(eventsFile, []);
+            tEvents = fileEvents;
+          }
+        }
+        tEvents = mapTreatmentEventsForCalendar(tEvents);
         tEvents.forEach((e) => {
-          const iso = dateTimeToIso(e?.date, e?.time) || toIso(e?.scheduledAt) || toIso(e?.createdAt);
+          const iso =
+            toIso(e?.startAt) ||
+            dateTimeToIso(e?.date, e?.time) ||
+            toIso(e?.scheduledAt) ||
+            toIso(e?.createdAt) ||
+            toIso(e?.timestamp);
           if (!iso) return;
           const dt = new Date(Date.parse(iso));
           addEvent({
@@ -7331,7 +7400,7 @@ app.get("/api/admin/events", requireAdminToken, async (req, res) => {
             patientId,
             type: "TREATMENT_EVENT",
             eventType: e?.type || "TREATMENT",
-            title: e?.title || "",
+            title: e?.title || "Treatment",
             description: e?.desc || "",
             date: e?.date || dt.toISOString().split("T")[0],
             time: e?.time || dt.toTimeString().slice(0, 5),
