@@ -96,8 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_otps_expires_at ON otps(expires_at);
 CREATE TABLE IF NOT EXISTS referrals (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   clinic_id UUID REFERENCES clinics(id) ON DELETE CASCADE,
-  referrer_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
-  referred_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
+  inviter_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
+  invited_patient_id TEXT REFERENCES patients(id) ON DELETE SET NULL,
   referral_code TEXT NOT NULL,
   status TEXT DEFAULT 'PENDING', -- PENDING, APPROVED, REJECTED, USED
   reward_status TEXT DEFAULT 'PENDING', -- PENDING, PAID, CANCELLED
@@ -111,7 +111,7 @@ CREATE TABLE IF NOT EXISTS referrals (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   -- UNIQUE constraint: Same inviter + invited combination only once
-  UNIQUE(referrer_patient_id, referred_patient_id)
+  UNIQUE(inviter_patient_id, invited_patient_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_referrals_clinic_id ON referrals(clinic_id);

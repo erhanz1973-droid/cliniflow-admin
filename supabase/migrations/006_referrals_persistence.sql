@@ -17,6 +17,6 @@ ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS referrals_code_unique ON referrals(referral_code);
 
 -- Helpful index for patient lookups
-CREATE INDEX IF NOT EXISTS referrals_referrer_idx ON referrals(referrer_patient_id);
-CREATE INDEX IF NOT EXISTS referrals_referred_idx ON referrals(referred_patient_id);
+CREATE INDEX IF NOT EXISTS referrals_inviter_idx ON referrals(inviter_patient_id);
+CREATE INDEX IF NOT EXISTS referrals_invited_idx ON referrals(invited_patient_id);
 

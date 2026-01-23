@@ -1540,8 +1540,8 @@ app.post("/api/register", async (req, res) => {
                 .from('referrals')
                 .select('*')
                 .eq('clinic_id', supabaseClinicId)
-                .eq('referrer_patient_id', inviterPatientId)
-                .eq('referred_patient_id', patientId)
+                .eq('inviter_patient_id', inviterPatientId)
+                .eq('invited_patient_id', patientId)
                 .is('deleted_at', null)
                 .maybeSingle();
               
@@ -1577,8 +1577,8 @@ app.post("/api/register", async (req, res) => {
               try {
                 const referralData = {
                   clinic_id: supabaseClinicId,
-                  referrer_patient_id: inviterPatientId,
-                  referred_patient_id: patientId,
+                  inviter_patient_id: inviterPatientId,
+                  invited_patient_id: patientId,
                   referral_code: referralCode,
                   status: 'PENDING',
                   inviter_discount_percent: null,
@@ -2010,8 +2010,8 @@ app.post("/api/patient/register", async (req, res) => {
                 .from('referrals')
                 .select('*')
                 .eq('clinic_id', supabaseClinicId)
-                .eq('referrer_patient_id', inviterPatientId)
-                .eq('referred_patient_id', patientId)
+                .eq('inviter_patient_id', inviterPatientId)
+                .eq('invited_patient_id', patientId)
                 .is('deleted_at', null)
                 .maybeSingle();
               
@@ -2045,8 +2045,8 @@ app.post("/api/patient/register", async (req, res) => {
               try {
                 const referralData = {
                   clinic_id: supabaseClinicId,
-                  referrer_patient_id: inviterPatientId,
-                  referred_patient_id: patientId,
+                  inviter_patient_id: inviterPatientId,
+                  invited_patient_id: patientId,
                   referral_code: referralCode,
                   status: 'PENDING',
                   inviter_discount_percent: null,
@@ -6657,8 +6657,8 @@ function mapReferralRowToLegacyItem(r) {
   return {
     id: r.id,
     status: r.status,
-    inviterPatientId: r.referrer_patient_id || r.inviter_patient_id,
-    invitedPatientId: r.referred_patient_id || r.invited_patient_id || null,
+    inviterPatientId: r.inviter_patient_id || r.referrer_patient_id,
+    invitedPatientId: r.invited_patient_id || r.referred_patient_id || null,
     referralCode: r.referral_code,
     createdAt,
     // v2 reward fields (optional)
@@ -6719,7 +6719,7 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
       const insertPayload = {
         // keep existing schema fields (clinic_id is optional)
         ...(clinicId ? { clinic_id: clinicId } : {}),
-        referrer_patient_id: patientId,
+        inviter_patient_id: patientId,
         referral_code,
         status: "invited",
         reward_currency: "EUR",
@@ -6847,9 +6847,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
       const queryVariants = [];
       for (const candidate of candidates) {
         const clauses = [
-          `referrer_patient_id.eq.${candidate},referred_patient_id.eq.${candidate}`,
           `inviter_patient_id.eq.${candidate},invited_patient_id.eq.${candidate}`,
-          `inviterPatientId.eq.${candidate},invitedPatientId.eq.${candidate}`,
         ];
         clauses.forEach((c) => {
           if (!seen.has(c)) {
@@ -6995,7 +6993,7 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
         }
         
         // PRODUCTION: Self-referral check
-        if (referral.referrer_patient_id === referral.referred_patient_id) {
+        if (referral.inviter_patient_id === referral.invited_patient_id) {
           return res.status(400).json({ ok: false, error: "self_referral_forbidden", message: "Kendi kendine referral yapılamaz." });
         }
         

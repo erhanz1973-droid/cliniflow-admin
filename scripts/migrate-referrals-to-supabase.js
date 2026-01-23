@@ -75,8 +75,8 @@ async function referralExists(inviterId, invitedId) {
   const r = await supabase
     .from("referrals")
     .select("id")
-    .eq("referrer_patient_id", inviterId)
-    .eq("referred_patient_id", invitedId)
+    .eq("inviter_patient_id", inviterId)
+    .eq("invited_patient_id", invitedId)
     .limit(1);
   return !r.error && Array.isArray(r.data) && r.data.length > 0;
 }
@@ -155,8 +155,8 @@ async function run() {
       const status = normalizeStatus(ref?.status);
       const row = {
         clinic_id: inviter.clinic_id || invited.clinic_id || null,
-        referrer_patient_id: inviter.patient_id || inviter.id,
-        referred_patient_id: invited.patient_id || invited.id,
+        inviter_patient_id: inviter.patient_id || inviter.id,
+        invited_patient_id: invited.patient_id || invited.id,
         referral_code: referralCode,
         status,
         inviter_discount_percent: ref?.inviterDiscountPercent ?? null,

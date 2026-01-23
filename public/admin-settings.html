@@ -270,14 +270,18 @@
         <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
 
         <h2 style="margin-top: 24px;" data-i18n="settings.referralDiscounts">🎁 Referral Discounts</h2>
-        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak varsayılan indirim oranları</div>
-        <label data-i18n="settings.inviterDiscount">Davet Eden İndirim (%)</label>
-        <input type="number" id="defaultInviterDiscountPercent" placeholder="örn: 10" min="0" max="99" />
-        <div class="muted" data-i18n="settings.inviterDiscountHelp">Davet eden hasta için indirim yüzdesi (0-99)</div>
+        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak indirim seviyeleri</div>
+        <label data-i18n="settings.referralLevel1">Seviye 1 (%)</label>
+        <input type="number" id="referralLevel1Percent" placeholder="örn: 5" min="0" max="99" />
+        <div class="muted" data-i18n="settings.referralLevel1Help">1. başarılı referral sonrası toplam indirim</div>
         
-        <label data-i18n="settings.invitedDiscount">Davet Edilen İndirim (%)</label>
-        <input type="number" id="defaultInvitedDiscountPercent" placeholder="örn: 5" min="0" max="99" />
-        <div class="muted" data-i18n="settings.invitedDiscountHelp">Davet edilen hasta için indirim yüzdesi (0-99)</div>
+        <label data-i18n="settings.referralLevel2">Seviye 2 (%)</label>
+        <input type="number" id="referralLevel2Percent" placeholder="örn: 10" min="0" max="99" />
+        <div class="muted" data-i18n="settings.referralLevel2Help">2. başarılı referral sonrası toplam indirim</div>
+        
+        <label data-i18n="settings.referralLevel3">Seviye 3 (%)</label>
+        <input type="number" id="referralLevel3Percent" placeholder="örn: 15" min="0" max="99" />
+        <div class="muted" data-i18n="settings.referralLevel3Help">3+ referral için maksimum indirim</div>
         
         <button type="submit" style="margin-top: 16px;" data-i18n="settings.save">💾 Save Settings</button>
       </form>
@@ -388,13 +392,16 @@
       $("secondaryColor").value = branding.secondaryColor || "#10B981";
       $("welcomeMessage").value = branding.welcomeMessage || "";
       
-      // Set referral discount values (handle null/undefined)
-      const inviterDiscount = clinic.defaultInviterDiscountPercent;
-      const invitedDiscount = clinic.defaultInvitedDiscountPercent;
-      $("defaultInviterDiscountPercent").value = (inviterDiscount != null && inviterDiscount !== "") ? String(inviterDiscount) : "";
-      $("defaultInvitedDiscountPercent").value = (invitedDiscount != null && invitedDiscount !== "") ? String(invitedDiscount) : "";
+      // Set referral level values (handle null/undefined)
+      const levels = clinic.referralLevels || clinic.settings?.referralLevels || {};
+      const level1 = levels.level1 ?? clinic.defaultInviterDiscountPercent ?? "";
+      const level2 = levels.level2 ?? "";
+      const level3 = levels.level3 ?? "";
+      $("referralLevel1Percent").value = level1 !== "" && level1 != null ? String(level1) : "";
+      $("referralLevel2Percent").value = level2 !== "" && level2 != null ? String(level2) : "";
+      $("referralLevel3Percent").value = level3 !== "" && level3 != null ? String(level3) : "";
       
-      console.log("Loaded referral discounts:", { inviterDiscount, invitedDiscount });
+      console.log("Loaded referral levels:", { level1, level2, level3 });
 
     } catch (error) {
       console.error("Load clinic settings error:", error);
@@ -419,8 +426,9 @@
 
         const payload = {
       plan: ($("plan") ? $("plan").value : (clinicPlan || "FREE")),
-      defaultInviterDiscountPercent: $("defaultInviterDiscountPercent").value.trim(),
-      defaultInvitedDiscountPercent: $("defaultInvitedDiscountPercent").value.trim(),
+      referralLevel1Percent: $("referralLevel1Percent").value.trim(),
+      referralLevel2Percent: $("referralLevel2Percent").value.trim(),
+      referralLevel3Percent: $("referralLevel3Percent").value.trim(),
     };
     const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
     if (!brandingLocked) {
