@@ -2147,6 +2147,93 @@ app.get("/api/me", requireToken, (req, res) => {
 });
 
 // ================== EMAIL-ONLY OTP AUTHENTICATION ==================
+async function resolvePatientForOtp({ email, phone }) {
+  const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+  const phoneTrimmed = phone ? String(phone).trim() : "";
+  const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
+
+  let foundPatient = null;
+  let foundPatientId = null;
+  let foundPhone = phoneNormalized || null;
+  let foundLanguage = "en";
+  let resolvedEmail = emailNormalized || "";
+
+  const selectColumns = "id, patient_id, email, phone, status, name, language";
+
+  if (isSupabaseEnabled()) {
+    try {
+      if (emailNormalized) {
+        const { data: row, error: pErr } = await supabase
+          .from("patients")
+          .select(selectColumns)
+          .eq("email", emailNormalized)
+          .single();
+        if (!pErr && row) {
+          foundPatient = row;
+        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          console.error("[OTP] Supabase patient lookup (email) failed:", {
+            message: pErr.message,
+            code: pErr.code,
+            details: pErr.details,
+          });
+        }
+      }
+
+      if (!foundPatient && phoneNormalized) {
+        const { data: row, error: pErr } = await supabase
+          .from("patients")
+          .select(selectColumns)
+          .eq("phone", phoneNormalized)
+          .single();
+        if (!pErr && row) {
+          foundPatient = row;
+        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          console.error("[OTP] Supabase patient lookup (phone) failed:", {
+            message: pErr.message,
+            code: pErr.code,
+            details: pErr.details,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[OTP] Supabase patient lookup exception:", e?.message || e);
+    }
+  }
+
+  if (!foundPatient) {
+    const patients = readJson(PAT_FILE, {});
+    for (const pid in patients) {
+      const p = patients[pid];
+      const em = String(p?.email || "").trim().toLowerCase();
+      const ph = normalizePhone(String(p?.phone || ""));
+      if ((emailNormalized && em === emailNormalized) || (phoneNormalized && ph === phoneNormalized)) {
+        foundPatient = p;
+        foundPatientId = pid;
+        foundPhone = p?.phone || foundPhone;
+        foundLanguage = normalizePatientLanguage(p?.language);
+        resolvedEmail = em || resolvedEmail;
+        break;
+      }
+    }
+  }
+
+  if (foundPatient) {
+    foundPatientId = foundPatientId || foundPatient.patient_id || foundPatient.id;
+    foundPhone = foundPatient.phone || foundPhone;
+    foundLanguage = normalizePatientLanguage(foundPatient.language);
+    resolvedEmail = String(foundPatient.email || resolvedEmail || "").trim().toLowerCase();
+  }
+
+  return {
+    patient: foundPatient,
+    patientId: foundPatientId,
+    email: resolvedEmail,
+    phone: foundPhone,
+    language: foundLanguage,
+    phoneNormalized,
+  };
+}
+
 // POST /auth/request-otp
 // Request OTP: takes email, finds patient, sends OTP to that email
 app.post("/auth/request-otp", async (req, res) => {
@@ -2156,14 +2243,15 @@ app.post("/auth/request-otp", async (req, res) => {
   console.log("[OTP] ========================================");
   
   try {
-    const { email } = req.body || {};
+    const { email, phone } = req.body || {};
     
-    if (!email || !String(email).trim()) {
-      console.log("[OTP] ERROR: email_required");
-      return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
+    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
+      console.log("[OTP] ERROR: email_or_phone_required");
+      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
     }
 
-    const emailNormalized = String(email).trim().toLowerCase();
+    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+    const phoneNormalized = phone ? normalizePhone(String(phone)) : "";
     
     // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -2180,53 +2268,25 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
 
-    // Find patient by email (Supabase first, then file fallback)
-    let foundPatient = null;
-    let foundPatientId = null;
-    let foundPhone = null;
-    let foundLanguage = "en";
-    if (isSupabaseEnabled()) {
-      try {
-        const { data: row, error: pErr } = await supabase
-          .from("patients")
-          .select("id, patient_id, email, phone, status, name, language")
-          .eq("email", emailNormalized)
-          .single();
-        if (!pErr && row) {
-          foundPatient = row;
-          foundPatientId = row.patient_id || row.id;
-          foundPhone = row.phone || null;
-          foundLanguage = normalizePatientLanguage(row.language);
-        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
-          console.error("[OTP] Supabase patient lookup failed:", {
-            message: pErr.message,
-            code: pErr.code,
-            details: pErr.details,
-          });
-        }
-      } catch (e) {
-        console.error("[OTP] Supabase patient lookup exception:", e?.message || e);
-      }
-    }
-    if (!foundPatient) {
-      const patients = readJson(PAT_FILE, {});
-      for (const pid in patients) {
-        const p = patients[pid];
-        const em = String(p?.email || "").trim().toLowerCase();
-        if (em && em === emailNormalized) {
-          foundPatient = p;
-          foundPatientId = pid;
-          foundPhone = p?.phone || null;
-          foundLanguage = normalizePatientLanguage(p?.language);
-          break;
-        }
-      }
-    }
+    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone: phoneNormalized });
+    const foundPatientId = resolved.patientId;
+    const foundLanguage = resolved.language;
+    const foundPhone = resolved.phone;
+    const resolvedEmail = resolved.email;
+
     if (!foundPatientId) {
       return res.status(404).json({
         ok: false,
         error: "patient_not_found",
         message: "Bu email ile kayıtlı hasta bulunamadı. Lütfen email adresinizi kontrol edin veya kayıt olun.",
+      });
+    }
+
+    if (!resolvedEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_not_found",
+        message: "Bu hastanın email adresi kayıtlı değil. Lütfen admin ile iletişime geçin.",
       });
     }
     
@@ -2248,10 +2308,10 @@ app.post("/auth/request-otp", async (req, res) => {
     
     // Generate OTP
     const otpCode = generateOTP();
-    console.log("[OTP] Generated OTP code:", otpCode, "for email:", emailNormalized);
+    console.log("[OTP] Generated OTP code:", otpCode, "for email:", resolvedEmail);
     
     // Save OTP under email key (file-based store)
-    await saveOTP(emailNormalized, otpCode, 0);
+    await saveOTP(resolvedEmail, otpCode, 0);
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
     // This prevents API timeout from blocking the response
@@ -2259,15 +2319,15 @@ app.post("/auth/request-otp", async (req, res) => {
     console.log("[OTP] EMAIL SEND DECISION POINT (Brevo REST API)");
     console.log("[OTP] BREVO_API_KEY: " + (process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'));
     console.log("[OTP] SMTP_FROM: " + (process.env.SMTP_FROM || 'NOT SET'));
-    console.log("[OTP] Email:", emailNormalized);
+    console.log("[OTP] Email:", resolvedEmail);
     console.log("[OTP] OTP Code:", otpCode);
     console.log("[OTP] ========================================");
     
     console.log("[OTP] Calling sendOTPEmail (fire-and-forget)");
-    sendOTPEmail(emailNormalized, otpCode, foundLanguage)
+    sendOTPEmail(resolvedEmail, otpCode, foundLanguage)
       .then(() => {
         console.log("[OTP] ✅ sendOTPEmail completed successfully!");
-        console.log(`[OTP] OTP sent to ${emailNormalized} (patient ${foundPatientId})`);
+        console.log(`[OTP] OTP sent to ${resolvedEmail} (patient ${foundPatientId})`);
       })
       .catch((emailError) => {
         console.error("[OTP] ❌ Failed to send email:", emailError.message);
@@ -2280,7 +2340,7 @@ app.post("/auth/request-otp", async (req, res) => {
       ok: true,
       message: "OTP email adresinize gönderildi",
       // For UI convenience (not secret): return email + patientId
-      email: emailNormalized,
+      email: resolvedEmail,
       patientId: String(foundPatientId || ""),
       language: foundLanguage,
       ...(foundPhone ? { phone: foundPhone } : {}),
@@ -2295,30 +2355,40 @@ app.post("/auth/request-otp", async (req, res) => {
 // Verify OTP: takes email + OTP, generates JWT token
 app.post("/auth/verify-otp", async (req, res) => {
   try {
-    const { email, otp } = req.body || {};
+    const { email, phone, otp } = req.body || {};
 
-    if (!email || !String(email).trim()) {
-      return res.status(400).json({ ok: false, error: "email_required", message: "Email gereklidir." });
+    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
+      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
     }
     if (!otp || !String(otp).trim()) {
       return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
     }
 
-    const emailNormalized = String(email).trim().toLowerCase();
+    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
     const otpCode = String(otp).trim();
 
-    console.log(`[OTP] Verify OTP request: email=${emailNormalized}, otp=${otpCode}`);
+    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
+    const resolvedEmail = resolved.email || emailNormalized;
+    if (!resolvedEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_not_found",
+        message: "Bu hastanın email adresi kayıtlı değil. Lütfen admin ile iletişime geçin.",
+      });
+    }
+
+    console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(emailNormalized)) {
+    if (!emailRegex.test(resolvedEmail)) {
       return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
     }
 
-    let otpData = getOTPsForEmail(emailNormalized);
-    console.log(`[OTP] Looking for OTP by email: ${emailNormalized}, OTP found: ${!!otpData}`);
+    let otpData = getOTPsForEmail(resolvedEmail);
+    console.log(`[OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
     
     if (!otpData) {
-      console.log(`[OTP] OTP not found for email: ${emailNormalized}`);
+      console.log(`[OTP] OTP not found for email: ${resolvedEmail}`);
       return res.status(404).json({ 
         ok: false, 
         error: "otp_not_found", 
@@ -2368,44 +2438,9 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     
     // OTP is valid - resolve patient by email (Supabase first, then file)
-    let foundPatient = null;
-    let foundPatientId = null;
-    let foundLanguage = "en";
-    if (isSupabaseEnabled()) {
-      try {
-        const { data: row, error: pErr } = await supabase
-          .from("patients")
-          .select("id, patient_id, email, phone, status, name, language")
-          .eq("email", emailNormalized)
-          .single();
-        if (!pErr && row) {
-          foundPatient = row;
-          foundPatientId = row.patient_id || row.id;
-          foundLanguage = normalizePatientLanguage(row.language);
-        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
-          console.error("[OTP] Supabase patient lookup failed:", {
-            message: pErr.message,
-            code: pErr.code,
-            details: pErr.details,
-          });
-        }
-      } catch (e) {
-        console.error("[OTP] Supabase patient lookup exception:", e?.message || e);
-      }
-    }
-    if (!foundPatientId) {
-      const patients = readJson(PAT_FILE, {});
-      for (const pid in patients) {
-        const p = patients[pid];
-        const em = String(p?.email || "").trim().toLowerCase();
-        if (em && em === emailNormalized) {
-          foundPatient = p;
-          foundPatientId = pid;
-          foundLanguage = normalizePatientLanguage(p?.language);
-          break;
-        }
-      }
-    }
+    const foundPatient = resolved.patient;
+    const foundPatientId = resolved.patientId;
+    const foundLanguage = resolved.language;
     if (!foundPatientId) {
       return res.status(404).json({
         ok: false,
