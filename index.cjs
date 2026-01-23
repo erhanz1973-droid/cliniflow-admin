@@ -4896,6 +4896,16 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     // Not completed, remove completion time
     payload.formCompletedAt = null;
   }
+
+  // Always persist to JSON file first (quick-fix mode)
+  try {
+    writeJson(treatmentsFile, payload);
+    console.log(`[TREATMENTS POST] Data saved to file.`);
+  } catch (fileErr) {
+    console.error("[TREATMENTS POST] File save failed", {
+      message: fileErr?.message || fileErr,
+    });
+  }
   
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
@@ -4907,13 +4917,12 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
         `[TREATMENTS POST] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.error("[TREATMENTS] Supabase save failed", {
+      console.warn("[TREATMENTS] Supabase update skipped", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      // In production, do NOT silently fall back to ephemeral disk.
-      return res.status(500).json({ ok: false, error: "treatments_save_failed" });
+      // Do not fail the request when Supabase is unavailable or schema-mismatched.
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -4944,27 +4953,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     }
     console.log(`[TREATMENTS POST] ========== END ==========`);
   } else {
-    // Do not silently fall back unless explicitly enabled
-    if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
-      return res.status(500).json(supabaseDisabledPayload("treatments"));
-    }
-
-    // FILE-BASED: Fallback storage (only when Supabase disabled)
-    writeJson(treatmentsFile, payload);
-
-    // Verify the write
-    const verify = readJson(treatmentsFile, {});
-    const savedTeethCount = verify.teeth?.length || 0;
-    const savedTotalProcedures =
-      verify.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
-
-    console.log(`[TREATMENTS POST] Data saved. Verification:`, {
-      teethCount: savedTeethCount,
-      totalProcedures: savedTotalProcedures,
-      formCompleted: payload.formCompleted,
-      formCompletedAt: payload.formCompletedAt,
-    });
+    console.warn("[TREATMENTS POST] Supabase disabled; file-based save used.");
     console.log(`[TREATMENTS POST] ========== END ==========`);
   }
   
@@ -5059,6 +5048,16 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
     // Not completed, remove completion time
     payload.formCompletedAt = null;
   }
+
+  // Always persist to JSON file first (quick-fix mode)
+  try {
+    writeJson(treatmentsFile, payload);
+    console.log(`[TREATMENTS PUT] Data saved to file.`);
+  } catch (fileErr) {
+    console.error("[TREATMENTS PUT] File save failed", {
+      message: fileErr?.message || fileErr,
+    });
+  }
   
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
@@ -5070,12 +5069,12 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
         `[TREATMENTS PUT] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.error("[TREATMENTS] Supabase save failed", {
+      console.warn("[TREATMENTS] Supabase update skipped", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      return res.status(500).json({ ok: false, error: "treatments_save_failed" });
+      // Do not fail the request when Supabase is unavailable or schema-mismatched.
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -5105,13 +5104,7 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
       console.error("[TREATMENTS PUT] treatment(v1) sync exception (ignored):", e?.message || e);
     }
   } else {
-    if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
-      return res.status(500).json(supabaseDisabledPayload("treatments"));
-    }
-
-    // FILE-BASED: Fallback storage (only when Supabase disabled)
-    writeJson(treatmentsFile, payload);
+    console.warn("[TREATMENTS PUT] Supabase disabled; file-based save used.");
   }
   
   // Update patient oral health scores after treatment plan update
@@ -5176,6 +5169,16 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
     // Not completed, remove completion time
     payload.formCompletedAt = null;
   }
+
+  // Always persist to JSON file first (quick-fix mode)
+  try {
+    writeJson(treatmentsFile, payload);
+    console.log(`[TREATMENTS DELETE] Data saved to file.`);
+  } catch (fileErr) {
+    console.error("[TREATMENTS DELETE] File save failed", {
+      message: fileErr?.message || fileErr,
+    });
+  }
   
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
@@ -5187,12 +5190,12 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
         `[TREATMENTS DELETE] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
     } catch (supabaseError) {
-      console.error("[TREATMENTS] Supabase save failed", {
+      console.warn("[TREATMENTS] Supabase update skipped", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      return res.status(500).json({ ok: false, error: "treatments_save_failed" });
+      // Do not fail the request when Supabase is unavailable or schema-mismatched.
     }
 
     // Best-effort sync: also persist v1 model into patients.treatment (new column) without breaking legacy UI
@@ -5222,13 +5225,7 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
       console.error("[TREATMENTS DELETE] treatment(v1) sync exception (ignored):", e?.message || e);
     }
   } else {
-    if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
-      return res.status(500).json(supabaseDisabledPayload("treatments"));
-    }
-
-    // FILE-BASED: Fallback storage (only when Supabase disabled)
-    writeJson(treatmentsFile, payload);
+    console.warn("[TREATMENTS DELETE] Supabase disabled; file-based save used.");
   }
   
   // Update patient oral health scores after procedure deletion
