@@ -230,7 +230,11 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
     message,
     attachments: attachments ?? null,
   };
-  const primaryResult = await insertWithColumnPruning(primaryPayload);
+  const primaryResult = await supabase
+    .from("messages")
+    .insert(primaryPayload)
+    .select("*")
+    .single();
 
   if (!primaryResult?.error) return primaryResult;
 
