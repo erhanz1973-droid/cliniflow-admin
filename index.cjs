@@ -3358,6 +3358,26 @@ function legacyTreatmentsToTreatmentV1(legacyPayload, enteredBy) {
   return out;
 }
 
+async function saveTreatmentsSupabaseWithFallback(patientId, payload, enteredBy) {
+  try {
+    await updatePatient(patientId, { treatments: payload });
+    return { ok: true, usedFallback: false };
+  } catch (error) {
+    if (!isMissingColumnError(error, "treatments")) {
+      return { ok: false, error };
+    }
+  }
+
+  try {
+    const patchV1 = legacyTreatmentsToTreatmentV1(payload, enteredBy);
+    const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, patchV1);
+    if (saveErr) return { ok: false, error: saveErr };
+    return { ok: true, usedFallback: true };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
 async function fetchPatientTreatmentRowSupabase(patientId, clinicIdOrNull) {
   // Prefer `patient_id` when available; fall back to `id`.
   let q1 = supabase
@@ -4846,22 +4866,17 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   if (isSupabaseEnabled()) {
     try {
       console.log(`[TREATMENTS POST] Updating treatments data in Supabase...`);
-      await updatePatient(patientId, { treatments: payload });
-      console.log(`[TREATMENTS POST] ✅ Treatments data updated in Supabase`);
+      const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
+      if (!result.ok) throw result.error;
+      console.log(
+        `[TREATMENTS POST] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
+      );
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      if (isMissingColumnError(supabaseError, "treatments")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatments_column_missing",
-          message:
-            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
-        });
-      }
       // In production, do NOT silently fall back to ephemeral disk.
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
@@ -5014,22 +5029,17 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   if (isSupabaseEnabled()) {
     try {
       console.log(`[TREATMENTS PUT] Updating treatments data in Supabase...`);
-      await updatePatient(patientId, { treatments: payload });
-      console.log(`[TREATMENTS PUT] ✅ Treatments data updated in Supabase`);
+      const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
+      if (!result.ok) throw result.error;
+      console.log(
+        `[TREATMENTS PUT] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
+      );
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      if (isMissingColumnError(supabaseError, "treatments")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatments_column_missing",
-          message:
-            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
-        });
-      }
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
 
@@ -5136,22 +5146,17 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
   if (isSupabaseEnabled()) {
     try {
       console.log(`[TREATMENTS DELETE] Updating treatments data in Supabase...`);
-      await updatePatient(patientId, { treatments: payload });
-      console.log(`[TREATMENTS DELETE] ✅ Treatments data updated in Supabase`);
+      const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
+      if (!result.ok) throw result.error;
+      console.log(
+        `[TREATMENTS DELETE] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
+      );
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
         code: supabaseError?.code,
         details: supabaseError?.details,
       });
-      if (isMissingColumnError(supabaseError, "treatments")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatments_column_missing",
-          message:
-            "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
-        });
-      }
       return res.status(500).json({ ok: false, error: "treatments_save_failed" });
     }
 
