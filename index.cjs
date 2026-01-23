@@ -4552,6 +4552,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     formCompletedAt: null,
   };
 
+  const warnings = [];
+
   // PRODUCTION: Prefer Supabase (single source of truth) while keeping legacy response shape
   let supabaseTreatments = null;
   if (isSupabaseEnabled()) {
@@ -4570,20 +4572,16 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       if (!r1.error) {
         supabaseTreatments = r1.data?.treatments || null;
       } else {
-        // If schema is missing, do NOT fall back to ephemeral disk in production.
         if (isMissingColumnError(r1.error, "treatments")) {
-          return res.status(500).json({
-            ok: false,
-            error: "treatments_column_missing",
-            message:
-              "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
-          });
+          warnings.push("treatments_column_missing");
+          supabaseTreatments = readJson(treatmentsFile, defaultData);
+          // Continue without failing; file fallback keeps UI functional.
         }
         const msg = String(r1.error?.message || "");
         const isMissingPatientIdCol =
           msg.toLowerCase().includes("patient_id") && msg.toLowerCase().includes("does not exist");
         const isNotFound = String(r1.error?.code || "") === "PGRST116";
-        if (!isMissingPatientIdCol && !isNotFound) {
+        if (!isMissingPatientIdCol && !isNotFound && !isMissingColumnError(r1.error, "treatments")) {
           console.error("[TREATMENTS GET] Supabase fetch failed", {
             message: r1.error.message,
             code: r1.error.code,
@@ -4596,12 +4594,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
           if (!r2.error) {
             supabaseTreatments = r2.data?.treatments || null;
           } else if (isMissingColumnError(r2.error, "treatments")) {
-            return res.status(500).json({
-              ok: false,
-              error: "treatments_column_missing",
-              message:
-                "Supabase schema missing: patients.treatments. Ensure your patients table has `treatments JSONB` (see 001_initial_schema.sql).",
-            });
+            warnings.push("treatments_column_missing");
+            supabaseTreatments = readJson(treatmentsFile, defaultData);
           }
         }
       }
@@ -4612,6 +4606,9 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
 
   const source = isPlainObject(supabaseTreatments) ? supabaseTreatments : readJson(treatmentsFile, defaultData);
   const data = deepMerge(defaultData, source);
+  if (warnings.length > 0) {
+    data.warning = warnings.join(",");
+  }
   
   // Ensure data structure is correct
   if (!data.patientId) {
