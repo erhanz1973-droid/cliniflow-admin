@@ -3046,8 +3046,7 @@ async function updatePatientTravelRowSupabase(patientId, clinicIdOrNull, updated
   return { error: r2.error };
 }
 
-// GET /api/patient/:patientId/travel
-app.get("/api/patient/:patientId/travel", requireAdminOrPatientToken, async (req, res) => {
+async function getTravelHandler(req, res) {
   try {
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
@@ -3128,7 +3127,10 @@ app.get("/api/patient/:patientId/travel", requireAdminOrPatientToken, async (req
     console.error("[TRAVEL] GET error:", e);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
-});
+}
+
+// GET /api/patient/:patientId/travel
+app.get("/api/patient/:patientId/travel", requireAdminOrPatientToken, getTravelHandler);
 
 async function saveTravelHandler(req, res) {
   try {
@@ -3373,9 +3375,50 @@ async function saveTravelHandler(req, res) {
   }
 }
 
-// POST /api/patient/:patientId/travel
+function requirePatientOnly(req, res, next) {
+  if (req.isAdmin) {
+    return res.status(403).json({ ok: false, error: "admin_not_allowed" });
+  }
+  return next();
+}
+
+function withPatientIdFromToken(handler) {
+  return (req, res) => {
+    const tokenPatientId = String(req.patientId || "").trim();
+    if (!tokenPatientId) {
+      return res.status(401).json({ ok: false, error: "patient_id_required" });
+    }
+    req.params.patientId = tokenPatientId;
+    return handler(req, res);
+  };
+}
+
+// PATIENT (self) travel
+app.get(
+  "/api/patient/me/travel",
+  requireAdminOrPatientToken,
+  requirePatientOnly,
+  withPatientIdFromToken(getTravelHandler)
+);
+app.put(
+  "/api/patient/me/travel",
+  requireAdminOrPatientToken,
+  requirePatientOnly,
+  withPatientIdFromToken(saveTravelHandler)
+);
+app.post(
+  "/api/patient/me/travel",
+  requireAdminOrPatientToken,
+  requirePatientOnly,
+  withPatientIdFromToken(saveTravelHandler)
+);
+
+// ADMIN travel updates
+app.put("/api/admin/patient/:patientId/travel", requireAdminToken, saveTravelHandler);
+app.post("/api/admin/patient/:patientId/travel", requireAdminToken, saveTravelHandler);
+
+// Legacy routes (backward compatibility)
 app.post("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
-// PUT /api/patient/:patientId/travel
 app.put("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
 
 // ================== PATIENT TREATMENT (v1 JSONB, Supabase persistence) ==================
