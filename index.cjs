@@ -343,6 +343,10 @@ function supabaseErrorPublic(err) {
   };
 }
 
+function isInvalidUuidError(error) {
+  return String(error?.code || "") === "22P02";
+}
+
 async function fetchTreatmentPricesMap(clinicId) {
   if (!isSupabaseEnabled() || !clinicId) return {};
   const { data, error } = await supabase
@@ -6789,11 +6793,28 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
     // PRODUCTION: Supabase is source of truth
     if (isSupabaseEnabled()) {
       const normalizedPatientId = String(patientId || "").trim();
-      const queryVariants = [
-        `referrer_patient_id.eq.${normalizedPatientId},referred_patient_id.eq.${normalizedPatientId}`,
-        `inviter_patient_id.eq.${normalizedPatientId},invited_patient_id.eq.${normalizedPatientId}`,
-        `inviterPatientId.eq.${normalizedPatientId},invitedPatientId.eq.${normalizedPatientId}`,
-      ];
+      let patientUuid = null;
+      try {
+        const p = await getPatientById(normalizedPatientId);
+        patientUuid = p?.id || null;
+      } catch {}
+
+      const candidates = [normalizedPatientId, patientUuid].filter(Boolean);
+      const seen = new Set();
+      const queryVariants = [];
+      for (const candidate of candidates) {
+        const clauses = [
+          `referrer_patient_id.eq.${candidate},referred_patient_id.eq.${candidate}`,
+          `inviter_patient_id.eq.${candidate},invited_patient_id.eq.${candidate}`,
+          `inviterPatientId.eq.${candidate},invitedPatientId.eq.${candidate}`,
+        ];
+        clauses.forEach((c) => {
+          if (!seen.has(c)) {
+            seen.add(c);
+            queryVariants.push(c);
+          }
+        });
+      }
 
       let lastError = null;
       for (const orClause of queryVariants) {
@@ -6806,6 +6827,9 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
           return res.json({ ok: true, items });
         }
         lastError = error;
+        if (isInvalidUuidError(error)) {
+          continue;
+        }
         if (!isMissingColumnError(error)) {
           console.error("[REFERRALS] Supabase fetch failed", {
             message: error.message,
