@@ -8916,8 +8916,12 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
     }
 
     const clinicId = req.clinicId;
-    if (!clinicId) {
-      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    if (!clinicId || !req.clinic?.id) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_synced",
+        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
+      });
     }
 
     const { data, error } = await supabase
@@ -8926,18 +8930,35 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       .eq("clinic_id", clinicId);
 
     if (error) {
+      if (isMissingTableError(error, "treatment_prices")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_prices_table_missing",
+          message: "Supabase schema missing: treatment_prices. Apply migrations.",
+          supabase: supabaseErrorPublic(error),
+        });
+      }
       console.error("[TREATMENT_PRICES] Supabase fetch failed", {
         message: error.message,
         code: error.code,
         details: error.details,
       });
-      return res.status(500).json({ ok: false, error: "treatment_prices_fetch_failed" });
+      return res.status(500).json({
+        ok: false,
+        error: "treatment_prices_fetch_failed",
+        supabase: supabaseErrorPublic(error),
+      });
     }
 
     const prices = (data || []).map((row) => ({
       id: row.id,
-      treatment_name: row.treatment_code || row.name || "",
-      default_price: row.price !== undefined && row.price !== null ? Number(row.price) : 0,
+      treatment_name: row.treatment_code || row.type || row.name || "",
+      default_price:
+        row.price !== undefined && row.price !== null
+          ? Number(row.price)
+          : row.default_price !== undefined && row.default_price !== null
+            ? Number(row.default_price)
+            : 0,
       currency: row.currency || "EUR",
       is_active: row.is_active !== undefined ? row.is_active !== false : true,
     }));
@@ -8962,8 +8983,12 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
     }
 
     const clinicId = req.clinicId;
-    if (!clinicId) {
-      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    if (!clinicId || !req.clinic?.id) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_synced",
+        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
+      });
     }
 
     const { treatment_name, default_price, currency, is_active } = req.body || {};
@@ -8993,35 +9018,72 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       ...(is_active !== undefined ? { is_active: is_active !== false } : {}),
     };
 
-    let result = await supabase
-      .from("treatment_prices")
-      .upsert(upsertPayload, { onConflict: "clinic_id,treatment_code" })
-      .select("*")
-      .single();
+    let result = null;
+    let onConflict = "clinic_id,treatment_code";
+    let payloadToUse = { ...upsertPayload };
 
-    if (result.error && isMissingColumnError(result.error, "is_active")) {
-      const { is_active: _ignored, ...retryPayload } = upsertPayload;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       result = await supabase
         .from("treatment_prices")
-        .upsert(retryPayload, { onConflict: "clinic_id,treatment_code" })
+        .upsert(payloadToUse, { onConflict })
         .select("*")
         .single();
+
+      if (!result.error) break;
+
+      if (isMissingColumnError(result.error, "is_active")) {
+        const { is_active: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "name")) {
+        const { name: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "treatment_code")) {
+        const { treatment_code: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = { ...nextPayload, type: treatmentCode };
+        onConflict = "clinic_id,type";
+        continue;
+      }
+
+      break;
     }
 
     if (result.error) {
+      if (isMissingTableError(result.error, "treatment_prices")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_prices_table_missing",
+          message: "Supabase schema missing: treatment_prices. Apply migrations.",
+          supabase: supabaseErrorPublic(result.error),
+        });
+      }
       console.error("[TREATMENT_PRICES] Supabase upsert failed", {
         message: result.error.message,
         code: result.error.code,
         details: result.error.details,
       });
-      return res.status(500).json({ ok: false, error: "treatment_prices_save_failed" });
+      return res.status(500).json({
+        ok: false,
+        error: "treatment_prices_save_failed",
+        supabase: supabaseErrorPublic(result.error),
+      });
     }
 
     const row = result.data || {};
     const responsePrice = {
       id: row.id,
-      treatment_name: row.treatment_code || row.name || name,
-      default_price: row.price !== undefined && row.price !== null ? Number(row.price) : priceValue,
+      treatment_name: row.treatment_code || row.type || row.name || name,
+      default_price:
+        row.price !== undefined && row.price !== null
+          ? Number(row.price)
+          : row.default_price !== undefined && row.default_price !== null
+            ? Number(row.default_price)
+            : priceValue,
       currency: row.currency || currencyValue,
       is_active: row.is_active !== undefined ? row.is_active !== false : (is_active !== false),
     };
@@ -9053,8 +9115,12 @@ app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res)
     if (!id) {
       return res.status(400).json({ ok: false, error: "id_required", message: "Price ID is required" });
     }
-    if (!clinicId) {
-      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    if (!clinicId || !req.clinic?.id) {
+      return res.status(400).json({
+        ok: false,
+        error: "clinic_not_synced",
+        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
+      });
     }
 
     const { data, error } = await supabase
@@ -9065,12 +9131,24 @@ app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res)
       .select("id");
 
     if (error) {
+      if (isMissingTableError(error, "treatment_prices")) {
+        return res.status(500).json({
+          ok: false,
+          error: "treatment_prices_table_missing",
+          message: "Supabase schema missing: treatment_prices. Apply migrations.",
+          supabase: supabaseErrorPublic(error),
+        });
+      }
       console.error("[TREATMENT_PRICES] Supabase delete failed", {
         message: error.message,
         code: error.code,
         details: error.details,
       });
-      return res.status(500).json({ ok: false, error: "treatment_prices_delete_failed" });
+      return res.status(500).json({
+        ok: false,
+        error: "treatment_prices_delete_failed",
+        supabase: supabaseErrorPublic(error),
+      });
     }
 
     if (!data || data.length === 0) {
