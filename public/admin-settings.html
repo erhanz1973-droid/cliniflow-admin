@@ -372,6 +372,12 @@
     }
   }
 
+  function hasAnyReferralLevel(levels) {
+    return [levels?.level1, levels?.level2, levels?.level3].some(
+      (value) => value !== null && value !== undefined && value !== ""
+    );
+  }
+
   function applyReferralLevels(levels, options = {}) {
     const level1Input = $("referralLevel1Percent");
     const level2Input = $("referralLevel2Percent");
@@ -398,6 +404,12 @@
         const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
         $("status").innerHTML = `<div class="status error">${msg}</div>`;
         return;
+      }
+
+      // Apply stored levels early to avoid empty overwrites
+      const storedLevels = getStoredReferralLevels();
+      if (storedLevels && hasAnyReferralLevel(storedLevels)) {
+        applyReferralLevels(storedLevels, { onlyEmpty: true });
       }
 
       // Load clinic settings from API (uses token to identify clinic)
@@ -447,12 +459,15 @@
           clinic.settings?.referralLevel3Percent ??
           null,
       };
-      applyReferralLevels(hydratedLevels);
-      storeReferralLevels(hydratedLevels);
+      const useLevels = hasAnyReferralLevel(hydratedLevels) ? hydratedLevels : storedLevels || hydratedLevels;
+      applyReferralLevels(useLevels);
+      if (hasAnyReferralLevel(hydratedLevels)) {
+        storeReferralLevels(hydratedLevels);
+      }
 
       // Guard against any later overwrite (translations or other inits)
-      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || hydratedLevels, { onlyEmpty: true }), 0);
-      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || hydratedLevels, { onlyEmpty: true }), 500);
+      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || useLevels, { onlyEmpty: true }), 0);
+      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || useLevels, { onlyEmpty: true }), 500);
       
       console.log("Loaded referral levels:", hydratedLevels);
 
