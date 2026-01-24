@@ -6971,11 +6971,6 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
       return res.status(400).json({ ok: false, error: "discountPercent must be 0..50" });
     }
     
-    // En az bir indirim yüzdesi belirtilmeli
-    if (inviterDiscountPercent == null && invitedDiscountPercent == null && discountPercent == null) {
-      return res.status(400).json({ ok: false, error: "At least one discount percent must be provided" });
-    }
-    
     // SUPABASE: Primary source of truth
     if (isSupabaseEnabled()) {
       try {
@@ -7002,10 +6997,24 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
           return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
         }
         
+        const clinic = req.clinic || {};
+        const baseInviterPercent =
+          referral.inviter_discount_percent ?? clinic.defaultInviterDiscountPercent ?? null;
+        const baseInvitedPercent =
+          referral.invited_discount_percent ?? clinic.defaultInvitedDiscountPercent ?? null;
+        const baseDiscountPercent = referral.discount_percent ?? null;
+
         // Calculate discount
-        let finalInviterPercent = inviterDiscountPercent;
-        let finalInvitedPercent = invitedDiscountPercent;
-        let finalDiscountPercent = discountPercent;
+        let finalInviterPercent = inviterDiscountPercent ?? baseInviterPercent;
+        let finalInvitedPercent = invitedDiscountPercent ?? baseInvitedPercent;
+        let finalDiscountPercent = discountPercent ?? baseDiscountPercent;
+
+        if (finalInviterPercent == null && finalInvitedPercent == null && finalDiscountPercent == null) {
+          return res.status(400).json({
+            ok: false,
+            error: "Default discount percentages must be entered in Clinic Settings page",
+          });
+        }
         
         if (finalInviterPercent == null && finalInvitedPercent == null) {
           finalInviterPercent = finalDiscountPercent;
@@ -7073,6 +7082,24 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
       return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
     }
     
+    const clinic = req.clinic || {};
+    const baseInviterPercent =
+      referral.inviterDiscountPercent ?? clinic.defaultInviterDiscountPercent ?? null;
+    const baseInvitedPercent =
+      referral.invitedDiscountPercent ?? clinic.defaultInvitedDiscountPercent ?? null;
+    const baseDiscountPercent = referral.discountPercent ?? null;
+
+    let finalInviterPercent = inviterDiscountPercent ?? baseInviterPercent;
+    let finalInvitedPercent = invitedDiscountPercent ?? baseInvitedPercent;
+    let finalDiscountPercent = discountPercent ?? baseDiscountPercent;
+
+    if (finalInviterPercent == null && finalInvitedPercent == null && finalDiscountPercent == null) {
+      return res.status(400).json({
+        ok: false,
+        error: "Default discount percentages must be entered in Clinic Settings page",
+      });
+    }
+
     // Güncelleme
     const updated = {
       ...list[idx],
@@ -7081,20 +7108,20 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
     };
     
     // Yeni format varsa onu kullan
-    if (inviterDiscountPercent != null || invitedDiscountPercent != null) {
-      updated.inviterDiscountPercent = inviterDiscountPercent;
-      updated.invitedDiscountPercent = invitedDiscountPercent;
-      if (discountPercent != null) {
-        updated.discountPercent = discountPercent;
-      } else if (inviterDiscountPercent != null && invitedDiscountPercent != null) {
-        updated.discountPercent = Math.round((inviterDiscountPercent + invitedDiscountPercent) / 2);
+    if (finalInviterPercent != null || finalInvitedPercent != null) {
+      updated.inviterDiscountPercent = finalInviterPercent;
+      updated.invitedDiscountPercent = finalInvitedPercent;
+      if (finalDiscountPercent != null) {
+        updated.discountPercent = finalDiscountPercent;
+      } else if (finalInviterPercent != null && finalInvitedPercent != null) {
+        updated.discountPercent = Math.round((finalInviterPercent + finalInvitedPercent) / 2);
       } else {
-        updated.discountPercent = inviterDiscountPercent ?? invitedDiscountPercent;
+        updated.discountPercent = finalInviterPercent ?? finalInvitedPercent;
       }
-    } else if (discountPercent != null) {
-      updated.discountPercent = discountPercent;
-      updated.inviterDiscountPercent = discountPercent;
-      updated.invitedDiscountPercent = discountPercent;
+    } else if (finalDiscountPercent != null) {
+      updated.discountPercent = finalDiscountPercent;
+      updated.inviterDiscountPercent = finalDiscountPercent;
+      updated.invitedDiscountPercent = finalDiscountPercent;
     }
     
     list[idx] = updated;
