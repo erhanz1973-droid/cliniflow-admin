@@ -947,6 +947,14 @@ async function requireAdminToken(req, res, next) {
       console.log("[requireAdminToken] getClinicByCode returned:", clinic ? "FOUND" : "NULL");
       
       if (clinic) {
+        if (typeof clinic.settings === "string") {
+          try {
+            clinic.settings = JSON.parse(clinic.settings);
+          } catch (e) {
+            console.warn("[requireAdminToken] Failed to parse clinic.settings JSON");
+            clinic.settings = {};
+          }
+        }
         req.clinicId = clinic.id;              // Supabase UUID
         req.clinicCode = clinic.clinic_code;   // e.g. "ORDU"
         req.clinicStatus = clinic.settings?.status || "ACTIVE";
@@ -6380,6 +6388,9 @@ app.get("/api/clinic", (req, res) => {
       if (clinicData && (clinicData.clinicCode === codeParam || clinicData.code === codeParam)) {
         // Don't return password hash or sensitive data
         const { password, ...publicClinic } = clinicData;
+        if (!publicClinic.referralLevels && publicClinic.settings?.referralLevels) {
+          publicClinic.referralLevels = publicClinic.settings.referralLevels;
+        }
         console.log(`[CLINIC GET] Found clinic in CLINICS_FILE: ${codeParam}, discounts: ${publicClinic.defaultInviterDiscountPercent}/${publicClinic.defaultInvitedDiscountPercent}`);
         return res.json(publicClinic);
       }
@@ -6388,6 +6399,9 @@ app.get("/api/clinic", (req, res) => {
     // If not found in CLINICS_FILE, try CLINIC_FILE as fallback
     const singleClinic = readJson(CLINIC_FILE, {});
     if (singleClinic && (singleClinic.clinicCode === codeParam || !codeParam)) {
+      if (!singleClinic.referralLevels && singleClinic.settings?.referralLevels) {
+        singleClinic.referralLevels = singleClinic.settings.referralLevels;
+      }
       console.log(`[CLINIC GET] Found clinic in CLINIC_FILE: ${singleClinic.clinicCode}, discounts: ${singleClinic.defaultInviterDiscountPercent}/${singleClinic.defaultInvitedDiscountPercent}`);
       return res.json(singleClinic);
     }
@@ -6437,6 +6451,9 @@ app.get("/api/clinic/:code", (req, res) => {
   if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
     // Don't return password hash to public endpoint
     const { password, ...publicClinic } = clinic;
+    if (!publicClinic.referralLevels && publicClinic.settings?.referralLevels) {
+      publicClinic.referralLevels = publicClinic.settings.referralLevels;
+    }
     return res.json(publicClinic);
   }
   
@@ -6468,6 +6485,31 @@ app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
     
     // Remove sensitive fields
     const { password, password_hash, ...safe } = req.clinic;
+    if (typeof safe.settings === "string") {
+      try {
+        safe.settings = JSON.parse(safe.settings);
+      } catch (e) {
+        safe.settings = {};
+      }
+    }
+    if (!safe.referralLevels && safe.settings?.referralLevels) {
+      safe.referralLevels = safe.settings.referralLevels;
+    }
+    if (!safe.referralLevels) {
+      safe.referralLevels = {
+        level1: safe.defaultInviterDiscountPercent ?? null,
+        level2: null,
+        level3: null,
+      };
+    }
+    const levels = safe.referralLevels || {};
+    safe.settings = {
+      ...(safe.settings || {}),
+      referralLevels: levels,
+      referralLevel1Percent: levels.level1 ?? null,
+      referralLevel2Percent: levels.level2 ?? null,
+      referralLevel3Percent: levels.level3 ?? null,
+    };
     res.json(safe);
   } catch (error) {
     console.error("Get admin clinic error:", error);
@@ -6553,6 +6595,17 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
       branding: updatedBranding,
       defaultInviterDiscountPercent: inviterPercent,
       defaultInvitedDiscountPercent: invitedPercent,
+      settings: {
+        ...(existing.settings || {}),
+        branding: updatedBranding,
+        defaultInviterDiscountPercent: inviterPercent,
+        defaultInvitedDiscountPercent: invitedPercent,
+        referralLevels,
+        logoUrl: String(body.logoUrl || bodyBranding.clinicLogoUrl || existing.logoUrl || existingBranding.clinicLogoUrl || ""),
+        googleMapsUrl: String(body.googleMapsUrl || bodyBranding.googleMapLink || existing.googleMapsUrl || existingBranding.googleMapLink || ""),
+        googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
+        trustpilotReviews: Array.isArray(body.trustpilotReviews) ? body.trustpilotReviews : (existing.trustpilotReviews || []),
+      },
       googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
       trustpilotReviews: Array.isArray(body.trustpilotReviews) ? body.trustpilotReviews : (existing.trustpilotReviews || []),
       password: passwordHash, // Keep existing or update
@@ -7435,12 +7488,13 @@ function roundToCurrency(amount) {
 
 // POST /api/referrals/payment-event
 // Called when invitee payment is completed (PAID/CAPTURED status)
-app.post("/api/referrals/payment-event", (req, res) => {
+app.post("/api/referrals/payment-event", async (req, res) => {
   try {
     const {
       inviteePatientId,
       inviteePaymentId,
       inviteePaidAmount,
+      inviterPaidAmount,
       currency = "USD",
       paymentStatus = "PAID",
     } = req.body || {};
@@ -7453,72 +7507,230 @@ app.post("/api/referrals/payment-event", (req, res) => {
     if (isNaN(paidAmount) || paidAmount <= 0) {
       return res.status(400).json({ ok: false, error: "invalid_paid_amount" });
     }
+    const inviterAmount = inviterPaidAmount != null ? Number(inviterPaidAmount) : null;
+    if (inviterAmount != null && (isNaN(inviterAmount) || inviterAmount <= 0)) {
+      return res.status(400).json({ ok: false, error: "invalid_inviter_paid_amount" });
+    }
     
     // Only process PAID/CAPTURED payments
     if (paymentStatus !== "PAID" && paymentStatus !== "CAPTURED") {
       return res.status(400).json({ ok: false, error: "payment_not_completed" });
     }
     
-    // Find referral relationship (inviter for this invitee)
-    const referrals = readJson(REF_FILE, []);
-    const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-    
-    // Find the first valid referral (inviter) for this invitee
-    const referral = referralList.find(
-      (r) => r.invitedPatientId === inviteePatientId && r.status === "APPROVED"
-    );
-    
-    if (!referral) {
-      return res.status(404).json({ ok: false, error: "no_referral_found" });
-    }
-    
-    // Check if event already exists for this payment
-    const events = readJson(REF_EVENT_FILE, []);
-    const eventList = Array.isArray(events) ? events : Object.values(events);
-    
-    const existingEvent = eventList.find((e) => e.inviteePaymentId === inviteePaymentId);
-    if (existingEvent) {
-      return res.status(409).json({ ok: false, error: "event_already_exists" });
-    }
-    
-    // Get clinic config for rates
-    const clinic = readJson(CLINIC_FILE, {});
-    const inviterRate = (clinic.defaultInviterDiscountPercent || 0) / 100; // Convert % to decimal
-    const inviteeRate = (clinic.defaultInvitedDiscountPercent || 0) / 100; // Convert % to decimal
-    
-    // Calculate earned discount (from invitee's paid amount)
-    const earnedDiscountAmount = roundToCurrency(paidAmount * inviterRate);
-    
-    // Create referral event
-    const newEvent = {
-      id: rid("refevt"),
-      inviterPatientId: referral.inviterPatientId,
-      inviteePatientId,
-      inviteePaymentId,
-      inviteePaidAmount: paidAmount,
-      currency,
-      inviterRate,
-      inviteeRate,
-      earnedDiscountAmount,
-      status: "EARNED",
-      createdAt: now(),
+    const handleFileFallback = () => {
+      // Find referral relationship (inviter for this invitee)
+      const referrals = readJson(REF_FILE, []);
+      const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+      
+      // Find the first valid referral (inviter) for this invitee
+      const referral = referralList.find(
+        (r) => r.invitedPatientId === inviteePatientId && r.status === "APPROVED"
+      );
+      
+      if (!referral) {
+        return res.status(404).json({ ok: false, error: "no_referral_found" });
+      }
+      
+      // Check if event already exists for this payment
+      const events = readJson(REF_EVENT_FILE, []);
+      const eventList = Array.isArray(events) ? events : Object.values(events);
+      
+      const existingEvent = eventList.find((e) => e.inviteePaymentId === inviteePaymentId);
+      if (existingEvent) {
+        return res.status(409).json({ ok: false, error: "event_already_exists" });
+      }
+      
+      // Get clinic config for rates
+      const clinic = readJson(CLINIC_FILE, {});
+      const referralDiscountPercent =
+        referral.inviterDiscountPercent ??
+        referral.discountPercent ??
+        clinic.defaultInviterDiscountPercent ??
+        0;
+      const inviterRate = Number(referralDiscountPercent || 0) / 100;
+      const inviteeRate =
+        Number(
+          referral.invitedDiscountPercent ??
+            referral.discountPercent ??
+            clinic.defaultInvitedDiscountPercent ??
+            referralDiscountPercent ??
+            0
+        ) / 100;
+      const basePaidAmount = inviterAmount != null ? Math.min(paidAmount, inviterAmount) : paidAmount;
+      
+      // Calculate earned discount (from invitee's paid amount)
+      const earnedDiscountAmount = roundToCurrency(basePaidAmount * inviterRate);
+      
+      // Create referral event
+      const newEvent = {
+        id: rid("refevt"),
+        inviterPatientId: referral.inviterPatientId,
+        inviteePatientId,
+        inviteePaymentId,
+        inviteePaidAmount: paidAmount,
+        inviterPaidAmount: inviterAmount,
+        basePaidAmount,
+        currency,
+        inviterRate,
+        inviteeRate,
+        earnedDiscountAmount,
+        status: "EARNED",
+        createdAt: now(),
+      };
+      
+      eventList.push(newEvent);
+      writeJson(REF_EVENT_FILE, eventList);
+      
+      // Update inviter's credit (add to patient record)
+      const patients = readJson(PAT_FILE, {});
+      if (patients[referral.inviterPatientId]) {
+        const inviter = patients[referral.inviterPatientId];
+        inviter.referralCredit = (inviter.referralCredit || 0) + earnedDiscountAmount;
+        inviter.referralCreditUpdatedAt = now();
+        writeJson(PAT_FILE, patients);
+      }
+      
+      console.log(`[REFERRAL_EVENT] Created: ${newEvent.id}, Inviter: ${referral.inviterPatientId}, Credit: ${earnedDiscountAmount} ${currency}`);
+      
+      return res.json({ ok: true, event: newEvent });
     };
-    
-    eventList.push(newEvent);
-    writeJson(REF_EVENT_FILE, eventList);
-    
-    // Update inviter's credit (add to patient record)
-    const patients = readJson(PAT_FILE, {});
-    if (patients[referral.inviterPatientId]) {
-      const inviter = patients[referral.inviterPatientId];
-      inviter.referralCredit = (inviter.referralCredit || 0) + earnedDiscountAmount;
-      inviter.referralCreditUpdatedAt = now();
-      writeJson(PAT_FILE, patients);
+
+    if (isSupabaseEnabled()) {
+      try {
+        const { data: referrals, error: referralError } = await supabase
+          .from("referrals")
+          .select("*")
+          .eq("invited_patient_id", inviteePatientId)
+          .eq("status", "APPROVED")
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (referralError) {
+          if (isMissingTableError(referralError, "referrals") && canUseFileFallback()) {
+            console.warn("[REFERRAL_EVENT] Supabase missing referrals table, using file fallback");
+            return handleFileFallback();
+          }
+          return res.status(500).json({
+            ok: false,
+            error: "referral_fetch_failed",
+            supabase: supabaseErrorPublic(referralError),
+          });
+        }
+
+        const referral = Array.isArray(referrals) ? referrals[0] : null;
+        if (!referral) {
+          return res.status(404).json({ ok: false, error: "no_referral_found" });
+        }
+
+        const { data: existing, error: existingError } = await supabase
+          .from("referral_events")
+          .select("id")
+          .eq("invitee_payment_id", inviteePaymentId)
+          .limit(1);
+
+        if (existingError) {
+          if (isMissingTableError(existingError, "referral_events") && canUseFileFallback()) {
+            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+            return handleFileFallback();
+          }
+          return res.status(500).json({
+            ok: false,
+            error: "referral_event_fetch_failed",
+            supabase: supabaseErrorPublic(existingError),
+          });
+        }
+
+        if (Array.isArray(existing) && existing.length > 0) {
+          return res.status(409).json({ ok: false, error: "event_already_exists" });
+        }
+
+        const clinic = referral.clinic_id ? await getClinicById(referral.clinic_id) : null;
+        const clinicSettings = clinic?.settings || {};
+        const referralDiscountPercent =
+          referral.inviter_discount_percent ??
+          referral.discount_percent ??
+          clinicSettings.defaultInviterDiscountPercent ??
+          0;
+        const inviterRate = Number(referralDiscountPercent || 0) / 100;
+        const inviteeRate =
+          Number(
+            referral.invited_discount_percent ??
+              referral.discount_percent ??
+              clinicSettings.defaultInvitedDiscountPercent ??
+              referralDiscountPercent ??
+              0
+          ) / 100;
+        const basePaidAmount = inviterAmount != null ? Math.min(paidAmount, inviterAmount) : paidAmount;
+        const earnedDiscountAmount = roundToCurrency(basePaidAmount * inviterRate);
+
+        const newEvent = {
+          clinic_id: referral.clinic_id || null,
+          inviter_patient_id: referral.inviter_patient_id,
+          invitee_patient_id: inviteePatientId,
+          invitee_payment_id: inviteePaymentId,
+          invitee_paid_amount: paidAmount,
+          inviter_paid_amount: inviterAmount,
+          base_paid_amount: basePaidAmount,
+          currency,
+          inviter_rate: inviterRate,
+          invitee_rate: inviteeRate,
+          earned_discount_amount: earnedDiscountAmount,
+          status: "EARNED",
+          created_at: new Date().toISOString(),
+        };
+
+        const { data: inserted, error: insertError } = await supabase
+          .from("referral_events")
+          .insert(newEvent)
+          .select("*")
+          .single();
+
+        if (insertError) {
+          if (isMissingTableError(insertError, "referral_events") && canUseFileFallback()) {
+            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+            return handleFileFallback();
+          }
+          return res.status(500).json({
+            ok: false,
+            error: "referral_event_insert_failed",
+            supabase: supabaseErrorPublic(insertError),
+          });
+        }
+
+        try {
+          const inviter = await getPatientById(referral.inviter_patient_id);
+          const currentCredit = Number(inviter?.referral_credit || inviter?.referralCredit || 0);
+          const updatedCredit = roundToCurrency(currentCredit + earnedDiscountAmount);
+          const { error: creditError } = await supabase
+            .from("patients")
+            .update({
+              referral_credit: updatedCredit,
+              referral_credit_updated_at: new Date().toISOString(),
+            })
+            .eq("patient_id", referral.inviter_patient_id);
+
+          if (creditError && isMissingColumnError(creditError, "referral_credit")) {
+            console.warn("[REFERRAL_EVENT] referral_credit column missing; skipping credit update");
+          } else if (creditError) {
+            console.error("[REFERRAL_EVENT] Failed to update referral_credit:", creditError.message);
+          }
+        } catch (creditUpdateError) {
+          console.error("[REFERRAL_EVENT] Credit update failed:", creditUpdateError?.message || creditUpdateError);
+        }
+
+        console.log(`[REFERRAL_EVENT] Created (Supabase): ${inserted?.id || "unknown"}, Inviter: ${referral.inviter_patient_id}, Credit: ${earnedDiscountAmount} ${currency}`);
+        return res.json({ ok: true, event: inserted });
+      } catch (supabaseError) {
+        console.error("[REFERRAL_EVENT] Supabase flow failed:", supabaseError?.message || supabaseError);
+        if (canUseFileFallback()) {
+          console.warn("[REFERRAL_EVENT] Using file fallback after Supabase error");
+          return handleFileFallback();
+        }
+        return res.status(500).json({ ok: false, error: "referral_event_failed" });
+      }
     }
-    
-    console.log(`[REFERRAL_EVENT] Created: ${newEvent.id}, Inviter: ${referral.inviterPatientId}, Credit: ${earnedDiscountAmount} ${currency}`);
-    
-    res.json({ ok: true, event: newEvent });
+
+    return handleFileFallback();
   } catch (error) {
     console.error("Referral event creation error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -7527,43 +7739,125 @@ app.post("/api/referrals/payment-event", (req, res) => {
 
 // POST /api/referrals/payment-refund
 // Called when invitee payment is refunded/chargeback
-app.post("/api/referrals/payment-refund", (req, res) => {
+app.post("/api/referrals/payment-refund", async (req, res) => {
   try {
     const { inviteePaymentId } = req.body || {};
     
     if (!inviteePaymentId) {
       return res.status(400).json({ ok: false, error: "payment_id_required" });
     }
-    
-    // Find existing event
-    const events = readJson(REF_EVENT_FILE, []);
-    const eventList = Array.isArray(events) ? events : Object.values(events);
-    const eventIdx = eventList.findIndex((e) => e.inviteePaymentId === inviteePaymentId && e.status === "EARNED");
-    
-    if (eventIdx < 0) {
-      return res.status(404).json({ ok: false, error: "event_not_found" });
+
+    const handleFileFallback = () => {
+      // Find existing event
+      const events = readJson(REF_EVENT_FILE, []);
+      const eventList = Array.isArray(events) ? events : Object.values(events);
+      const eventIdx = eventList.findIndex((e) => e.inviteePaymentId === inviteePaymentId && e.status === "EARNED");
+      
+      if (eventIdx < 0) {
+        return res.status(404).json({ ok: false, error: "event_not_found" });
+      }
+      
+      const event = eventList[eventIdx];
+      
+      // Reverse the event
+      event.status = "REVERSED";
+      event.reversedAt = now();
+      eventList[eventIdx] = event;
+      writeJson(REF_EVENT_FILE, eventList);
+      
+      // Reverse inviter's credit (subtract from patient record)
+      const patients = readJson(PAT_FILE, {});
+      if (patients[event.inviterPatientId]) {
+        const inviter = patients[event.inviterPatientId];
+        inviter.referralCredit = Math.max(0, (inviter.referralCredit || 0) - event.earnedDiscountAmount);
+        inviter.referralCreditUpdatedAt = now();
+        writeJson(PAT_FILE, patients);
+      }
+      
+      console.log(`[REFERRAL_EVENT] Reversed: ${event.id}, Credit reversed: ${event.earnedDiscountAmount} ${event.currency}`);
+      
+      return res.json({ ok: true, event });
+    };
+
+    if (isSupabaseEnabled()) {
+      try {
+        const { data: events, error: fetchError } = await supabase
+          .from("referral_events")
+          .select("*")
+          .eq("invitee_payment_id", inviteePaymentId)
+          .eq("status", "EARNED")
+          .limit(1);
+
+        if (fetchError) {
+          if (isMissingTableError(fetchError, "referral_events") && canUseFileFallback()) {
+            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+            return handleFileFallback();
+          }
+          return res.status(500).json({
+            ok: false,
+            error: "referral_event_fetch_failed",
+            supabase: supabaseErrorPublic(fetchError),
+          });
+        }
+
+        const event = Array.isArray(events) ? events[0] : null;
+        if (!event) {
+          return res.status(404).json({ ok: false, error: "event_not_found" });
+        }
+
+        const { data: updated, error: updateError } = await supabase
+          .from("referral_events")
+          .update({ status: "REVERSED", reversed_at: new Date().toISOString() })
+          .eq("id", event.id)
+          .select("*")
+          .single();
+
+        if (updateError) {
+          if (isMissingTableError(updateError, "referral_events") && canUseFileFallback()) {
+            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+            return handleFileFallback();
+          }
+          return res.status(500).json({
+            ok: false,
+            error: "referral_event_update_failed",
+            supabase: supabaseErrorPublic(updateError),
+          });
+        }
+
+        try {
+          const inviter = await getPatientById(event.inviter_patient_id);
+          const currentCredit = Number(inviter?.referral_credit || inviter?.referralCredit || 0);
+          const updatedCredit = Math.max(0, roundToCurrency(currentCredit - Number(event.earned_discount_amount || 0)));
+          const { error: creditError } = await supabase
+            .from("patients")
+            .update({
+              referral_credit: updatedCredit,
+              referral_credit_updated_at: new Date().toISOString(),
+            })
+            .eq("patient_id", event.inviter_patient_id);
+
+          if (creditError && isMissingColumnError(creditError, "referral_credit")) {
+            console.warn("[REFERRAL_EVENT] referral_credit column missing; skipping credit update");
+          } else if (creditError) {
+            console.error("[REFERRAL_EVENT] Failed to update referral_credit:", creditError.message);
+          }
+        } catch (creditUpdateError) {
+          console.error("[REFERRAL_EVENT] Credit update failed:", creditUpdateError?.message || creditUpdateError);
+        }
+
+        console.log(`[REFERRAL_EVENT] Reversed (Supabase): ${updated?.id || "unknown"}, Credit reversed: ${updated?.earned_discount_amount} ${updated?.currency}`);
+        return res.json({ ok: true, event: updated });
+      } catch (supabaseError) {
+        console.error("[REFERRAL_EVENT] Supabase refund flow failed:", supabaseError?.message || supabaseError);
+        if (canUseFileFallback()) {
+          console.warn("[REFERRAL_EVENT] Using file fallback after Supabase error");
+          return handleFileFallback();
+        }
+        return res.status(500).json({ ok: false, error: "referral_refund_failed" });
+      }
     }
-    
-    const event = eventList[eventIdx];
-    
-    // Reverse the event
-    event.status = "REVERSED";
-    event.reversedAt = now();
-    eventList[eventIdx] = event;
-    writeJson(REF_EVENT_FILE, eventList);
-    
-    // Reverse inviter's credit (subtract from patient record)
-    const patients = readJson(PAT_FILE, {});
-    if (patients[event.inviterPatientId]) {
-      const inviter = patients[event.inviterPatientId];
-      inviter.referralCredit = Math.max(0, (inviter.referralCredit || 0) - event.earnedDiscountAmount);
-      inviter.referralCreditUpdatedAt = now();
-      writeJson(PAT_FILE, patients);
-    }
-    
-    console.log(`[REFERRAL_EVENT] Reversed: ${event.id}, Credit reversed: ${event.earnedDiscountAmount} ${event.currency}`);
-    
-    res.json({ ok: true, event });
+
+    return handleFileFallback();
   } catch (error) {
     console.error("Referral event reversal error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -7575,15 +7869,41 @@ app.post("/api/referrals/payment-refund", (req, res) => {
 app.get("/api/patient/:patientId/referral-credit", (req, res) => {
   try {
     const { patientId } = req.params;
-    const patients = readJson(PAT_FILE, {});
-    
-    if (!patients[patientId]) {
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patient_id_required" });
     }
-    
-    const credit = patients[patientId].referralCredit || 0;
-    
-    res.json({ ok: true, credit, currency: "USD" });
+
+    const respondFromFile = () => {
+      const patients = readJson(PAT_FILE, {});
+      if (!patients[patientId]) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+      const credit = patients[patientId].referralCredit || 0;
+      return res.json({ ok: true, credit, currency: "USD" });
+    };
+
+    if (isSupabaseEnabled()) {
+      getPatientById(patientId)
+        .then((patient) => {
+          if (!patient) {
+            if (canUseFileFallback()) return respondFromFile();
+            return res.status(404).json({ ok: false, error: "patient_not_found" });
+          }
+          if (patient.referral_credit == null && canUseFileFallback()) {
+            return respondFromFile();
+          }
+          const credit = Number(patient.referral_credit || 0);
+          return res.json({ ok: true, credit, currency: "USD" });
+        })
+        .catch((error) => {
+          console.error("[REFERRAL_CREDIT] Supabase fetch failed:", error?.message || error);
+          if (canUseFileFallback()) return respondFromFile();
+          return res.status(500).json({ ok: false, error: "referral_credit_fetch_failed" });
+        });
+      return;
+    }
+
+    return respondFromFile();
   } catch (error) {
     console.error("Get referral credit error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -7592,15 +7912,53 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
 
 // GET /api/admin/referral-events
 // Get all referral events (admin view)
-app.get("/api/admin/referral-events", requireAdminToken, (req, res) => {
+app.get("/api/admin/referral-events", requireAdminToken, async (req, res) => {
   try {
-    const events = readJson(REF_EVENT_FILE, []);
-    const eventList = Array.isArray(events) ? events : Object.values(events);
-    
-    // Sort by created date (newest first)
-    eventList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    
-    res.json({ ok: true, items: eventList });
+    const respondFromFile = () => {
+      const events = readJson(REF_EVENT_FILE, []);
+      const eventList = Array.isArray(events) ? events : Object.values(events);
+      eventList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return res.json({ ok: true, items: eventList, source: "file" });
+    };
+
+    if (isSupabaseEnabled()) {
+      const clinicId = req.clinicId || null;
+      let q = supabase.from("referral_events").select("*");
+      if (clinicId) q = q.eq("clinic_id", clinicId);
+      const { data, error } = await q.order("created_at", { ascending: false });
+      if (error) {
+        if (isMissingTableError(error, "referral_events") && canUseFileFallback()) {
+          console.warn("[REFERRAL_EVENTS] Supabase table missing, using file fallback");
+          return respondFromFile();
+        }
+        return res.status(500).json({
+          ok: false,
+          error: "referral_events_fetch_failed",
+          supabase: supabaseErrorPublic(error),
+        });
+      }
+
+      const items = (data || []).map((row) => ({
+        id: row.id,
+        inviterPatientId: row.inviter_patient_id,
+        inviteePatientId: row.invitee_patient_id,
+        inviteePaymentId: row.invitee_payment_id,
+        inviteePaidAmount: row.invitee_paid_amount,
+        inviterPaidAmount: row.inviter_paid_amount,
+        basePaidAmount: row.base_paid_amount,
+        currency: row.currency,
+        inviterRate: row.inviter_rate,
+        inviteeRate: row.invitee_rate,
+        earnedDiscountAmount: row.earned_discount_amount,
+        status: row.status,
+        createdAt: row.created_at ? new Date(row.created_at).getTime() : null,
+        reversedAt: row.reversed_at ? new Date(row.reversed_at).getTime() : null,
+      }));
+
+      return res.json({ ok: true, items, source: "supabase" });
+    }
+
+    return respondFromFile();
   } catch (error) {
     console.error("Get referral events error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
