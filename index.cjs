@@ -263,9 +263,18 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
 }
 
 // Super Admin ENV variables
-const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "";
-const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "";
-const SUPER_ADMIN_JWT_SECRET = process.env.SUPER_ADMIN_JWT_SECRET || "super-admin-secret-key-change-in-production";
+const SUPER_ADMIN_EMAIL =
+  process.env.SUPER_ADMIN_EMAIL ||
+  process.env.SUPERADMIN_EMAIL ||
+  "";
+const SUPER_ADMIN_PASSWORD =
+  process.env.SUPER_ADMIN_PASSWORD ||
+  process.env.SUPERADMIN_PASSWORD ||
+  "";
+const SUPER_ADMIN_JWT_SECRET =
+  process.env.SUPER_ADMIN_JWT_SECRET ||
+  process.env.SUPERADMIN_JWT_SECRET ||
+  "super-admin-secret-key-change-in-production";
 
 // ================== MIDDLEWARE ==================
 const corsOptions = {
@@ -345,6 +354,118 @@ function supabaseErrorPublic(err) {
 
 function isInvalidUuidError(error) {
   return String(error?.code || "") === "22P02";
+}
+
+function normalizeReferralLevels(input, fallback) {
+  const base = fallback && typeof fallback === "object" ? fallback : {};
+  const level1Raw = input?.level1 ?? input?.referralLevel1Percent ?? base.level1 ?? null;
+  const level2Raw = input?.level2 ?? input?.referralLevel2Percent ?? base.level2 ?? null;
+  const level3Raw = input?.level3 ?? input?.referralLevel3Percent ?? base.level3 ?? null;
+  const level1 = level1Raw != null && level1Raw !== "" ? Number(level1Raw) : null;
+  const level2 = level2Raw != null && level2Raw !== "" ? Number(level2Raw) : null;
+  const level3 = level3Raw != null && level3Raw !== "" ? Number(level3Raw) : null;
+  return { level1, level2, level3 };
+}
+
+function validateReferralLevels(levels) {
+  const values = [levels.level1, levels.level2, levels.level3].filter((v) => v != null);
+  for (const v of values) {
+    if (Number.isNaN(v) || v < 0 || v > 99) return "referral_levels must be 0-99";
+  }
+  return null;
+}
+
+function levelPercentForCount(count, levels) {
+  const level1 = levels?.level1 ?? 0;
+  const level2 = levels?.level2 ?? level1 ?? 0;
+  const level3 = levels?.level3 ?? level2 ?? level1 ?? 0;
+  if (count <= 0) return 0;
+  if (count === 1) return level1 || 0;
+  if (count === 2) return level2 || level1 || 0;
+  return level3 || level2 || level1 || 0;
+}
+
+function normalizeReferralState(state) {
+  const base = Number(state?.baseDiscountPercent || 0);
+  const earned = Number(state?.earnedDiscountPercent || 0);
+  const total = Number(state?.totalDiscountPercent || 0);
+  return {
+    baseDiscountPercent: Number.isFinite(base) ? base : 0,
+    earnedDiscountPercent: Number.isFinite(earned) ? earned : 0,
+    totalDiscountPercent: Number.isFinite(total) ? total : 0,
+  };
+}
+
+function computeReferralTotals(state, capPercent) {
+  const base = Number(state?.baseDiscountPercent || 0);
+  const earned = Number(state?.earnedDiscountPercent || 0);
+  const total = Math.min(base + earned, capPercent || 0);
+  return {
+    baseDiscountPercent: base,
+    earnedDiscountPercent: earned,
+    totalDiscountPercent: total,
+  };
+}
+
+function countSuccessfulReferralsFile(list, inviterId) {
+  const normalized = String(inviterId || "").trim();
+  return (list || []).filter((r) => {
+    if (!r) return false;
+    const status = String(r.status || "").toUpperCase();
+    if (status !== "APPROVED" && status !== "COMPLETED") return false;
+    const inviter = String(r.inviterPatientId || r.inviter_patient_id || "").trim();
+    return inviter === normalized;
+  }).length;
+}
+
+async function countSuccessfulReferrals(inviterId, clinicId) {
+  if (!isSupabaseEnabled()) return 0;
+  const statusList = ["APPROVED", "COMPLETED"];
+  const columns = [
+    "inviter_patient_id",
+    "referrer_patient_id",
+  ];
+  let lastError = null;
+  for (const col of columns) {
+    let q = supabase
+      .from("referrals")
+      .select("*", { count: "exact", head: true })
+      .eq(col, inviterId)
+      .in("status", statusList);
+    if (clinicId) q = q.eq("clinic_id", clinicId);
+    const { count, error } = await q;
+    if (!error) return count || 0;
+    lastError = error;
+    if (!isMissingColumnError(error)) break;
+  }
+  console.error("[REFERRALS] Failed to count successful referrals", {
+    message: lastError?.message,
+    code: lastError?.code,
+  });
+  return 0;
+}
+
+async function updatePatientReferralState(patientId, nextState) {
+  if (!isSupabaseEnabled()) return;
+  try {
+    const { error } = await supabase
+      .from("patients")
+      .update({ referral_state: nextState, updated_at: new Date().toISOString() })
+      .eq("patient_id", patientId);
+    if (error) {
+      if (isMissingColumnError(error, "referral_state")) {
+        console.warn("[REFERRALS] referral_state column missing; skipping update");
+        return;
+      }
+      console.error("[REFERRALS] Failed to update referral_state", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+      });
+    }
+  } catch (e) {
+    console.error("[REFERRALS] referral_state update exception:", e?.message || e);
+  }
 }
 
 async function fetchTreatmentPricesMap(clinicId) {
@@ -2695,6 +2816,13 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
       }
 
       const finalStatus = p?.status || "PENDING";
+      const referralLevels =
+        c?.settings?.referralLevels ||
+        {
+          level1: c?.settings?.defaultInviterDiscountPercent ?? null,
+          level2: null,
+          level3: null,
+        };
       return res.json({
         ok: true,
         patientId: req.patientId,
@@ -2706,6 +2834,7 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
         clinicCode,
         clinicPlan,
         branding,
+        referralLevels,
         financialSnapshot: {
           totalEstimatedCost: 0,
           totalPaid: 0,
@@ -6279,10 +6408,18 @@ app.get("/api/clinic", (req, res) => {
     googleMapsUrl: "",
     defaultInviterDiscountPercent: null,
     defaultInvitedDiscountPercent: null,
+    referralLevels: {
+      level1: null,
+      level2: null,
+      level3: null,
+    },
     updatedAt: now(),
   };
   
-  const clinic = readJson(CLINIC_FILE, defaultClinic);
+      const clinic = readJson(CLINIC_FILE, defaultClinic);
+      if (!clinic.referralLevels) {
+        clinic.referralLevels = defaultClinic.referralLevels;
+      }
   console.log(`[CLINIC GET] Returning default clinic with discounts: ${clinic.defaultInviterDiscountPercent}/${clinic.defaultInvitedDiscountPercent}`);
   res.json(clinic);
 });
@@ -6362,20 +6499,21 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
 
     const computedMaxPatients = rawPlan === "FREE" ? 3 : (rawPlan === "BASIC" ? 10 : null);
     
-    const inviterPercent = body.defaultInviterDiscountPercent != null 
-      ? Number(body.defaultInviterDiscountPercent) 
-      : (existing.defaultInviterDiscountPercent != null ? existing.defaultInviterDiscountPercent : null);
-    const invitedPercent = body.defaultInvitedDiscountPercent != null 
-      ? Number(body.defaultInvitedDiscountPercent) 
-      : (existing.defaultInvitedDiscountPercent != null ? existing.defaultInvitedDiscountPercent : null);
-    
-    // Validasyon
-    if (inviterPercent != null && (Number.isNaN(inviterPercent) || inviterPercent < 0 || inviterPercent > 99)) {
-      return res.status(400).json({ ok: false, error: "defaultInviterDiscountPercent must be 0-99" });
+    const referralLevels = normalizeReferralLevels(
+      {
+        referralLevel1Percent: body.referralLevel1Percent,
+        referralLevel2Percent: body.referralLevel2Percent,
+        referralLevel3Percent: body.referralLevel3Percent,
+      },
+      existing.settings?.referralLevels || {}
+    );
+    const referralLevelError = validateReferralLevels(referralLevels);
+    if (referralLevelError) {
+      return res.status(400).json({ ok: false, error: referralLevelError });
     }
-    if (invitedPercent != null && (Number.isNaN(invitedPercent) || invitedPercent < 0 || invitedPercent > 99)) {
-      return res.status(400).json({ ok: false, error: "defaultInvitedDiscountPercent must be 0-99" });
-    }
+
+    const inviterPercent = referralLevels.level1 != null ? referralLevels.level1 : existing.defaultInviterDiscountPercent ?? null;
+    const invitedPercent = referralLevels.level1 != null ? referralLevels.level1 : existing.defaultInvitedDiscountPercent ?? null;
     
     // Handle password change
     let passwordHash = existing.password;
@@ -6439,6 +6577,7 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
             branding: updatedBranding,
             defaultInviterDiscountPercent: inviterPercent,
             defaultInvitedDiscountPercent: invitedPercent,
+            referralLevels,
             googleReviews: updated.googleReviews,
             trustpilotReviews: updated.trustpilotReviews,
             logoUrl: updated.logoUrl,
@@ -6478,6 +6617,13 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
     
     if (fileClinicId && clinics[fileClinicId] !== undefined) {
       clinics[fileClinicId] = updated;
+      clinics[fileClinicId] = {
+        ...updated,
+        settings: {
+          ...(updated.settings || {}),
+          referralLevels,
+        },
+      };
       writeJson(CLINICS_FILE, clinics);
       console.log(`[PUT /api/admin/clinic] File-based clinic updated`);
     } else {
@@ -6998,18 +7144,30 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
         }
         
         const clinic = req.clinic || {};
-        const baseInviterPercent =
-          referral.inviter_discount_percent ?? clinic.defaultInviterDiscountPercent ?? null;
-        const baseInvitedPercent =
-          referral.invited_discount_percent ?? clinic.defaultInvitedDiscountPercent ?? null;
-        const baseDiscountPercent = referral.discount_percent ?? null;
+        const referralLevels = normalizeReferralLevels(
+          clinic?.settings?.referralLevels || clinic?.referralLevels || {},
+          {
+            level1: clinic.defaultInviterDiscountPercent ?? null,
+            level2: null,
+            level3: null,
+          }
+        );
+        const referralLevelError = validateReferralLevels(referralLevels);
+        if (referralLevelError) {
+          return res.status(400).json({ ok: false, error: referralLevelError });
+        }
 
-        // Calculate discount
-        let finalInviterPercent = inviterDiscountPercent ?? baseInviterPercent;
-        let finalInvitedPercent = invitedDiscountPercent ?? baseInvitedPercent;
-        let finalDiscountPercent = discountPercent ?? baseDiscountPercent;
+        const inviterId = referral.inviter_patient_id || referral.referrer_patient_id;
+        const invitedId = referral.invited_patient_id || referral.referred_patient_id;
+        const inviterCountBefore = await countSuccessfulReferrals(inviterId, req.clinicId);
+        const inviterCountAfter = inviterCountBefore + 1;
+        const inviterPercentAfter = levelPercentForCount(inviterCountAfter, referralLevels);
 
-        if (finalInviterPercent == null && finalInvitedPercent == null && finalDiscountPercent == null) {
+        const finalInviterPercent = inviterDiscountPercent ?? inviterPercentAfter;
+        const finalInvitedPercent = invitedDiscountPercent ?? inviterPercentAfter;
+        const finalDiscountPercent = discountPercent ?? inviterPercentAfter;
+
+        if (finalInviterPercent == null || finalInvitedPercent == null) {
           return res.status(400).json({
             ok: false,
             error: "Default discount percentages must be entered in Clinic Settings page",
@@ -7051,6 +7209,31 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
         }
         
         console.log(`[REFERRAL APPROVE] ✅ Approved referral ${id} in Supabase`);
+
+        // Update referral_state for inviter and invited
+        const inviterPatient = await getPatientById(inviterId);
+        const invitedPatient = await getPatientById(invitedId);
+        const inviterState = normalizeReferralState(inviterPatient?.referral_state);
+        const invitedState = normalizeReferralState(invitedPatient?.referral_state);
+
+        const cap = referralLevels.level3 ?? referralLevels.level2 ?? referralLevels.level1 ?? 0;
+        const inviterNext = computeReferralTotals(
+          {
+            ...inviterState,
+            earnedDiscountPercent: finalInviterPercent,
+          },
+          cap
+        );
+        const invitedNext = computeReferralTotals(
+          {
+            ...invitedState,
+            baseDiscountPercent: Math.max(invitedState.baseDiscountPercent, finalInvitedPercent),
+          },
+          cap
+        );
+
+        await updatePatientReferralState(inviterId, inviterNext);
+        await updatePatientReferralState(invitedId, invitedNext);
         
         // TODO: Audit log - referral_approved event
         
@@ -7083,17 +7266,27 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
     }
     
     const clinic = req.clinic || {};
-    const baseInviterPercent =
-      referral.inviterDiscountPercent ?? clinic.defaultInviterDiscountPercent ?? null;
-    const baseInvitedPercent =
-      referral.invitedDiscountPercent ?? clinic.defaultInvitedDiscountPercent ?? null;
-    const baseDiscountPercent = referral.discountPercent ?? null;
+    const referralLevels = normalizeReferralLevels(
+      clinic?.settings?.referralLevels || clinic?.referralLevels || {},
+      {
+        level1: clinic.defaultInviterDiscountPercent ?? null,
+        level2: null,
+        level3: null,
+      }
+    );
+    const referralLevelError = validateReferralLevels(referralLevels);
+    if (referralLevelError) {
+      return res.status(400).json({ ok: false, error: referralLevelError });
+    }
 
-    let finalInviterPercent = inviterDiscountPercent ?? baseInviterPercent;
-    let finalInvitedPercent = invitedDiscountPercent ?? baseInvitedPercent;
-    let finalDiscountPercent = discountPercent ?? baseDiscountPercent;
+    const inviterCountBefore = countSuccessfulReferralsFile(list, referral.inviterPatientId);
+    const inviterPercentAfter = levelPercentForCount(inviterCountBefore + 1, referralLevels);
 
-    if (finalInviterPercent == null && finalInvitedPercent == null && finalDiscountPercent == null) {
+    let finalInviterPercent = inviterDiscountPercent ?? inviterPercentAfter;
+    let finalInvitedPercent = invitedDiscountPercent ?? inviterPercentAfter;
+    let finalDiscountPercent = discountPercent ?? inviterPercentAfter;
+
+    if (finalInviterPercent == null || finalInvitedPercent == null) {
       return res.status(400).json({
         ok: false,
         error: "Default discount percentages must be entered in Clinic Settings page",
@@ -8504,17 +8697,18 @@ app.post("/api/super-admin/login", (req, res) => {
     }
 
     const token = jwt.sign(
-      { role: "super-admin" },
+      { role: "super-admin", email },
       SUPER_ADMIN_JWT_SECRET,
       { expiresIn: "12h" }
     );
 
     console.log("[SUPER_ADMIN] Login successful");
 
-    res.json({ 
-      ok: true, 
+    res.json({
+      ok: true,
       token,
-      message: "Login successful"
+      email,
+      message: "Login successful",
     });
   } catch (error) {
     console.error("[SUPER_ADMIN] Login error:", error);
@@ -8526,10 +8720,11 @@ app.post("/api/super-admin/login", (req, res) => {
 // Test endpoint (protected)
 app.get("/api/super-admin/me", superAdminGuard, (req, res) => {
   try {
-    res.json({ 
-      ok: true, 
+    res.json({
+      ok: true,
       role: "super-admin",
-      message: "Super admin authenticated"
+      email: req.superAdmin?.email || SUPER_ADMIN_EMAIL,
+      message: "Super admin authenticated",
     });
   } catch (error) {
     console.error("[SUPER_ADMIN] Me endpoint error:", error);
