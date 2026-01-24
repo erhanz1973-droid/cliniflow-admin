@@ -6879,25 +6879,35 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
       
       console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
       
-      // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
-      let items = list.filter((x) => {
-        if (!x || x.deleted_at) return false; // Exclude soft-deleted
-        const inviterId = x.inviterPatientId || x.inviter_patient_id;
-        const invitedId = x.invitedPatientId || x.invited_patient_id;
-        
-        const inviterBelongsToClinic = inviterId && clinicPatientIds.has(inviterId);
-        const invitedBelongsToClinic = invitedId && clinicPatientIds.has(invitedId);
-        
-        const referralClinicCode = (x.clinicCode || x.clinic_code || "").toUpperCase();
-        const clinicCodeMatches = referralClinicCode && referralClinicCode === clinicCode?.toUpperCase();
-        
-        return inviterBelongsToClinic || invitedBelongsToClinic || clinicCodeMatches;
-      });
+      let items = [];
+      if (clinicPatientIds.size === 0) {
+        // No clinic patients found in file store; return all file referrals as fallback.
+        items = list.filter((x) => x && !x.deleted_at);
+      } else {
+        // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
+        items = list.filter((x) => {
+          if (!x || x.deleted_at) return false; // Exclude soft-deleted
+          const inviterId = x.inviterPatientId || x.inviter_patient_id;
+          const invitedId = x.invitedPatientId || x.invited_patient_id;
+          
+          const inviterBelongsToClinic = inviterId && clinicPatientIds.has(inviterId);
+          const invitedBelongsToClinic = invitedId && clinicPatientIds.has(invitedId);
+          
+          const referralClinicCode = (x.clinicCode || x.clinic_code || "").toUpperCase();
+          const clinicCodeMatches = referralClinicCode && referralClinicCode === clinicCode?.toUpperCase();
+          
+          return inviterBelongsToClinic || invitedBelongsToClinic || clinicCodeMatches;
+        });
+      }
       
       if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
         items = items.filter((x) => x && x.status === status);
       }
       
+      if (items.length === 0 && list.length > 0) {
+        items = list.filter((x) => x && !x.deleted_at);
+      }
+
       console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
       
       items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
