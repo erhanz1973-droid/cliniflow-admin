@@ -2789,6 +2789,7 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
       let clinicCode = "";
       let clinicPlan = "FREE";
       let branding = null;
+      let clinicData = null;
 
       if (p?.clinic_id) {
         const { data: c, error: cErr } = await supabase
@@ -2804,30 +2805,38 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
             details: cErr.details,
           });
         } else if (c) {
-          clinicCode = c.clinic_code || "";
-          clinicPlan = c.plan || "FREE";
-          const b = c.settings?.branding || null;
+          clinicData = c;
+          if (typeof clinicData.settings === "string") {
+            try {
+              clinicData.settings = JSON.parse(clinicData.settings);
+            } catch (e) {
+              clinicData.settings = {};
+            }
+          }
+          clinicCode = clinicData.clinic_code || "";
+          clinicPlan = clinicData.plan || "FREE";
+          const b = clinicData.settings?.branding || null;
           branding = b
             ? b
             : {
-                clinicName: c.name || "",
+                clinicName: clinicData.name || "",
                 clinicLogoUrl: "",
-                address: c.address || "",
+                address: clinicData.address || "",
                 googleMapLink: "",
                 primaryColor: undefined,
                 secondaryColor: undefined,
                 welcomeMessage: "",
                 showPoweredBy: true,
-                phone: c.phone || "",
+                phone: clinicData.phone || "",
               };
         }
       }
 
       const finalStatus = p?.status || "PENDING";
       const referralLevels =
-        c?.settings?.referralLevels ||
+        clinicData?.settings?.referralLevels ||
         {
-          level1: c?.settings?.defaultInviterDiscountPercent ?? null,
+          level1: clinicData?.settings?.defaultInviterDiscountPercent ?? null,
           level2: null,
           level3: null,
         };
