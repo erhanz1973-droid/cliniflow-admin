@@ -6856,7 +6856,7 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
         items.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
         
         console.log(`[REFERRALS] Returning ${items.length} referrals from Supabase for clinic ${clinicCode}`);
-        if (items.length === 0 && canUseFileFallback()) {
+        if (items.length === 0) {
           return respondFromFile();
         }
         return res.json({ ok: true, items, source: "supabase" });
@@ -7092,7 +7092,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
         if (!error) {
           let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
           if (status) items = items.filter((x) => x.status === status);
-          if (items.length === 0 && canUseFileFallback()) {
+          if (items.length === 0) {
             return respondFromFile();
           }
           return res.json({ ok: true, items, source: "supabase" });
