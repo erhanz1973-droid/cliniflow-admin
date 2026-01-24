@@ -351,6 +351,43 @@
     }
     window.location.href = "/admin-login.html";
   }
+  function getStoredReferralLevels() {
+    try {
+      const raw = localStorage.getItem("clinic_referral_levels");
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return null;
+      return parsed;
+    } catch (e) {
+      console.warn("[REFERRAL] Failed to read stored levels:", e);
+      return null;
+    }
+  }
+
+  function storeReferralLevels(levels) {
+    try {
+      localStorage.setItem("clinic_referral_levels", JSON.stringify(levels || {}));
+    } catch (e) {
+      console.warn("[REFERRAL] Failed to store levels:", e);
+    }
+  }
+
+  function applyReferralLevels(levels, options = {}) {
+    const level1Input = $("referralLevel1Percent");
+    const level2Input = $("referralLevel2Percent");
+    const level3Input = $("referralLevel3Percent");
+    const onlyEmpty = options.onlyEmpty === true;
+    if (!onlyEmpty || !level1Input.value) {
+      level1Input.value = levels.level1 != null && levels.level1 !== "" ? String(levels.level1) : "";
+    }
+    if (!onlyEmpty || !level2Input.value) {
+      level2Input.value = levels.level2 != null && levels.level2 !== "" ? String(levels.level2) : "";
+    }
+    if (!onlyEmpty || !level3Input.value) {
+      level3Input.value = levels.level3 != null && levels.level3 !== "" ? String(levels.level3) : "";
+    }
+  }
+
   async function loadClinicSettings() {
     try {
       // Get admin token from localStorage
@@ -393,40 +430,30 @@
       $("welcomeMessage").value = branding.welcomeMessage || "";
       
       // Set referral level values (handle null/undefined)
-      const levels = clinic.referralLevels || clinic.settings?.referralLevels || {};
-      const level1 =
-        levels.level1 ??
-        clinic.settings?.referralLevel1Percent ??
-        clinic.defaultInviterDiscountPercent ??
-        "";
-      const level2 =
-        levels.level2 ??
-        clinic.settings?.referralLevel2Percent ??
-        "";
-      const level3 =
-        levels.level3 ??
-        clinic.settings?.referralLevel3Percent ??
-        "";
-      const level1Input = $("referralLevel1Percent");
-      const level2Input = $("referralLevel2Percent");
-      const level3Input = $("referralLevel3Percent");
-      if (level1 !== "" && level1 != null) {
-        level1Input.value = String(level1);
-      } else if (!level1Input.value) {
-        level1Input.value = "";
-      }
-      if (level2 !== "" && level2 != null) {
-        level2Input.value = String(level2);
-      } else if (!level2Input.value) {
-        level2Input.value = "";
-      }
-      if (level3 !== "" && level3 != null) {
-        level3Input.value = String(level3);
-      } else if (!level3Input.value) {
-        level3Input.value = "";
-      }
+      const levelsRaw = clinic.referralLevels || clinic.settings?.referralLevels || {};
+      const hydratedLevels = {
+        level1:
+          levelsRaw.level1 ??
+          clinic.settings?.referralLevel1Percent ??
+          clinic.defaultInviterDiscountPercent ??
+          null,
+        level2:
+          levelsRaw.level2 ??
+          clinic.settings?.referralLevel2Percent ??
+          null,
+        level3:
+          levelsRaw.level3 ??
+          clinic.settings?.referralLevel3Percent ??
+          null,
+      };
+      applyReferralLevels(hydratedLevels);
+      storeReferralLevels(hydratedLevels);
+
+      // Guard against any later overwrite (translations or other inits)
+      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || hydratedLevels, { onlyEmpty: true }), 0);
+      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || hydratedLevels, { onlyEmpty: true }), 500);
       
-      console.log("Loaded referral levels:", { level1, level2, level3 });
+      console.log("Loaded referral levels:", hydratedLevels);
 
     } catch (error) {
       console.error("Load clinic settings error:", error);
@@ -490,6 +517,11 @@
 
       const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
       $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
+      storeReferralLevels({
+        level1: payload.referralLevel1Percent || null,
+        level2: payload.referralLevel2Percent || null,
+        level3: payload.referralLevel3Percent || null,
+      });
       
     } catch (error) {
       console.error("Save clinic settings error:", error);
@@ -803,6 +835,10 @@
       if (prices && Object.keys(prices).length > 0) {
         renderPrices();
       }
+    }
+    const storedLevels = getStoredReferralLevels();
+    if (storedLevels) {
+      applyReferralLevels(storedLevels, { onlyEmpty: true });
     }
   };
 </script>
