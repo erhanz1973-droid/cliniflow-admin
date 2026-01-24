@@ -322,6 +322,12 @@ function writeJson(file, obj) {
   fs.writeFileSync(file, JSON.stringify(obj, null, 2), "utf-8");
 }
 
+// Ensure referrals file exists for persistence
+if (!fs.existsSync(REF_FILE)) {
+  fs.mkdirSync(path.dirname(REF_FILE), { recursive: true });
+  fs.writeFileSync(REF_FILE, "[]", "utf-8");
+}
+
 const now = () => Date.now();
 const rid = (p) => p + "_" + crypto.randomBytes(6).toString("hex");
 const makeToken = () => "t_" + crypto.randomBytes(10).toString("base64url");
@@ -6759,6 +6765,83 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
 });
 
 // ================== REFERRALS ==================
+// POST /api/referrals
+// Create a referral (file-based persistence)
+app.post("/api/referrals", requireToken, (req, res) => {
+  try {
+    const inviterPatientId = String(req.patientId || "").trim();
+    const invitedPatientId = String(req.body?.invitedPatientId || "").trim();
+
+    if (!inviterPatientId) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    if (!invitedPatientId) {
+      return res.status(400).json({ ok: false, error: "invited_patient_id_required" });
+    }
+    if (inviterPatientId === invitedPatientId) {
+      return res.status(400).json({ ok: false, error: "self_referral_forbidden" });
+    }
+
+    const raw = readJson(REF_FILE, []);
+    const list = Array.isArray(raw) ? raw : Object.values(raw);
+    const existing = list.find(
+      (r) =>
+        r &&
+        (r.inviterPatientId || r.inviter_patient_id) === inviterPatientId &&
+        (r.invitedPatientId || r.invited_patient_id) === invitedPatientId &&
+        !r.deleted_at
+    );
+    if (existing) {
+      return res.status(409).json({ ok: false, error: "referral_already_exists", item: existing });
+    }
+
+    const newReferral = {
+      id: rid("ref"),
+      inviterPatientId,
+      invitedPatientId,
+      status: "PENDING",
+      createdAt: new Date().toISOString(),
+      inviterDiscountPercent: null,
+      invitedDiscountPercent: null,
+      discountPercent: null,
+    };
+    list.push(newReferral);
+    writeJson(REF_FILE, list);
+
+    return res.json({ ok: true, item: newReferral });
+  } catch (error) {
+    console.error("Referral create error:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// GET /api/me/referrals
+// Patient sees their own referrals (file-based)
+app.get("/api/me/referrals", requireToken, (req, res) => {
+  try {
+    const patientId = String(req.patientId || "").trim();
+    if (!patientId) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const status = req.query.status;
+    const raw = readJson(REF_FILE, []);
+    let items = (Array.isArray(raw) ? raw : Object.values(raw)).filter(
+      (r) => r && (r.inviterPatientId || r.inviter_patient_id) === patientId
+    );
+
+    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
+      items = items.filter((x) => x.status === status);
+    }
+
+    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return res.json({ ok: true, items });
+  } catch (error) {
+    console.error("Me referrals error:", error);
+    return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
 // GET /api/admin/referrals?status=PENDING|APPROVED|REJECTED
 app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
   try {
@@ -7226,7 +7309,8 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
           .single();
         
         if (fetchError || !referral) {
-          return res.status(404).json({ ok: false, error: "referral_not_found" });
+          console.warn("[REFERRAL APPROVE] Supabase referral not found, falling back to file");
+          throw new Error("supabase_referral_not_found");
         }
         
         // PRODUCTION: Self-referral check
@@ -7235,8 +7319,9 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
         }
         
         // PRODUCTION: State machine - only PENDING can be approved
-        if (referral.status !== "PENDING") {
-          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
+        const currentStatus = String(referral.status || "").toUpperCase();
+        if (!["PENDING", "INVITED", "REGISTERED"].includes(currentStatus)) {
+          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING/INVITED/REGISTERED durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
         }
         
         const clinic = req.clinic || {};
@@ -7357,8 +7442,9 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
     }
     
     // PRODUCTION: State machine - only PENDING can be approved
-    if (referral.status !== "PENDING") {
-      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
+    const fileStatus = String(referral.status || "").toUpperCase();
+    if (!["PENDING", "INVITED", "REGISTERED"].includes(fileStatus)) {
+      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING/INVITED/REGISTERED durumundaki referral onaylanabilir. Mevcut durum: ${referral.status}` });
     }
     
     const clinic = req.clinic || {};
@@ -7446,12 +7532,14 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminToken, async (req, res)
           .single();
         
         if (fetchError || !referral) {
-          return res.status(404).json({ ok: false, error: "referral_not_found" });
+          console.warn("[REFERRAL REJECT] Supabase referral not found, falling back to file");
+          throw new Error("supabase_referral_not_found");
         }
         
         // PRODUCTION: State machine - only PENDING can be rejected
-        if (referral.status !== "PENDING") {
-          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral reddedilebilir. Mevcut durum: ${referral.status}` });
+        const currentStatus = String(referral.status || "").toUpperCase();
+        if (!["PENDING", "INVITED", "REGISTERED"].includes(currentStatus)) {
+          return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING/INVITED/REGISTERED durumundaki referral reddedilebilir. Mevcut durum: ${referral.status}` });
         }
         
         // Update in Supabase
@@ -7496,9 +7584,10 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminToken, async (req, res)
       return res.status(404).json({ ok: false, error: "referral_not_found" });
     }
     
-    // PRODUCTION: State machine - only PENDING can be rejected
-    if (list[idx].status !== "PENDING") {
-      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING durumundaki referral reddedilebilir. Mevcut durum: ${list[idx].status}` });
+    // PRODUCTION: State machine - only PENDING/INVITED/REGISTERED can be rejected
+    const fileStatus = String(list[idx].status || "").toUpperCase();
+    if (!["PENDING", "INVITED", "REGISTERED"].includes(fileStatus)) {
+      return res.status(409).json({ ok: false, error: "invalid_state_transition", message: `Sadece PENDING/INVITED/REGISTERED durumundaki referral reddedilebilir. Mevcut durum: ${list[idx].status}` });
     }
     
     list[idx] = {
