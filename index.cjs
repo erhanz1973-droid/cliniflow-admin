@@ -6774,11 +6774,75 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
     
     console.log(`[REFERRALS] Fetching referrals for clinic: code=${clinicCode}, id=${clinicId}`);
     
+    const respondFromFile = () => {
+      const raw = readJson(REF_FILE, []);
+      const list = Array.isArray(raw) ? raw : Object.values(raw);
+      
+      // Get all patients to filter by clinic
+      const patients = readJson(PAT_FILE, {});
+      
+      // Get list of patient IDs that belong to this clinic
+      const clinicPatientIds = new Set();
+      for (const pid in patients) {
+        const patient = patients[pid];
+        if (patient) {
+          const patientClinicCode = (patient.clinicCode || patient.clinic_code || "").toUpperCase();
+          if (patientClinicCode === clinicCode?.toUpperCase()) {
+            clinicPatientIds.add(pid);
+            clinicPatientIds.add(patient.patientId || patient.patient_id);
+          }
+        }
+      }
+      
+      console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
+      
+      // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
+      let items = list.filter((x) => {
+        if (!x || x.deleted_at) return false; // Exclude soft-deleted
+        const inviterId = x.inviterPatientId || x.inviter_patient_id;
+        const invitedId = x.invitedPatientId || x.invited_patient_id;
+        
+        const inviterBelongsToClinic = inviterId && clinicPatientIds.has(inviterId);
+        const invitedBelongsToClinic = invitedId && clinicPatientIds.has(invitedId);
+        
+        const referralClinicCode = (x.clinicCode || x.clinic_code || "").toUpperCase();
+        const clinicCodeMatches = referralClinicCode && referralClinicCode === clinicCode?.toUpperCase();
+        
+        return inviterBelongsToClinic || invitedBelongsToClinic || clinicCodeMatches;
+      });
+      
+      if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
+        items = items.filter((x) => x && x.status === status);
+      }
+      
+      console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
+      
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      return res.json({ ok: true, items, source: "file" });
+    };
+
     // SUPABASE: Primary source of truth
     if (isSupabaseEnabled()) {
       try {
-        const referrals = await getReferralsByClinicFromDB(clinicId);
-        let items = referrals || [];
+        let items = (await getReferralsByClinicFromDB(clinicId)) || [];
+
+        if (items.length === 0 && req.clinicId) {
+          const clinicPatients = await getPatientsByClinic(req.clinicId);
+          const patientIds = (clinicPatients || [])
+            .map((p) => p.patient_id || p.id)
+            .filter(Boolean);
+          if (patientIds.length > 0) {
+            const idsClause = patientIds.join(",");
+            const { data: altData, error: altError } = await supabase
+              .from("referrals")
+              .select("*")
+              .or(`inviter_patient_id.in.(${idsClause}),invited_patient_id.in.(${idsClause})`)
+              .order("created_at", { ascending: false });
+            if (!altError) {
+              items = altData || [];
+            }
+          }
+        }
         
         // Filter by status if provided
         if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
@@ -6792,62 +6856,17 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
         items.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
         
         console.log(`[REFERRALS] Returning ${items.length} referrals from Supabase for clinic ${clinicCode}`);
-        return res.json({ ok: true, items });
+        if (items.length === 0 && canUseFileFallback()) {
+          return respondFromFile();
+        }
+        return res.json({ ok: true, items, source: "supabase" });
       } catch (supabaseError) {
         console.error(`[REFERRALS] Supabase error:`, supabaseError.message);
         // Fall through to file-based
       }
     }
     
-    // FILE-BASED: Fallback
-    const raw = readJson(REF_FILE, []);
-    const list = Array.isArray(raw) ? raw : Object.values(raw);
-    
-    // Get all patients to filter by clinic
-    const patients = readJson(PAT_FILE, {});
-    
-    // Get list of patient IDs that belong to this clinic
-    const clinicPatientIds = new Set();
-    for (const pid in patients) {
-      const patient = patients[pid];
-      if (patient) {
-        const patientClinicCode = (patient.clinicCode || patient.clinic_code || "").toUpperCase();
-        if (patientClinicCode === clinicCode?.toUpperCase()) {
-          clinicPatientIds.add(pid);
-          clinicPatientIds.add(patient.patientId || patient.patient_id);
-        }
-      }
-    }
-    
-    console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
-    
-    // Filter referrals: only show referrals where inviter OR invited patient belongs to this clinic
-    // CRITICAL: Clinic isolation - never trust body/query params
-    let items = list.filter((x) => {
-      if (!x || x.deleted_at) return false; // Exclude soft-deleted
-      const inviterId = x.inviterPatientId || x.inviter_patient_id;
-      const invitedId = x.invitedPatientId || x.invited_patient_id;
-      
-      // Check if either inviter or invited patient belongs to this clinic
-      const inviterBelongsToClinic = inviterId && clinicPatientIds.has(inviterId);
-      const invitedBelongsToClinic = invitedId && clinicPatientIds.has(invitedId);
-      
-      // Also check by clinicCode in referral if exists
-      const referralClinicCode = (x.clinicCode || x.clinic_code || "").toUpperCase();
-      const clinicCodeMatches = referralClinicCode && referralClinicCode === clinicCode?.toUpperCase();
-      
-      return inviterBelongsToClinic || invitedBelongsToClinic || clinicCodeMatches;
-    });
-    
-    // Apply status filter if provided
-    if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
-      items = items.filter((x) => x && x.status === status);
-    }
-    
-    console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
-    
-    items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    res.json({ ok: true, items });
+    return respondFromFile();
   } catch (error) {
     console.error("Referrals list error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -7073,7 +7092,10 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
         if (!error) {
           let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
           if (status) items = items.filter((x) => x.status === status);
-          return res.json({ ok: true, items });
+          if (items.length === 0 && canUseFileFallback()) {
+            return respondFromFile();
+          }
+          return res.json({ ok: true, items, source: "supabase" });
         }
         lastError = error;
         if (isInvalidUuidError(error)) {
