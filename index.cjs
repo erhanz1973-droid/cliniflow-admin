@@ -6917,7 +6917,7 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
     // SUPABASE: Primary source of truth
     if (isSupabaseEnabled()) {
       try {
-        let items = (await getReferralsByClinicFromDB(clinicId)) || [];
+        let items = (await getReferralsByClinicFromDB(clinicId, clinicCode)) || [];
 
         if (items.length === 0 && req.clinicId) {
           const clinicPatients = await getPatientsByClinic(req.clinicId);
