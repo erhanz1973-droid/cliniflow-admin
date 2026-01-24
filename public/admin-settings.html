@@ -407,9 +407,24 @@
         levels.level3 ??
         clinic.settings?.referralLevel3Percent ??
         "";
-      $("referralLevel1Percent").value = level1 !== "" && level1 != null ? String(level1) : "";
-      $("referralLevel2Percent").value = level2 !== "" && level2 != null ? String(level2) : "";
-      $("referralLevel3Percent").value = level3 !== "" && level3 != null ? String(level3) : "";
+      const level1Input = $("referralLevel1Percent");
+      const level2Input = $("referralLevel2Percent");
+      const level3Input = $("referralLevel3Percent");
+      if (level1 !== "" && level1 != null) {
+        level1Input.value = String(level1);
+      } else if (!level1Input.value) {
+        level1Input.value = "";
+      }
+      if (level2 !== "" && level2 != null) {
+        level2Input.value = String(level2);
+      } else if (!level2Input.value) {
+        level2Input.value = "";
+      }
+      if (level3 !== "" && level3 != null) {
+        level3Input.value = String(level3);
+      } else if (!level3Input.value) {
+        level3Input.value = "";
+      }
       
       console.log("Loaded referral levels:", { level1, level2, level3 });
 
