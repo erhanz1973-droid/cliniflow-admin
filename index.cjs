@@ -6844,6 +6844,9 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
           }
         }
         
+        // Normalize to legacy shape for frontend
+        items = items.map(mapReferralRowToLegacyItem).filter(Boolean);
+
         // Filter by status if provided
         if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
           items = items.filter((r) => r.status === status);
@@ -6875,6 +6878,15 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
 
 function mapReferralRowToLegacyItem(r) {
   if (!r) return null;
+  const rawStatus = String(r.status || "").toUpperCase();
+  const normalizedStatus =
+    rawStatus === "INVITED" || rawStatus === "REGISTERED"
+      ? "PENDING"
+      : rawStatus === "COMPLETED"
+        ? "APPROVED"
+        : rawStatus === "CANCELLED"
+          ? "REJECTED"
+          : rawStatus || "PENDING";
   const createdAt =
     r.createdAt ||
     (r.created_at ? Date.parse(r.created_at) : null) ||
@@ -6883,7 +6895,7 @@ function mapReferralRowToLegacyItem(r) {
 
   return {
     id: r.id,
-    status: r.status,
+    status: normalizedStatus,
     inviterPatientId: r.inviter_patient_id || r.referrer_patient_id,
     invitedPatientId: r.invited_patient_id || r.referred_patient_id || null,
     referralCode: r.referral_code,
