@@ -377,14 +377,15 @@
     const level2Input = $("referralLevel2Percent");
     const level3Input = $("referralLevel3Percent");
     const onlyEmpty = options.onlyEmpty === true;
-    if (!onlyEmpty || !level1Input.value) {
-      level1Input.value = levels.level1 != null && levels.level1 !== "" ? String(levels.level1) : "";
+
+    if ((!onlyEmpty || !level1Input.value) && levels.level1 !== null && levels.level1 !== undefined) {
+      level1Input.value = String(levels.level1);
     }
-    if (!onlyEmpty || !level2Input.value) {
-      level2Input.value = levels.level2 != null && levels.level2 !== "" ? String(levels.level2) : "";
+    if ((!onlyEmpty || !level2Input.value) && levels.level2 !== null && levels.level2 !== undefined) {
+      level2Input.value = String(levels.level2);
     }
-    if (!onlyEmpty || !level3Input.value) {
-      level3Input.value = levels.level3 != null && levels.level3 !== "" ? String(levels.level3) : "";
+    if ((!onlyEmpty || !level3Input.value) && levels.level3 !== null && levels.level3 !== undefined) {
+      level3Input.value = String(levels.level3);
     }
   }
 
