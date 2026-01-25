@@ -6483,10 +6483,12 @@ app.get("/api/procedures", (req, res) => {
     ok: true,
     types: procedures.PROCEDURE_TYPES,
     statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
-    categories: ["PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
+    categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
     extractionTypes: Array.from(procedures.EXTRACTION_TYPES),
   });
 });
+
+// Admin alias for deployments that expect scoped endpoint
 
 // GET /api/admin/clinic (Admin için) - token-based (multi-clinic)
 app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
@@ -6962,6 +6964,69 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
             }
           }
         }
+
+        if (items.length === 0) {
+          // Last-resort fallback: fetch referrals without clinic filter and
+          // filter by patient clinic_id (covers referrals missing clinic_id).
+          let q = supabase.from("referrals").select("*");
+          if (status) {
+            const raw = String(status || "").toUpperCase();
+            const rawStatuses =
+              raw === "PENDING"
+                ? ["invited", "registered", "pending"]
+                : raw === "APPROVED"
+                  ? ["approved", "completed"]
+                  : raw === "REJECTED"
+                    ? ["rejected", "cancelled"]
+                    : raw === "USED"
+                      ? ["used"]
+                      : [];
+            if (rawStatuses.length > 0) {
+              q = q.in("status", rawStatuses);
+            }
+          }
+          const { data: allReferrals, error: allErr } = await q.order("created_at", { ascending: false });
+          if (!allErr && Array.isArray(allReferrals) && allReferrals.length > 0) {
+            const ids = new Set();
+            allReferrals.forEach((r) => {
+              const inviter = r.inviter_patient_id || r.referrer_patient_id;
+              const invited = r.invited_patient_id || r.referred_patient_id;
+              if (inviter) ids.add(inviter);
+              if (invited) ids.add(invited);
+            });
+            const idList = Array.from(ids);
+            let patientClinicMap = new Map();
+            if (idList.length > 0) {
+              const idsClause = idList.join(",");
+              const { data: patientRows, error: patientErr } = await supabase
+                .from("patients")
+                .select("id, patient_id, clinic_id")
+                .or(`id.in.(${idsClause}),patient_id.in.(${idsClause})`);
+              if (!patientErr && Array.isArray(patientRows)) {
+                patientRows.forEach((p) => {
+                  if (p?.id) patientClinicMap.set(String(p.id), p.clinic_id || null);
+                  if (p?.patient_id) patientClinicMap.set(String(p.patient_id), p.clinic_id || null);
+                });
+              } else if (patientErr && !isMissingColumnError(patientErr, "patient_id")) {
+                console.error("[REFERRALS] Supabase patient lookup failed (fallback)", {
+                  message: patientErr.message,
+                  code: patientErr.code,
+                  details: patientErr.details,
+                });
+              }
+            }
+
+            items = allReferrals.filter((r) => {
+              if (!r) return false;
+              if (clinicId && r.clinic_id && r.clinic_id === clinicId) return true;
+              const inviter = r.inviter_patient_id || r.referrer_patient_id;
+              const invited = r.invited_patient_id || r.referred_patient_id;
+              const inviterClinic = inviter ? patientClinicMap.get(String(inviter)) : null;
+              const invitedClinic = invited ? patientClinicMap.get(String(invited)) : null;
+              return Boolean(clinicId && (inviterClinic === clinicId || invitedClinic === clinicId));
+            });
+          }
+        }
         
         // Normalize to legacy shape for frontend
         items = items.map(mapReferralRowToLegacyItem).filter(Boolean);
@@ -6992,6 +7057,60 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
   } catch (error) {
     console.error("Referrals list error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// DELETE /api/admin/referrals/:referralId (admin cleanup)
+app.delete("/api/admin/referrals/:referralId", requireAdminToken, async (req, res) => {
+  try {
+    const referralId = String(req.params.referralId || "").trim();
+    if (!referralId) return res.status(400).json({ ok: false, error: "referral_id_required" });
+
+    // SUPABASE: delete by id (UUID) or referral_code (legacy)
+    if (isSupabaseEnabled()) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(referralId);
+      let q = supabase.from("referrals").delete();
+      if (isUuid) {
+        q = q.eq("id", referralId);
+      } else {
+        q = q.eq("referral_code", referralId);
+      }
+      if (req.clinicId) q = q.eq("clinic_id", req.clinicId);
+      const { error } = await q;
+      if (error) {
+        console.error("[REFERRALS] Supabase delete failed", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+        });
+        return res.status(500).json({ ok: false, error: "referral_delete_failed", supabase: supabaseErrorPublic(error) });
+      }
+    }
+
+    // FILE fallback cleanup
+    if (canUseFileFallback()) {
+      const raw = readJson(REF_FILE, []);
+      const list = Array.isArray(raw) ? raw : Object.values(raw);
+      const filtered = list.filter((x) => {
+        const id = x?.id || "";
+        const code = x?.referralCode || x?.referral_code || "";
+        return id !== referralId && code !== referralId;
+      });
+      writeJson(REF_FILE, filtered);
+
+      const rawEvents = readJson(REF_EVENT_FILE, []);
+      const events = Array.isArray(rawEvents) ? rawEvents : Object.values(rawEvents);
+      const filteredEvents = events.filter((e) => {
+        const rid = e?.referralId || e?.referral_id || "";
+        return rid !== referralId;
+      });
+      writeJson(REF_EVENT_FILE, filteredEvents);
+    }
+
+    return res.json({ ok: true, deleted: true, id: referralId });
+  } catch (error) {
+    console.error("[REFERRALS] delete error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -7069,7 +7188,28 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
     if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
     if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_disabled" });
 
-    const clinicId = await getPatientClinicIdForReferral(patientId);
+    const clinicId = req.clinicId || (await getPatientClinicIdForReferral(patientId));
+    let clinicCode = null;
+    if (clinicId) {
+      try {
+        const { data: clinicRow, error: clinicErr } = await supabase
+          .from("clinics")
+          .select("clinic_code")
+          .eq("id", clinicId)
+          .single();
+        if (!clinicErr && clinicRow?.clinic_code) {
+          clinicCode = String(clinicRow.clinic_code).trim().toUpperCase();
+        } else if (clinicErr && String(clinicErr.code || "") !== "PGRST116") {
+          console.warn("[REFERRAL] clinic_code lookup failed", {
+            message: clinicErr.message,
+            code: clinicErr.code,
+            details: clinicErr.details,
+          });
+        }
+      } catch (e) {
+        console.warn("[REFERRAL] clinic_code lookup exception:", e?.message || e);
+      }
+    }
 
     let lastErr = null;
     for (let i = 0; i < 6; i++) {
@@ -7077,24 +7217,48 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
       const insertPayload = {
         // keep existing schema fields (clinic_id is optional)
         ...(clinicId ? { clinic_id: clinicId } : {}),
+        ...(clinicCode ? { clinic_code: clinicCode } : {}),
         inviter_patient_id: patientId,
         referral_code,
-        status: "invited",
+        status: "pending",
         reward_currency: "EUR",
       };
 
-      const { data, error } = await supabase
-        .from("referrals")
-        .insert(insertPayload)
-        .select("*")
-        .single();
+      const doInsert = async (payload) =>
+        supabase.from("referrals").insert(payload).select("*").single();
+
+      let { data, error } = await doInsert(insertPayload);
+      if (error && clinicCode && isMissingColumnError(error, "clinic_code")) {
+        const fallbackPayload = { ...insertPayload };
+        delete fallbackPayload.clinic_code;
+        ({ data, error } = await doInsert(fallbackPayload));
+      }
 
       if (!error) {
+        let verified = data;
+        try {
+          const { data: verifyRow, error: verifyErr } = await supabase
+            .from("referrals")
+            .select("*")
+            .eq("id", data.id)
+            .single();
+          if (!verifyErr && verifyRow) {
+            verified = verifyRow;
+          } else if (verifyErr) {
+            console.warn("[REFERRAL] Insert verify failed (non-fatal)", {
+              message: verifyErr.message,
+              code: verifyErr.code,
+              details: verifyErr.details,
+            });
+          }
+        } catch (verifyException) {
+          console.warn("[REFERRAL] Insert verify exception (non-fatal):", verifyException?.message || verifyException);
+        }
         return res.json({
           ok: true,
-          referralId: data.id,
-          referralCode: data.referral_code,
-          item: mapReferralRowToLegacyItem(data),
+          referralId: verified.id,
+          referralCode: verified.referral_code,
+          item: mapReferralRowToLegacyItem(verified),
         });
       }
 
@@ -8894,9 +9058,13 @@ app.post("/api/admin/register", async (req, res) => {
       status: clinic.status,
       subscriptionStatus: clinic.subscriptionStatus,
     });
-  } catch (error) {
-    console.error("Admin register error:", error);
-    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  } catch (err) {
+    console.error("[ADMIN REGISTER ERROR]", err);
+    return res.status(400).json({
+      error: "registration_failed",
+      message: err?.message || "Registration failed",
+      code: err?.code || null,
+    });
   }
 });
 

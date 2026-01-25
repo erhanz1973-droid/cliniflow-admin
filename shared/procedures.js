@@ -1,8 +1,8 @@
 // Single source of truth for tooth-level procedures (backend + admin UI via /api/procedures)
 // Status: PLANNED | ACTIVE | COMPLETED | CANCELLED
-// Category: PROSTHETIC | RESTORATIVE | ENDODONTIC | SURGICAL | IMPLANT
+// Category: EVENTS | PROSTHETIC | RESTORATIVE | ENDODONTIC | SURGICAL | IMPLANT
 
-/** @typedef {"PROSTHETIC"|"RESTORATIVE"|"ENDODONTIC"|"SURGICAL"|"IMPLANT"} ProcedureCategory */
+/** @typedef {"EVENTS"|"PROSTHETIC"|"RESTORATIVE"|"ENDODONTIC"|"SURGICAL"|"IMPLANT"} ProcedureCategory */
 /** @typedef {"PLANNED"|"ACTIVE"|"COMPLETED"|"CANCELLED"} ProcedureStatus */
 
 /**
@@ -14,6 +14,11 @@
 
 /** @type {ProcedureTypeDef[]} */
 const PROCEDURE_TYPES = [
+  // EVENTS (non-tooth procedures / visits)
+  { type: "CONSULT", label: "Consultation (Muayene)", category: "EVENTS" },
+  { type: "XRAY", label: "X-ray (Röntgen)", category: "EVENTS" },
+  { type: "PANORAMIC_XRAY", label: "Panoramic X-ray (Panoramik)", category: "EVENTS" },
+
   // PROSTHETIC (CORE)
   { type: "CROWN", label: "Crown (Kuron)", category: "PROSTHETIC" },
   { type: "TEMP_CROWN", label: "Temporary Crown (Geçici kuron)", category: "PROSTHETIC" },

@@ -576,12 +576,23 @@
         headers: adminHeaders({ Accept: "application/json" })
       });
       
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => `HTTP ${res.status}`);
+        console.error("[loadTreatmentPrices] HTTP error:", errorText);
+        return;
+      }
       const data = await res.json();
       
-      if (data.ok && Array.isArray(data.prices)) {
+      const priceList = Array.isArray(data?.prices)
+        ? data.prices
+        : Array.isArray(data?.list)
+          ? data.list
+          : Array.isArray(data?.items)
+            ? data.items
+            : [];
+      if (data.ok && Array.isArray(priceList)) {
         TREATMENT_PRICES = {};
-        data.prices.forEach(price => {
+        priceList.forEach(price => {
           if (price.is_active && price.treatment_name) {
             const key = price.treatment_name.toUpperCase();
             TREATMENT_PRICES[key] = {
@@ -716,17 +727,26 @@
         const json = await res.json();
       console.log('[loadPatientOptions] Response data:', json);
       
-        if (json.ok && Array.isArray(json.patients)) {
+        const patients = Array.isArray(json?.patients)
+          ? json.patients
+          : Array.isArray(json?.list)
+            ? json.list
+            : Array.isArray(json?.data)
+              ? json.data
+              : Array.isArray(json?.items)
+                ? json.items
+                : [];
+        if (json.ok && Array.isArray(patients)) {
           elPatientSelect.innerHTML = '<option value="">— Hasta seç —</option>';
         
-        if (json.patients.length === 0) {
+        if (patients.length === 0) {
           const opt = document.createElement("option");
           opt.value = "";
           opt.textContent = "— Henüz hasta kaydı yok —";
           opt.disabled = true;
           elPatientSelect.appendChild(opt);
         } else {
-          json.patients.forEach(p => {
+          patients.forEach(p => {
             const pid = p.patientId || p.patient_id || p.id || "";
             const name = p.fullName || p.name || pid;
             if (pid) {
@@ -737,7 +757,7 @@
             }
           });
         }
-        console.log(`[loadPatientOptions] Loaded ${json.patients.length} patients`);
+        console.log(`[loadPatientOptions] Loaded ${patients.length} patients`);
       } else {
         console.error('[loadPatientOptions] Invalid response format:', json);
         elPatientSelect.innerHTML = '<option value="">⚠️ Geçersiz yanıt formatı</option>';
