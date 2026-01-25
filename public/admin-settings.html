@@ -342,6 +342,13 @@
       el.style.cursor = brandingLocked ? "not-allowed" : "text";
     });
   }
+  function normalizePlanValue(planValue) {
+    const raw = String(planValue || "").trim().toUpperCase();
+    if (raw === "PROFESSIONAL") return "PRO";
+    if (raw === "PREMIUM") return "PRO";
+    if (raw === "FREE" || raw === "BASIC" || raw === "PRO") return raw;
+    return "FREE";
+  }
   function logout() {
     try {
       localStorage.removeItem("admin_token");
@@ -429,7 +436,16 @@
       
       // Backend returns clinic object directly, not wrapped in { ok: true, clinic: {...} }
       const branding = clinic.branding || {};
-      clinicPlan = String(clinic.plan || clinic.subscriptionPlan || clinic.subscriptionStatus || "FREE").toUpperCase();
+      // IMPORTANT:
+      // - subscriptionStatus is NOT a plan (can be TRIAL/ACTIVE) and would break the dropdown.
+      // - Only use plan fields for plan UI.
+      clinicPlan = normalizePlanValue(
+        clinic.plan ||
+          clinic.subscriptionPlan ||
+          clinic.settings?.subscriptionPlan ||
+          clinic.settings?.plan ||
+          "FREE"
+      );
       if ($("plan")) $("plan").value = clinicPlan;
       applyBrandingLock(clinicPlan);
 
@@ -493,7 +509,7 @@
     }
 
         const payload = {
-      plan: ($("plan") ? $("plan").value : (clinicPlan || "FREE")),
+      plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
       referralLevel1Percent: $("referralLevel1Percent").value.trim(),
       referralLevel2Percent: $("referralLevel2Percent").value.trim(),
       referralLevel3Percent: $("referralLevel3Percent").value.trim(),
