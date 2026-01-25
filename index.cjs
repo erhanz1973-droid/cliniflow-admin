@@ -6546,10 +6546,10 @@ function planToMaxPatients(plan) {
   const p = normalizeClinicPlan(plan);
   // Keep this mapping consistent across all endpoints:
   // - FREE:   3 patients
-  // - BASIC:  50 patients
+  // - BASIC:  15 patients
   // - PRO:    effectively unlimited (use a very high number)
   if (p === "FREE") return 3;
-  if (p === "BASIC") return 50;
+  if (p === "BASIC") return 15;
   if (p === "PRO") return 999999;
   return 3;
 }
