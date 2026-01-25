@@ -6534,6 +6534,26 @@ app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
   }
 });
 
+// ================== PLAN HELPERS ==================
+function normalizeClinicPlan(plan) {
+  const raw = String(plan || "FREE").trim().toUpperCase();
+  if (raw === "PROFESSIONAL") return "PRO";
+  if (raw === "PREMIUM") return "PRO";
+  return raw;
+}
+
+function planToMaxPatients(plan) {
+  const p = normalizeClinicPlan(plan);
+  // Keep this mapping consistent across all endpoints:
+  // - FREE:   3 patients
+  // - BASIC:  50 patients
+  // - PRO:    effectively unlimited (use a very high number)
+  if (p === "FREE") return 3;
+  if (p === "BASIC") return 50;
+  if (p === "PRO") return 999999;
+  return 3;
+}
+
 // PUT /api/admin/clinic (Admin günceller) - token-based (multi-clinic)
 app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
   try {
@@ -6549,14 +6569,13 @@ app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
     const existing = req.clinic;
 
     // Subscription plan (single-clinic mode)
-    const rawPlanInput = String(body.plan || existing.plan || existing.subscriptionPlan || "FREE").trim().toUpperCase();
-    const rawPlan = rawPlanInput === "PROFESSIONAL" ? "PRO" : rawPlanInput;
+    const rawPlan = normalizeClinicPlan(body.plan || existing.plan || existing.subscriptionPlan || "FREE");
     const allowedPlans = ["FREE", "BASIC", "PRO"];
     if (!allowedPlans.includes(rawPlan)) {
       return res.status(400).json({ ok: false, error: `invalid_plan:${rawPlan}` });
     }
 
-    const computedMaxPatients = rawPlan === "FREE" ? 3 : (rawPlan === "BASIC" ? 10 : null);
+    const computedMaxPatients = planToMaxPatients(rawPlan);
     
     const referralLevels = normalizeReferralLevels(
       {
@@ -10011,76 +10030,120 @@ app.get("/api/super-admin/clinics/:clinicId/statistics", superAdminGuard, (req, 
 // POST /api/admin/payment-success
 // Called when clinic payment is successfully completed
 // Payment = Verification - automatically activate plan and features
-app.post("/api/admin/payment-success", requireAdminAuth, (req, res) => {
+app.post("/api/admin/payment-success", requireAdminAuth, async (req, res) => {
   try {
     const { plan, amount, currency, paymentId, paymentMethod } = req.body || {};
     const clinicId = req.clinicId;
     const clinicCode = req.clinicCode;
-    
+
     if (!plan) {
       return res.status(400).json({ ok: false, error: "plan_required", message: "Plan is required" });
     }
-    
-    const clinics = readJson(CLINICS_FILE, {});
-    const singleClinic = readJson(CLINIC_FILE, {});
-    
-    let clinic = null;
+
+    const normalizedPlan = normalizeClinicPlan(plan);
+    const maxPatients = planToMaxPatients(normalizedPlan);
+
+    // Prefer Supabase clinic object when available (single source of truth)
+    let clinic = req.clinic || null;
+
+    // FILE FALLBACK (legacy) if clinic wasn't loaded (or Supabase disabled)
+    let clinics = null;
+    let singleClinic = null;
     let isSingleClinic = false;
-    
-    // Find clinic
-    if (clinics[clinicId]) {
-      clinic = clinics[clinicId];
-    } else if (singleClinic && singleClinic.clinicCode === clinicCode) {
-      clinic = singleClinic;
-      isSingleClinic = true;
-    } else {
+    if (!clinic) {
+      clinics = readJson(CLINICS_FILE, {});
+      singleClinic = readJson(CLINIC_FILE, {});
+      if (clinics?.[clinicId]) {
+        clinic = clinics[clinicId];
+      } else if (singleClinic && singleClinic.clinicCode === clinicCode) {
+        clinic = singleClinic;
+        isSingleClinic = true;
+      }
+    }
+
+    if (!clinic) {
       return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
     }
-    
-    // Payment = Verification - automatically activate
+
     const oldPlan = clinic.plan || "FREE";
-    const oldStatus = clinic.status || "ACTIVE";
-    
-    // Update clinic: payment = verification
-    clinic.plan = plan.toUpperCase(); // PRO, BASIC, PREMIUM, etc.
-    clinic.status = "ACTIVE"; // Ensure ACTIVE
-    clinic.verificationStatus = "verified"; // Payment = verification
+    const oldStatus = clinic.status || clinic.settings?.status || "ACTIVE";
+
+    const nowTs = Date.now();
+
+    // Update in-memory object (for response + file fallback)
+    clinic.plan = normalizedPlan;
+    clinic.max_patients = maxPatients;
+    clinic.status = "ACTIVE";
     clinic.subscriptionStatus = "ACTIVE";
-    clinic.subscriptionPlan = plan.toUpperCase();
-    clinic.paymentCompletedAt = Date.now();
+    clinic.subscriptionPlan = normalizedPlan;
+    clinic.verificationStatus = "verified";
+    clinic.paymentCompletedAt = nowTs;
     clinic.lastPaymentId = paymentId || null;
     clinic.lastPaymentAmount = amount || null;
     clinic.lastPaymentCurrency = currency || "USD";
     clinic.lastPaymentMethod = paymentMethod || null;
-    clinic.updatedAt = Date.now();
-    
-    // Set plan limits based on plan
-    if (plan.toUpperCase() === "PRO" || plan.toUpperCase() === "PREMIUM") {
-      clinic.max_patients = 999999; // Unlimited for paid plans
-    } else if (plan.toUpperCase() === "BASIC") {
-      clinic.max_patients = 50; // Basic plan limit
-    } else {
-      clinic.max_patients = 3; // FREE plan limit
+    clinic.updatedAt = nowTs;
+
+    // SUPABASE: persist plan + max_patients (critical)
+    if (isSupabaseEnabled() && clinicId) {
+      try {
+        const mergedSettings = {
+          ...(req.clinic?.settings || clinic.settings || {}),
+          status: "ACTIVE",
+          subscriptionStatus: "ACTIVE",
+          subscriptionPlan: normalizedPlan,
+          verificationStatus: "verified",
+          paymentCompletedAt: nowTs,
+          lastPaymentId: paymentId || null,
+          lastPaymentAmount: amount || null,
+          lastPaymentCurrency: currency || "USD",
+          lastPaymentMethod: paymentMethod || null,
+        };
+
+        await updateClinic(clinicId, {
+          plan: normalizedPlan,
+          max_patients: maxPatients,
+          settings: mergedSettings,
+        });
+
+        // Keep req.clinic in sync for downstream handlers
+        if (req.clinic) {
+          req.clinic.plan = normalizedPlan;
+          req.clinic.max_patients = maxPatients;
+          req.clinic.settings = mergedSettings;
+        }
+      } catch (e) {
+        console.error("[PAYMENT] ❌ Failed to persist payment plan to Supabase:", e?.message || e);
+        // Continue with file fallback
+      }
     }
-    
-    // Save clinic
-    if (isSingleClinic) {
-      writeJson(CLINIC_FILE, clinic);
-    } else {
-      clinics[clinicId] = clinic;
-      writeJson(CLINICS_FILE, clinics);
+
+    // FILE FALLBACK: persist legacy storage (optional)
+    try {
+      if (!clinics) clinics = readJson(CLINICS_FILE, {});
+      if (!singleClinic) singleClinic = readJson(CLINIC_FILE, {});
+
+      if (isSingleClinic) {
+        writeJson(CLINIC_FILE, clinic);
+      } else if (clinics && clinicId) {
+        clinics[clinicId] = clinic;
+        writeJson(CLINICS_FILE, clinics);
+      }
+    } catch (e) {
+      console.warn("[PAYMENT] File fallback persist failed (non-fatal):", e?.message || e);
     }
-    
-    console.log(`[PAYMENT] Clinic ${clinicId} (${clinicCode}) payment successful: ${oldPlan} -> ${plan}, status: ${oldStatus} -> ACTIVE, verificationStatus: verified`);
-    
-    const { password, ...clinicWithoutPassword } = clinic;
+
+    console.log(`[PAYMENT] Clinic ${clinicId} (${clinicCode}) payment successful: ${oldPlan} -> ${normalizedPlan}, status: ${oldStatus} -> ACTIVE, max_patients: ${maxPatients}`);
+
+    const { password, password_hash, ...clinicWithoutPassword } = clinic;
     res.json({
       ok: true,
       clinic: clinicWithoutPassword,
       message: "Payment successful. Plan activated and all features unlocked.",
-      plan: clinic.plan,
-      status: clinic.status,
-      verificationStatus: clinic.verificationStatus
+      plan: normalizedPlan,
+      status: "ACTIVE",
+      verificationStatus: "verified",
+      max_patients: maxPatients,
     });
   } catch (error) {
     console.error("[PAYMENT] Payment success error:", error);
