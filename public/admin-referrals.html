@@ -411,8 +411,11 @@
     listEl.textContent = loadingText;
 
     try {
-      const status = document.getElementById('statusFilter').value;
-      const url = status ? `${API}/api/admin/referrals?status=${status}` : `${API}/api/admin/referrals`;
+      const statusRaw = document.getElementById('statusFilter').value;
+      const status = statusRaw ? String(statusRaw).toLowerCase() : "";
+      const url = status
+        ? `${API}/api/admin/referrals?status=${encodeURIComponent(status)}`
+        : `${API}/api/admin/referrals`;
       
       const headers = {
         "Content-Type": "application/json"
@@ -424,7 +427,7 @@
         headers["Authorization"] = `Bearer ${adminToken}`;
       }
 
-      const r = await fetch(url, { headers });
+      const r = await fetch(url, { headers, cache: "no-store" });
       
       if (r.status === 401) {
         const msg = window.i18n ? window.i18n.t('referrals.errors.invalidToken') : "❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.";
@@ -777,8 +780,9 @@
     const token = getAdminToken();
     if (!token) return;
     try {
-      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+      const res = await fetch(`${API}/api/admin/referrals?status=pending`, {
         headers: adminHeaders({ Accept: "application/json" }),
+        cache: "no-store",
       });
       if (!res.ok) return;
       const data = await res.json();

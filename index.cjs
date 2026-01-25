@@ -6845,7 +6845,8 @@ app.get("/api/me/referrals", requireToken, (req, res) => {
 // GET /api/admin/referrals?status=PENDING|APPROVED|REJECTED
 app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
   try {
-    const status = req.query.status;
+    const statusRaw = req.query.status;
+    const status = String(statusRaw || "").trim().toUpperCase();
     
     // PRODUCTION: Clinic isolation - use req.clinic.id (UUID) from requireAdminToken
     if (!req.clinic || !req.clinicId) {
@@ -6901,7 +6902,7 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
       }
       
       if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
-        items = items.filter((x) => x && x.status === status);
+        items = items.filter((x) => x && String(x.status || "").toUpperCase() === status);
       }
       
       if (items.length === 0 && list.length > 0) {
@@ -6919,8 +6920,33 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
       try {
         let items = (await getReferralsByClinicFromDB(clinicId, clinicCode)) || [];
 
-        if (items.length === 0 && req.clinicId) {
-          const clinicPatients = await getPatientsByClinic(req.clinicId);
+        if (items.length === 0) {
+          let clinicPatients = [];
+          if (clinicId) {
+            clinicPatients = await getPatientsByClinic(clinicId);
+          }
+          if ((!clinicPatients || clinicPatients.length === 0) && clinicCode) {
+            try {
+              const { data, error } = await supabase
+                .from("patients")
+                .select("id, patient_id, clinic_id, clinic_code")
+                .eq("clinic_code", String(clinicCode).toUpperCase());
+              if (error) {
+                if (!isMissingColumnError(error, "clinic_code")) {
+                  console.error("[REFERRALS] Supabase patient clinic_code lookup failed", {
+                    message: error.message,
+                    code: error.code,
+                    details: error.details,
+                  });
+                }
+              } else if (Array.isArray(data)) {
+                clinicPatients = data;
+              }
+            } catch (e) {
+              console.error("[REFERRALS] Supabase patient clinic_code lookup exception:", e?.message || e);
+            }
+          }
+
           const patientIds = (clinicPatients || [])
             .map((p) => p.patient_id || p.id)
             .filter(Boolean);
@@ -6942,7 +6968,7 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
 
         // Filter by status if provided
         if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED" || status === "USED")) {
-          items = items.filter((r) => r.status === status);
+          items = items.filter((r) => String(r.status || "").toUpperCase() === status);
         }
         
         // Exclude soft-deleted referrals
