@@ -387,7 +387,7 @@
       } catch {}
     })();
 
-    const API_BASE = '';
+    const API_BASE = "https://cliniflow-backend-dg8a.onrender.com";
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
@@ -806,7 +806,7 @@
     }
 
     // Badge loading functions
-    const API = location.origin;
+    const API = "https://cliniflow-backend-dg8a.onrender.com";
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
