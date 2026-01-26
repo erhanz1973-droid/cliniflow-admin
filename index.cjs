@@ -7765,7 +7765,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
             patientId:patient_id,
             name
           ),
-          invited_patient:patients!referrals_invited_patient_id_fkey (
+          invited_patient:patients!fk_referrals_invited (
             patientId:patient_id,
             name
           )
