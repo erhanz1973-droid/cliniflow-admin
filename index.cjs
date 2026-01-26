@@ -8105,12 +8105,14 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminToken, async (req, res)
     if (isSupabaseEnabled()) {
       try {
         // Get referral from Supabase
+        console.log("[REFERRAL REJECT] Searching for referral with ID:", id);
+        console.log("[REFERRAL REJECT] Clinic ID from token:", req.clinicId);
+        
         const { data: referral, error: fetchError } = await supabase
           .from('referrals')
           .select('*')
           .eq('id', id)
           .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
-          .is('deleted_at', null) // Exclude soft-deleted
           .single();
         
         if (fetchError || !referral) {
