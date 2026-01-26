@@ -475,10 +475,16 @@
             if (patientsData.ok) {
               const patients = Array.isArray(patientsData.patients) ? patientsData.patients : (Array.isArray(patientsData.list) ? patientsData.list : []);
               patients.forEach(p => {
-                const pid = p.patientId || p.patient_id || p.id;
-                if (pid) {
-                  patientNamesMap[pid] = p.fullName || p.name || pid;
-                }
+                const displayName = p.fullName || p.name || "";
+                const keys = [
+                  p.id,            // UUID (common in Supabase)
+                  p.patient_id,    // legacy id column (p_xxx)
+                  p.patientId,     // normalized field from API
+                ].filter(Boolean);
+                keys.forEach((k) => {
+                  const key = String(k);
+                  patientNamesMap[key] = displayName ? String(displayName) : key;
+                });
               });
             }
           }
@@ -498,10 +504,13 @@
         const createdAt = ref.createdAt ? new Date(ref.createdAt).toLocaleString(locale) : "—";
         
         // Get patient names
-        const inviterName = ref.inviterPatientName || patientNamesMap[ref.inviterPatientId] || ref.inviterPatientId || "—";
-        const invitedName = ref.invitedPatientName || patientNamesMap[ref.invitedPatientId] || ref.invitedPatientId || "—";
-        const inviterDisplay = ref.inviterPatientId ? `${inviterName} (${ref.inviterPatientId})` : "—";
-        const invitedDisplay = ref.invitedPatientId ? `${invitedName} (${ref.invitedPatientId})` : "—";
+        const inviterId = ref.inviterPatientId ? String(ref.inviterPatientId) : "";
+        const invitedId = ref.invitedPatientId ? String(ref.invitedPatientId) : "";
+        const inviterName = ref.inviterPatientName || patientNamesMap[inviterId] || inviterId || "—";
+        const invitedName = ref.invitedPatientName || patientNamesMap[invitedId] || invitedId || "—";
+        // Show names directly; fall back to id only if no name available.
+        const inviterDisplay = inviterId ? String(inviterName || inviterId) : "—";
+        const invitedDisplay = invitedId ? String(invitedName || invitedId) : "—";
         
         // Get translations
         const inviterLabel = window.i18n ? window.i18n.t('referrals.inviter') : 'Inviter';
