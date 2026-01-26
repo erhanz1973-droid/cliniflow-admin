@@ -270,18 +270,10 @@
         <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
 
         <h2 style="margin-top: 24px;" data-i18n="settings.referralDiscounts">🎁 Referral Discounts</h2>
-        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak indirim seviyeleri</div>
-        <label data-i18n="settings.referralLevel1">Seviye 1 (%)</label>
-        <input type="number" id="referralLevel1Percent" placeholder="örn: 5" min="0" max="99" />
-        <div class="muted" data-i18n="settings.referralLevel1Help">1. başarılı referral sonrası toplam indirim</div>
-        
-        <label data-i18n="settings.referralLevel2">Seviye 2 (%)</label>
-        <input type="number" id="referralLevel2Percent" placeholder="örn: 10" min="0" max="99" />
-        <div class="muted" data-i18n="settings.referralLevel2Help">2. başarılı referral sonrası toplam indirim</div>
-        
-        <label data-i18n="settings.referralLevel3">Seviye 3 (%)</label>
-        <input type="number" id="referralLevel3Percent" placeholder="örn: 15" min="0" max="99" />
-        <div class="muted" data-i18n="settings.referralLevel3Help">3+ referral için maksimum indirim</div>
+        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak indirim oranı</div>
+        <label data-i18n="settings.referralDiscount">Referral İndirim Oranı (%)</label>
+        <input type="number" id="referralDiscountPercent" placeholder="örn: 10" min="0" max="50" />
+        <div class="muted" data-i18n="settings.referralDiscountHelp">Başarılı referral sonrası uygulanacak indirim yüzdesi</div>
         
         <button type="submit" style="margin-top: 16px;" data-i18n="settings.save">💾 Save Settings</button>
       </form>
@@ -358,47 +350,32 @@
     }
     window.location.href = "/admin-login.html";
   }
-  function getStoredReferralLevels() {
+  function getStoredReferralDiscount() {
     try {
-      const raw = localStorage.getItem("clinic_referral_levels");
+      const raw = localStorage.getItem("clinic_referral_discount");
       if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") return null;
-      return parsed;
+      const parsed = parseFloat(raw);
+      return isNaN(parsed) ? null : parsed;
     } catch (e) {
-      console.warn("[REFERRAL] Failed to read stored levels:", e);
+      console.warn("[REFERRAL] Failed to read stored discount:", e);
       return null;
     }
   }
 
-  function storeReferralLevels(levels) {
+  function storeReferralDiscount(discount) {
     try {
-      localStorage.setItem("clinic_referral_levels", JSON.stringify(levels || {}));
+      localStorage.setItem("clinic_referral_discount", String(discount || ""));
     } catch (e) {
-      console.warn("[REFERRAL] Failed to store levels:", e);
+      console.warn("[REFERRAL] Failed to store discount:", e);
     }
   }
 
-  function hasAnyReferralLevel(levels) {
-    return [levels?.level1, levels?.level2, levels?.level3].some(
-      (value) => value !== null && value !== undefined && value !== ""
-    );
-  }
-
-  function applyReferralLevels(levels, options = {}) {
-    const level1Input = $("referralLevel1Percent");
-    const level2Input = $("referralLevel2Percent");
-    const level3Input = $("referralLevel3Percent");
+  function applyReferralDiscount(discount, options = {}) {
+    const discountInput = $("referralDiscountPercent");
     const onlyEmpty = options.onlyEmpty === true;
 
-    if ((!onlyEmpty || !level1Input.value) && levels.level1 !== null && levels.level1 !== undefined) {
-      level1Input.value = String(levels.level1);
-    }
-    if ((!onlyEmpty || !level2Input.value) && levels.level2 !== null && levels.level2 !== undefined) {
-      level2Input.value = String(levels.level2);
-    }
-    if ((!onlyEmpty || !level3Input.value) && levels.level3 !== null && levels.level3 !== undefined) {
-      level3Input.value = String(levels.level3);
+    if ((!onlyEmpty || !discountInput.value) && discount !== null && discount !== undefined) {
+      discountInput.value = String(discount);
     }
   }
 
@@ -413,10 +390,10 @@
         return;
       }
 
-      // Apply stored levels early to avoid empty overwrites
-      const storedLevels = getStoredReferralLevels();
-      if (storedLevels && hasAnyReferralLevel(storedLevels)) {
-        applyReferralLevels(storedLevels, { onlyEmpty: true });
+      // Apply stored discount early to avoid empty overwrites
+      const storedDiscount = getStoredReferralDiscount();
+      if (storedDiscount !== null) {
+        applyReferralDiscount(storedDiscount, { onlyEmpty: true });
       }
 
       // Load clinic settings from API (uses token to identify clinic)
@@ -458,34 +435,26 @@
       $("secondaryColor").value = branding.secondaryColor || "#10B981";
       $("welcomeMessage").value = branding.welcomeMessage || "";
       
-      // Set referral level values (handle null/undefined)
-      const levelsRaw = clinic.referralLevels || clinic.settings?.referralLevels || {};
-      const hydratedLevels = {
-        level1:
-          levelsRaw.level1 ??
-          clinic.settings?.referralLevel1Percent ??
-          clinic.defaultInviterDiscountPercent ??
-          null,
-        level2:
-          levelsRaw.level2 ??
-          clinic.settings?.referralLevel2Percent ??
-          null,
-        level3:
-          levelsRaw.level3 ??
-          clinic.settings?.referralLevel3Percent ??
-          null,
-      };
-      const useLevels = hasAnyReferralLevel(hydratedLevels) ? hydratedLevels : storedLevels || hydratedLevels;
-      applyReferralLevels(useLevels);
-      if (hasAnyReferralLevel(hydratedLevels)) {
-        storeReferralLevels(hydratedLevels);
+      // Set referral discount value (handle null/undefined)
+      const discount = 
+        clinic.settings?.referralLevel1Percent ??
+        clinic.settings?.referralLevels?.level1 ??
+        clinic.referralLevels?.level1 ??
+        clinic.default_inviter_discount_percent ??
+        null;
+      
+      const currentStoredDiscount = getStoredReferralDiscount();
+      const useDiscount = discount !== null ? discount : currentStoredDiscount;
+      applyReferralDiscount(useDiscount);
+      if (discount !== null) {
+        storeReferralDiscount(discount);
       }
 
       // Guard against any later overwrite (translations or other inits)
-      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || useLevels, { onlyEmpty: true }), 0);
-      setTimeout(() => applyReferralLevels(getStoredReferralLevels() || useLevels, { onlyEmpty: true }), 500);
+      setTimeout(() => applyReferralDiscount(getStoredReferralDiscount() || useDiscount, { onlyEmpty: true }), 0);
+      setTimeout(() => applyReferralDiscount(getStoredReferralDiscount() || useDiscount, { onlyEmpty: true }), 500);
       
-      console.log("Loaded referral levels:", hydratedLevels);
+      console.log("Loaded referral discount:", discount);
 
     } catch (error) {
       console.error("Load clinic settings error:", error);
@@ -510,9 +479,7 @@
 
         const payload = {
       plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
-      referralLevel1Percent: $("referralLevel1Percent").value.trim(),
-      referralLevel2Percent: $("referralLevel2Percent").value.trim(),
-      referralLevel3Percent: $("referralLevel3Percent").value.trim(),
+      referralLevel1Percent: $("referralDiscountPercent").value.trim(),
     };
     const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
     if (!brandingLocked) {
@@ -549,11 +516,7 @@
 
       const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
       $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
-      storeReferralLevels({
-        level1: payload.referralLevel1Percent || null,
-        level2: payload.referralLevel2Percent || null,
-        level3: payload.referralLevel3Percent || null,
-      });
+      storeReferralDiscount(payload.referralLevel1Percent || null);
       
     } catch (error) {
       console.error("Save clinic settings error:", error);
@@ -868,9 +831,9 @@
         renderPrices();
       }
     }
-    const storedLevels = getStoredReferralLevels();
-    if (storedLevels) {
-      applyReferralLevels(storedLevels, { onlyEmpty: true });
+    const storedDiscount = getStoredReferralDiscount();
+    if (storedDiscount !== null) {
+      applyReferralDiscount(storedDiscount, { onlyEmpty: true });
     }
   };
 </script>
