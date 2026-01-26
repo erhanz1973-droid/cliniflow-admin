@@ -616,6 +616,14 @@
       const currentLang = window.i18n ? window.i18n.getLang() : 'tr';
       const locale = currentLang === 'en' ? 'en-US' : 'tr-TR';
       
+      // Sort referrals by approval date (approved_at) or creation date (createdAt) - newest first
+      items.sort((a, b) => {
+        // Use approved_at for approved referrals, createdAt for others
+        const dateA = a.approvedAt ? new Date(a.approvedAt) : new Date(a.createdAt || 0);
+        const dateB = b.approvedAt ? new Date(b.approvedAt) : new Date(b.createdAt || 0);
+        return dateB.getTime() - dateA.getTime(); // Newest first
+      });
+      
       listEl.innerHTML = items.map(ref => {
         const statusClass = (ref.status || "PENDING").toLowerCase();
         const statusKey = (ref.status || "PENDING").toUpperCase();
