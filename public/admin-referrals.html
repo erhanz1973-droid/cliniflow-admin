@@ -396,11 +396,23 @@
       const clinic = await res.json();
       console.log("Clinic data from API:", clinic); // Debug: Log the full clinic structure
       
+      // Parse settings if it's a string (as shown in Supabase data)
+      let parsedSettings = clinic.settings;
+      if (typeof clinic.settings === 'string') {
+        try {
+          parsedSettings = JSON.parse(clinic.settings);
+          console.log("Parsed clinic.settings:", parsedSettings);
+        } catch (e) {
+          console.warn("Failed to parse clinic.settings as JSON:", e);
+          parsedSettings = {};
+        }
+      }
+      
       // Debug: Explore all possible paths for referral settings
       console.log("Checking all possible referral paths:");
-      console.log("clinic.settings:", clinic.settings);
-      console.log("clinic.settings?.referralLevel1Percent:", clinic.settings?.referralLevel1Percent);
-      console.log("clinic.settings?.referralLevels:", clinic.settings?.referralLevels);
+      console.log("parsedSettings:", parsedSettings);
+      console.log("parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
+      console.log("parsedSettings?.referralLevels:", parsedSettings?.referralLevels);
       console.log("clinic.referralLevels:", clinic.referralLevels);
       console.log("clinic.defaultInviterDiscountPercent:", clinic.defaultInviterDiscountPercent);
       console.log("clinic.defaultInvitedDiscountPercent:", clinic.defaultInvitedDiscountPercent);
@@ -443,9 +455,10 @@
       // Supabase clinic config is stored in settings.referralLevels / settings.referralLevel1Percent.
       // File-based clinics may still have defaultInviterDiscountPercent/defaultInvitedDiscountPercent.
       // Backend API returns defaultInviterDiscountPercent and defaultInvitedDiscountPercent directly.
+      // Settings may be a JSON string that needs parsing.
       const level1Raw =
-        clinic?.settings?.referralLevel1Percent ??
-        clinic?.settings?.referralLevels?.level1 ??
+        parsedSettings?.referralLevel1Percent ??
+        parsedSettings?.referralLevels?.level1 ??
         clinic?.referralLevels?.level1 ??
         clinic?.defaultInviterDiscountPercent ??
         null;
@@ -453,11 +466,10 @@
       
       // For invited discount, check the same paths first, then fallback to invited-specific fields
       const invitedLevel1Raw =
-        clinic?.settings?.referralLevel1Percent ??
-        clinic?.settings?.referralLevels?.level1 ??
+        parsedSettings?.referralLevel1Percent ??
+        parsedSettings?.referralLevels?.level1 ??
         clinic?.referralLevels?.level1 ??
         clinic?.defaultInvitedDiscountPercent ??
-        clinic?.settings?.defaultInvitedDiscountPercent ??
         null;
       const invited = toNumOrNull(invitedLevel1Raw) ?? inviter;
 
