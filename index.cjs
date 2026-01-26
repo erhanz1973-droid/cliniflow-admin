@@ -7763,15 +7763,11 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
           *,
           inviter_patient:patients!fk_referrals_inviter (
             patientId:patient_id,
-            firstName:first_name,
-            lastName:last_name,
-            fullName:full_name
+            name
           ),
           invited_patient:patients!referrals_invited_patient_id_fkey (
             patientId:patient_id,
-            firstName:first_name,
-            lastName:last_name,
-            fullName:full_name
+            name
           )
         `).or(orClause);
         if (req.isAdmin && req.clinicId) q = q.eq("clinic_id", req.clinicId);
@@ -7782,14 +7778,8 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
             if (legacyItem) {
               return {
                 ...legacyItem,
-                inviterPatientName: ref.inviter_patient ? 
-                  (ref.inviter_patient.fullName || 
-                   `${ref.inviter_patient.firstName || ''} ${ref.inviter_patient.lastName || ''}`.trim() || 
-                   ref.inviter_patient.patientId) : null,
-                invitedPatientName: ref.invited_patient ? 
-                  (ref.invited_patient.fullName || 
-                   `${ref.invited_patient.firstName || ''} ${ref.invited_patient.lastName || ''}`.trim() || 
-                   ref.invited_patient.patientId) : null
+                inviterPatientName: ref.inviter_patient?.name || null,
+                invitedPatientName: ref.invited_patient?.name || null
               };
             }
             return null;
