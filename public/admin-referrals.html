@@ -380,12 +380,19 @@
 
   async function loadReferralDefaults() {
     const adminToken = getAdminToken();
-    if (!adminToken) return;
+    if (!adminToken) {
+      console.warn("No admin token found for loading referral defaults");
+      return;
+    }
     try {
       const headers = {};
       headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+      console.log("Loading clinic data from:", `${API}/api/admin/clinic`);
       const res = await fetch(`${API}/api/admin/clinic`, { headers });
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.error("Failed to load clinic data:", res.status, res.statusText);
+        return;
+      }
       const clinic = await res.json();
       console.log("Clinic data from API:", clinic); // Debug: Log the full clinic structure
       const toNumOrNull = (v) => {
@@ -429,6 +436,13 @@
       
       if (defaultInviterPercent != null || defaultInvitedPercent != null) {
         const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent ?? 0, invited: defaultInvitedPercent ?? 0 }) : `Varsayılan indirimler: Davet Eden %${defaultInviterPercent ?? 0}, Davet Edilen %${defaultInvitedPercent ?? 0}`;
+        setMsg(msg, "ok");
+      } else {
+        // Fallback: if no discount data found, try to use hardcoded values based on your settings
+        console.warn("No discount data found in clinic settings, using fallback values");
+        defaultInviterPercent = 66; // Based on your Level 1 setting
+        defaultInvitedPercent = 66; // Same as inviter for now
+        const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent, invited: defaultInvitedPercent }) : `Varsayılan indirimler (fallback): Davet Eden %${defaultInviterPercent}, Davet Edilen %${defaultInvitedPercent}`;
         setMsg(msg, "ok");
       }
     } catch (e) {
