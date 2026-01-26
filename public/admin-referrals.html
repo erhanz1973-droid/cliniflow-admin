@@ -387,8 +387,34 @@
       const res = await fetch(`${API}/api/admin/clinic`, { headers });
       if (!res.ok) return;
       const clinic = await res.json();
-      defaultInviterPercent = clinic.defaultInviterDiscountPercent ?? null;
-      defaultInvitedPercent = clinic.defaultInvitedDiscountPercent ?? null;
+      const toNumOrNull = (v) => {
+        if (v === "" || v === undefined || v === null) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
+
+      // Supabase clinic config is stored in settings.referralLevels / settings.referralLevel1Percent.
+      // File-based clinics may still have defaultInviterDiscountPercent/defaultInvitedDiscountPercent.
+      const level1Raw =
+        clinic?.settings?.referralLevel1Percent ??
+        clinic?.settings?.referralLevels?.level1 ??
+        clinic?.referralLevels?.level1 ??
+        clinic?.defaultInviterDiscountPercent ??
+        null;
+      const inviter = toNumOrNull(level1Raw);
+      
+      // For invited discount, check the same paths first, then fallback to invited-specific fields
+      const invitedLevel1Raw =
+        clinic?.settings?.referralLevel1Percent ??
+        clinic?.settings?.referralLevels?.level1 ??
+        clinic?.referralLevels?.level1 ??
+        clinic?.defaultInvitedDiscountPercent ??
+        clinic?.settings?.defaultInvitedDiscountPercent ??
+        null;
+      const invited = toNumOrNull(invitedLevel1Raw) ?? inviter;
+
+      defaultInviterPercent = inviter;
+      defaultInvitedPercent = invited;
       if (defaultInviterPercent != null || defaultInvitedPercent != null) {
         const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent ?? 0, invited: defaultInvitedPercent ?? 0 }) : `Varsayılan indirimler: Davet Eden %${defaultInviterPercent ?? 0}, Davet Edilen %${defaultInvitedPercent ?? 0}`;
         setMsg(msg, "ok");
