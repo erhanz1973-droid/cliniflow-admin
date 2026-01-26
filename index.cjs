@@ -10200,7 +10200,7 @@ app.patch("/api/super-admin/clinics/:clinicId/reject", superAdminGuard, (req, re
 
 // PATCH /api/super-admin/clinics/:clinicId/suspend
 // Suspend a clinic (for fraud/abuse cases only)
-app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, (req, res) => {
+app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (req, res) => {
   try {
     const { clinicId } = req.params;
     const { reason } = req.body || {};
@@ -10214,6 +10214,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, (req, r
     
     let clinic = null;
     let isSingleClinic = false;
+    let isSupabaseClinic = false;
     
     // Check CLINICS_FILE first
     if (clinics[clinicId]) {
@@ -10224,30 +10225,68 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, (req, r
       clinic = singleClinic;
       isSingleClinic = true;
     } else {
-      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+      // Check Supabase
+      if (isSupabaseEnabled) {
+        try {
+          const { data: supabaseClinic, error } = await supabase
+            .from("clinics")
+            .select("id, name, email, status")
+            .eq("id", clinicId)
+            .single();
+          
+          if (!error && supabaseClinic) {
+            clinic = supabaseClinic;
+            isSupabaseClinic = true;
+          }
+        } catch (supabaseError) {
+          console.warn("[SUPER_ADMIN] Failed to check Supabase clinic:", supabaseError);
+        }
+      }
+      
+      if (!clinic) {
+        return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+      }
     }
     
     // Update status to SUSPENDED
     const oldStatus = clinic.status || "ACTIVE";
-    clinic.status = "SUSPENDED";
-    clinic.suspendedAt = Date.now();
-    clinic.suspendedReason = reason || "Suspended by super admin";
-    clinic.updatedAt = Date.now();
     
-    // Save to appropriate file
-    if (isSingleClinic) {
-      writeJson(CLINIC_FILE, clinic);
+    if (isSupabaseClinic) {
+      // Update in Supabase
+      const { error } = await supabase
+        .from("clinics")
+        .update({
+          status: "SUSPENDED",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", clinicId);
+      
+      if (error) {
+        console.error("[SUPER_ADMIN] Failed to suspend clinic in Supabase:", error);
+        return res.status(500).json({ ok: false, error: "update_failed", message: "Failed to suspend clinic" });
+      }
     } else {
-      clinics[clinicId] = clinic;
-      writeJson(CLINICS_FILE, clinics);
+      // Update in file
+      clinic.status = "SUSPENDED";
+      clinic.suspendedAt = Date.now();
+      clinic.suspendedReason = reason || "Suspended by super admin";
+      clinic.updatedAt = Date.now();
+      
+      // Save to appropriate file
+      if (isSingleClinic) {
+        writeJson(CLINIC_FILE, clinic);
+      } else {
+        clinics[clinicId] = clinic;
+        writeJson(CLINICS_FILE, clinics);
+      }
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} suspended (status: ${oldStatus} -> SUSPENDED), reason: ${reason || "none"}`);
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} suspended (status: ${oldStatus} -> SUSPENDED), reason: ${reason || "none"}, source: ${isSupabaseClinic ? "Supabase" : "File"}`);
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
       ok: true, 
-      clinic: clinicWithoutPassword,
+      clinic: { ...clinicWithoutPassword, status: "SUSPENDED" },
       message: "Clinic suspended successfully"
     });
   } catch (error) {
