@@ -7776,11 +7776,18 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
           let items = (data || []).map(ref => {
             const legacyItem = mapReferralRowToLegacyItem(ref);
             if (legacyItem) {
-              return {
+              const result = {
                 ...legacyItem,
                 inviterPatientName: ref.inviter_patient?.name || null,
                 invitedPatientName: ref.invited_patient?.name || null
               };
+              console.log(`[REFERRALS] Patient endpoint - processed referral ${ref.id}:`, {
+                inviterPatientId: ref.inviter_patient_id,
+                invitedPatientId: ref.invited_patient_id,
+                inviterPatientName: result.inviterPatientName,
+                invitedPatientName: result.invitedPatientName
+              });
+              return result;
             }
             return null;
           }).filter(Boolean);
