@@ -1503,6 +1503,7 @@ app.post("/api/register", async (req, res) => {
 
   // SUPABASE: Insert patient (PRIMARY - production source of truth)
   let supabaseClinicId = null;
+  let supabasePatientRow = null;
   if (isSupabaseEnabled() && validatedClinicCode) {
     try {
       const clinic = await getClinicByCode(validatedClinicCode);
@@ -1571,6 +1572,18 @@ app.post("/api/register", async (req, res) => {
             if (patientLanguage && existing.language !== patientLanguage) {
               await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
             }
+            // Best-effort: keep supabase patient row for downstream (referrals)
+            try {
+              const { data: fullRow } = await supabase
+                .from("patients")
+                .select("id, patient_id, clinic_id, name, referral_code, email")
+                .eq("email", emailNormalized)
+                .limit(1)
+                .maybeSingle();
+              supabasePatientRow = fullRow || existing;
+            } catch {
+              supabasePatientRow = existing;
+            }
           } else {
             console.error("[REGISTER] Unique email but failed to fetch existing patient", {
               message: e2?.message,
@@ -1589,6 +1602,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     if (data?.id) console.log("[SUPABASE] ✅ patient upserted:", data.id);
+    if (data) supabasePatientRow = data;
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -1631,131 +1645,217 @@ app.post("/api/register", async (req, res) => {
   // Handle referral code if provided
   if (referralCode && String(referralCode).trim()) {
     try {
-      const refCode = String(referralCode).trim();
-      // Find inviter by referral code (check patients for matching referralCode)
-      // For now, we'll use a simple approach: store referral codes in patient records
-      // and match by code
-      const allPatients = readJson(PAT_FILE, {});
-      let inviterPatientId = null;
-      let inviterPatientName = null;
-      
-      // Search for patient with matching referral code
-      for (const pid in allPatients) {
-        const p = allPatients[pid];
-        // For now, we'll match by patientId if referralCode matches patientId pattern
-        // Or check if patient has referralCode field
-        if (p.referralCode === refCode || pid === refCode) {
-          inviterPatientId = pid;
-          inviterPatientName = p.name || "Unknown";
-          break;
+      const refCodeRaw = String(referralCode).trim();
+      const refCode = refCodeRaw;
+
+      // ================== SUPABASE PATH (source of truth) ==================
+      if (isSupabaseEnabled() && supabaseClinicId) {
+        const variants = Array.from(
+          new Set([refCode, refCode.toUpperCase(), refCode.toLowerCase()].filter(Boolean))
+        );
+
+        let inviter = null;
+        let lastInviterErr = null;
+        for (const v of variants) {
+          // 1) referral_code match (if column exists)
+          try {
+            const q1 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("referral_code", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q1.error && q1.data) {
+              inviter = q1.data;
+              break;
+            }
+            if (q1.error && !isMissingColumnError(q1.error, "referral_code") && String(q1.error.code || "") !== "PGRST116") {
+              lastInviterErr = q1.error;
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          // 2) patient_id match (if column exists)
+          try {
+            const q2 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("patient_id", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q2.error && q2.data) {
+              inviter = q2.data;
+              break;
+            }
+            if (q2.error && !isMissingColumnError(q2.error, "patient_id") && String(q2.error.code || "") !== "PGRST116") {
+              lastInviterErr = q2.error;
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          // 3) id match (covers schemas where patient id is stored in `id`)
+          try {
+            const q3 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("id", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q3.error && q3.data) {
+              inviter = q3.data;
+              break;
+            }
+            if (q3.error && String(q3.error.code || "") !== "PGRST116") {
+              lastInviterErr = q3.error;
+            }
+          } catch (e) {
+            // ignore
+          }
         }
-      }
-      
-      // If no match found by referralCode field, try matching by patientId
-      // (for backward compatibility, patientId can be used as referral code)
-      if (!inviterPatientId && allPatients[refCode]) {
-        inviterPatientId = refCode;
-        inviterPatientName = allPatients[refCode].name || "Unknown";
-      }
-      
-      // Create referral record if inviter found
-      if (inviterPatientId) {
-        // PRODUCTION: Self-referral check
-        if (inviterPatientId === patientId) {
-          console.log(`[REGISTER] ❌ Self-referral blocked: inviter=${inviterPatientId}, invited=${patientId}`);
-          // Don't fail registration, just skip referral creation
-        } else {
-          // PRODUCTION: Check for existing referral (UNIQUE constraint)
-          let existingReferral = null;
-          
-          // SUPABASE: Check for existing referral
-          if (isSupabaseEnabled() && supabaseClinicId) {
+
+        if (!inviter) {
+          console.log("[REGISTER] Referral code not found in Supabase:", refCodeRaw);
+          return res.status(400).json({
+            ok: false,
+            error: "invalid_referral_code",
+            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+            supabase: lastInviterErr ? supabaseErrorPublic(lastInviterErr) : null,
+          });
+        }
+
+        // Prevent cross-clinic referrals (must match clinic being registered)
+        const inviterClinicId = inviter.clinic_id || null;
+        if (inviterClinicId && String(inviterClinicId) !== String(supabaseClinicId)) {
+          console.log("[REGISTER] Referral clinic mismatch:", {
+            refCode: refCodeRaw,
+            inviterClinicId,
+            targetClinicId: supabaseClinicId,
+          });
+          return res.status(400).json({
+            ok: false,
+            error: "invalid_referral_code",
+            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+          });
+        }
+
+        const uuidLike = (s) =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
+
+        const inviterCandidates = Array.from(
+          new Set([inviter.id, inviter.patient_id].filter(Boolean))
+        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+
+        const invitedCandidates = Array.from(
+          new Set([supabasePatientRow?.id, supabasePatientRow?.patient_id, patientId].filter(Boolean))
+        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+
+        // Self-referral guard (compare any representation)
+        const inviterSet = new Set(inviterCandidates.map((x) => String(x)));
+        const invitedSet = new Set(invitedCandidates.map((x) => String(x)));
+        for (const x of inviterSet) {
+          if (invitedSet.has(x)) {
+            return res.status(400).json({
+              ok: false,
+              error: "invalid_referral_code",
+              message: "Self-referral is not allowed.",
+            });
+          }
+        }
+
+        let created = null;
+        let lastCreateErr = null;
+        for (const invId of inviterCandidates) {
+          for (const invitedId of invitedCandidates) {
             try {
-              const { data: existing, error: checkError } = await supabase
-                .from('referrals')
-                .select('*')
-                .eq('clinic_id', supabaseClinicId)
-                .eq('inviter_patient_id', inviterPatientId)
-                .eq('invited_patient_id', patientId)
-                .is('deleted_at', null)
-                .maybeSingle();
-              
-              if (!checkError && existing) {
-                existingReferral = existing;
-                console.log(`[REGISTER] Existing referral found in Supabase: ${existing.id}`);
-              }
+              const referralData = {
+                clinic_id: supabaseClinicId,
+                inviter_patient_id: invId,
+                invited_patient_id: invitedId,
+                referral_code: generateReferralCodeV2(),
+                status: "pending",
+                inviter_discount_percent: null,
+                invited_discount_percent: null,
+                discount_percent: null,
+              };
+              created = await createReferralInDB(referralData);
+              break;
             } catch (e) {
-              console.error(`[REGISTER] Error checking Supabase for existing referral:`, e);
-            }
-          }
-          
-          // FILE-BASED: Check for existing referral
-          if (!existingReferral) {
-            const referrals = readJson(REF_FILE, []);
-            const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-            existingReferral = referralList.find(
-              (r) => r && 
-              (r.inviterPatientId || r.inviter_patient_id) === inviterPatientId &&
-              (r.invitedPatientId || r.invited_patient_id) === patientId &&
-              !r.deleted_at
-            );
-          }
-          
-          if (existingReferral) {
-            console.log(`[REGISTER] ⚠️ Referral already exists for inviter=${inviterPatientId}, invited=${patientId}, skipping creation`);
-          } else {
-            // Create new referral
-            const referralCode = `REF_${inviterPatientId}_${patientId}_${now()}`;
-            
-            // SUPABASE: Primary source of truth
-            if (isSupabaseEnabled() && supabaseClinicId) {
-              try {
-                const referralData = {
-                  clinic_id: supabaseClinicId,
-                  inviter_patient_id: inviterPatientId,
-                  invited_patient_id: patientId,
-                  referral_code: referralCode,
-                  status: 'PENDING',
-                  inviter_discount_percent: null,
-                  invited_discount_percent: null,
-                  discount_percent: null
-                };
-                
-                const created = await createReferralInDB(referralData);
-                console.log(`[REGISTER] ✅ Created referral in Supabase: ${created?.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
-              } catch (supabaseError) {
-                console.error(`[REGISTER] ❌ Failed to create referral in Supabase:`, supabaseError.message);
-                // Fall through to file-based
+              lastCreateErr = e;
+              // Unique violation (inviter+invited) -> treat as success
+              if (String(e?.code || "") === "23505") {
+                created = { id: null, duplicate: true };
+                break;
+              }
+              // UUID mismatch -> try next candidate combo
+              if (isInvalidUuidError(e)) {
+                continue;
               }
             }
-            
-            // FILE-BASED: Fallback
-            const referrals = readJson(REF_FILE, []);
-            const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-            
-            const newReferral = {
-              id: rid("ref"),
-              inviterPatientId,
-              inviterPatientName,
-              invitedPatientId: patientId,
-              invitedPatientName: String(name || ""),
-              status: "PENDING",
-              createdAt: now(),
-              inviterDiscountPercent: null,
-              invitedDiscountPercent: null,
-              discountPercent: null,
-              checkInAt: null,
-              approvedAt: null,
-              clinicCode: validatedClinicCode,
-            };
-            
-            referralList.push(newReferral);
-            writeJson(REF_FILE, referralList);
-            console.log(`[REGISTER] Created referral in file: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
+          }
+          if (created) break;
+        }
+
+        if (!created) {
+          console.error("[REGISTER] ❌ Failed to create referral in Supabase", supabaseErrorPublic(lastCreateErr));
+          return res.status(500).json({
+            ok: false,
+            error: "referral_create_failed",
+            message: "Could not create referral. Please try again.",
+            supabase: supabaseErrorPublic(lastCreateErr),
+          });
+        }
+
+        console.log("[REGISTER] ✅ Referral linked on register", {
+          inviter: inviterCandidates[0],
+          invited: invitedCandidates[0],
+        });
+      } else {
+        // ================== FILE FALLBACK ==================
+        const allPatients = readJson(PAT_FILE, {});
+        let inviterPatientId = null;
+        let inviterPatientName = null;
+
+        for (const pid in allPatients) {
+          const p = allPatients[pid];
+          const code = String(p?.referralCode || p?.referral_code || "").trim();
+          if (code && code === refCode) {
+            inviterPatientId = pid;
+            inviterPatientName = p?.name || "Unknown";
+            break;
+          }
+          if (pid === refCode) {
+            inviterPatientId = pid;
+            inviterPatientName = p?.name || "Unknown";
+            break;
           }
         }
-      } else {
-        console.log(`[REGISTER] Referral code not found: ${refCode}`);
+
+        if (!inviterPatientId) {
+          console.log(`[REGISTER] Referral code not found (file fallback): ${refCode}`);
+        } else if (inviterPatientId === patientId) {
+          console.log(`[REGISTER] ❌ Self-referral blocked (file): inviter=${inviterPatientId}, invited=${patientId}`);
+        } else if (canUseFileFallback()) {
+          const referrals = readJson(REF_FILE, []);
+          const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+          referralList.push({
+            id: rid("ref"),
+            inviterPatientId,
+            inviterPatientName,
+            invitedPatientId: patientId,
+            invitedPatientName: String(name || ""),
+            status: "PENDING",
+            createdAt: now(),
+            inviterDiscountPercent: null,
+            invitedDiscountPercent: null,
+            discountPercent: null,
+            checkInAt: null,
+            approvedAt: null,
+            clinicCode: validatedClinicCode,
+          });
+          writeJson(REF_FILE, referralList);
+        }
       }
     } catch (err) {
       console.error("[REGISTER] Referral creation error:", err);
@@ -1960,6 +2060,7 @@ app.post("/api/patient/register", async (req, res) => {
 
   // SUPABASE: Insert patient (PRIMARY - production source of truth)
   let supabaseClinicId = null;
+  let supabasePatientRow = null;
   if (isSupabaseEnabled() && validatedClinicCode) {
     try {
       const clinic = await getClinicByCode(validatedClinicCode);
@@ -2028,6 +2129,18 @@ app.post("/api/patient/register", async (req, res) => {
             if (patientLanguage && existing.language !== patientLanguage) {
               await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
             }
+            // Best-effort: keep supabase patient row for downstream (referrals)
+            try {
+              const { data: fullRow } = await supabase
+                .from("patients")
+                .select("id, patient_id, clinic_id, name, referral_code, email")
+                .eq("email", emailNormalized)
+                .limit(1)
+                .maybeSingle();
+              supabasePatientRow = fullRow || existing;
+            } catch {
+              supabasePatientRow = existing;
+            }
           } else {
             console.error("[REGISTER /api/patient/register] Unique email but failed to fetch existing patient", {
               message: e2?.message,
@@ -2046,6 +2159,7 @@ app.post("/api/patient/register", async (req, res) => {
     }
 
     if (data?.id) console.log("[SUPABASE] ✅ patient upserted:", data.id);
+    if (data) supabasePatientRow = data;
   }
 
   // FILE-BASED: Fallback storage (for backward compatibility)
@@ -2089,135 +2203,197 @@ app.post("/api/patient/register", async (req, res) => {
     writeJson(REG_FILE, regs);
   }
 
-  // Handle referral code if provided (same logic as /api/register)
+  // Handle referral code if provided (Supabase-first; file fallback only when enabled)
   if (referralCode && String(referralCode).trim()) {
     try {
-      const refCode = String(referralCode).trim();
-      const allPatients = readJson(PAT_FILE, {});
-      let inviterPatientId = null;
-      let inviterPatientName = null;
-      
-      for (const pid in allPatients) {
-        const p = allPatients[pid];
-        if (p.referralCode === refCode || pid === refCode) {
-          inviterPatientId = pid;
-          inviterPatientName = p.name || "Unknown";
-          break;
+      const refCodeRaw = String(referralCode).trim();
+      const refCode = refCodeRaw;
+
+      // ================== SUPABASE PATH (source of truth) ==================
+      if (isSupabaseEnabled() && supabaseClinicId) {
+        const variants = Array.from(
+          new Set([refCode, refCode.toUpperCase(), refCode.toLowerCase()].filter(Boolean))
+        );
+
+        let inviter = null;
+        let lastInviterErr = null;
+        for (const v of variants) {
+          // 1) referral_code match (if column exists)
+          try {
+            const q1 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("referral_code", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q1.error && q1.data) {
+              inviter = q1.data;
+              break;
+            }
+            if (q1.error && !isMissingColumnError(q1.error, "referral_code") && String(q1.error.code || "") !== "PGRST116") {
+              lastInviterErr = q1.error;
+            }
+          } catch {}
+
+          // 2) patient_id match (if column exists)
+          try {
+            const q2 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("patient_id", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q2.error && q2.data) {
+              inviter = q2.data;
+              break;
+            }
+            if (q2.error && !isMissingColumnError(q2.error, "patient_id") && String(q2.error.code || "") !== "PGRST116") {
+              lastInviterErr = q2.error;
+            }
+          } catch {}
+
+          // 3) id match (covers schemas where patient id is stored in `id`)
+          try {
+            const q3 = await supabase
+              .from("patients")
+              .select("id, patient_id, clinic_id, name, referral_code")
+              .eq("id", v)
+              .limit(1)
+              .maybeSingle();
+            if (!q3.error && q3.data) {
+              inviter = q3.data;
+              break;
+            }
+            if (q3.error && String(q3.error.code || "") !== "PGRST116") {
+              lastInviterErr = q3.error;
+            }
+          } catch {}
         }
-      }
-      
-      if (!inviterPatientId && allPatients[refCode]) {
-        inviterPatientId = refCode;
-        inviterPatientName = allPatients[refCode].name || "Unknown";
-      }
-      
-      if (inviterPatientId) {
-        const referrals = readJson(REF_FILE, []);
-        const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-        
-        const newReferral = {
-          id: rid("ref"),
-          inviterPatientId,
-          inviterPatientName,
-          invitedPatientId: patientId,
-          invitedPatientName: String(name || ""),
-          status: "PENDING",
-          createdAt: now(),
-          inviterDiscountPercent: null,
-          invitedDiscountPercent: null,
-          discountPercent: null,
-          checkInAt: null,
-          approvedAt: null,
-        };
-        
-        // PRODUCTION: Self-referral check
-        if (inviterPatientId === patientId) {
-          console.log(`[PATIENT/REGISTER] ❌ Self-referral blocked: inviter=${inviterPatientId}, invited=${patientId}`);
-          // Don't fail registration, just skip referral creation
-        } else {
-          // PRODUCTION: Check for existing referral (UNIQUE constraint)
-          let existingReferral = null;
-          
-          // SUPABASE: Check for existing referral
-          if (isSupabaseEnabled() && supabaseClinicId) {
+
+        if (!inviter) {
+          console.log("[PATIENT/REGISTER] Referral code not found in Supabase:", refCodeRaw);
+          return res.status(400).json({
+            ok: false,
+            error: "invalid_referral_code",
+            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+            supabase: lastInviterErr ? supabaseErrorPublic(lastInviterErr) : null,
+          });
+        }
+
+        // Prevent cross-clinic referrals (must match clinic being registered)
+        const inviterClinicId = inviter.clinic_id || null;
+        if (inviterClinicId && String(inviterClinicId) !== String(supabaseClinicId)) {
+          return res.status(400).json({
+            ok: false,
+            error: "invalid_referral_code",
+            message: `Referral code "${refCodeRaw}" is invalid or not found. Please check the code and try again.`,
+          });
+        }
+
+        const uuidLike = (s) =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
+
+        const inviterCandidates = Array.from(
+          new Set([inviter.id, inviter.patient_id].filter(Boolean))
+        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+
+        const invitedCandidates = Array.from(
+          new Set([supabasePatientRow?.id, supabasePatientRow?.patient_id, patientId].filter(Boolean))
+        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+
+        // Self-referral guard (compare any representation)
+        const inviterSet = new Set(inviterCandidates.map((x) => String(x)));
+        const invitedSet = new Set(invitedCandidates.map((x) => String(x)));
+        for (const x of inviterSet) {
+          if (invitedSet.has(x)) {
+            return res.status(400).json({
+              ok: false,
+              error: "invalid_referral_code",
+              message: "Self-referral is not allowed.",
+            });
+          }
+        }
+
+        let created = null;
+        let lastCreateErr = null;
+        for (const invId of inviterCandidates) {
+          for (const invitedId of invitedCandidates) {
             try {
-              const { data: existing, error: checkError } = await supabase
-                .from('referrals')
-                .select('*')
-                .eq('clinic_id', supabaseClinicId)
-                .eq('inviter_patient_id', inviterPatientId)
-                .eq('invited_patient_id', patientId)
-                .is('deleted_at', null)
-                .maybeSingle();
-              
-              if (!checkError && existing) {
-                existingReferral = existing;
-                console.log(`[PATIENT/REGISTER] Existing referral found in Supabase: ${existing.id}`);
-              }
+              const referralData = {
+                clinic_id: supabaseClinicId,
+                inviter_patient_id: invId,
+                invited_patient_id: invitedId,
+                referral_code: generateReferralCodeV2(),
+                status: "pending",
+                inviter_discount_percent: null,
+                invited_discount_percent: null,
+                discount_percent: null,
+              };
+              created = await createReferralInDB(referralData);
+              break;
             } catch (e) {
-              console.error(`[PATIENT/REGISTER] Error checking Supabase for existing referral:`, e);
-            }
-          }
-          
-          // FILE-BASED: Check for existing referral
-          if (!existingReferral) {
-            existingReferral = referralList.find(
-              (r) => r && 
-              (r.inviterPatientId || r.inviter_patient_id) === inviterPatientId &&
-              (r.invitedPatientId || r.invited_patient_id) === patientId &&
-              !r.deleted_at
-            );
-          }
-          
-          if (existingReferral) {
-            console.log(`[PATIENT/REGISTER] ⚠️ Referral already exists for inviter=${inviterPatientId}, invited=${patientId}, skipping creation`);
-          } else {
-            // Create new referral
-            const referralCode = `REF_${inviterPatientId}_${patientId}_${now()}`;
-            
-            // SUPABASE: Primary source of truth
-            if (isSupabaseEnabled() && supabaseClinicId) {
-              try {
-                const referralData = {
-                  clinic_id: supabaseClinicId,
-                  inviter_patient_id: inviterPatientId,
-                  invited_patient_id: patientId,
-                  referral_code: referralCode,
-                  status: 'PENDING',
-                  inviter_discount_percent: null,
-                  invited_discount_percent: null,
-                  discount_percent: null
-                };
-                
-                const created = await createReferralInDB(referralData);
-                console.log(`[PATIENT/REGISTER] ✅ Created referral in Supabase: ${created?.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
-              } catch (supabaseError) {
-                console.error(`[PATIENT/REGISTER] ❌ Failed to create referral in Supabase:`, supabaseError.message);
-                // Fall through to file-based
+              lastCreateErr = e;
+              if (String(e?.code || "") === "23505") {
+                created = { id: null, duplicate: true };
+                break;
+              }
+              if (isInvalidUuidError(e)) {
+                continue;
               }
             }
-            
-            // FILE-BASED: Fallback
-            const newReferral = {
-              id: rid("ref"),
-              inviterPatientId,
-              inviterPatientName,
-              invitedPatientId: patientId,
-              invitedPatientName: String(name || ""),
-              status: "PENDING",
-              createdAt: now(),
-              inviterDiscountPercent: null,
-              invitedDiscountPercent: null,
-              discountPercent: null,
-              checkInAt: null,
-              approvedAt: null,
-              clinicCode: validatedClinicCode,
-            };
-            
-            referralList.push(newReferral);
-            writeJson(REF_FILE, referralList);
-            console.log(`[PATIENT/REGISTER] Created referral in file: ${newReferral.id} (inviter: ${inviterPatientId}, invited: ${patientId})`);
           }
+          if (created) break;
+        }
+
+        if (!created) {
+          console.error("[PATIENT/REGISTER] ❌ Failed to create referral in Supabase", supabaseErrorPublic(lastCreateErr));
+          return res.status(500).json({
+            ok: false,
+            error: "referral_create_failed",
+            message: "Could not create referral. Please try again.",
+            supabase: supabaseErrorPublic(lastCreateErr),
+          });
+        }
+      } else {
+        // ================== FILE FALLBACK ==================
+        const allPatients = readJson(PAT_FILE, {});
+        let inviterPatientId = null;
+        let inviterPatientName = null;
+
+        for (const pid in allPatients) {
+          const p = allPatients[pid];
+          const code = String(p?.referralCode || p?.referral_code || "").trim();
+          if (code && code === refCode) {
+            inviterPatientId = pid;
+            inviterPatientName = p?.name || "Unknown";
+            break;
+          }
+          if (pid === refCode) {
+            inviterPatientId = pid;
+            inviterPatientName = p?.name || "Unknown";
+            break;
+          }
+        }
+
+        if (inviterPatientId && inviterPatientId !== patientId && canUseFileFallback()) {
+          const referrals = readJson(REF_FILE, []);
+          const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+          referralList.push({
+            id: rid("ref"),
+            inviterPatientId,
+            inviterPatientName,
+            invitedPatientId: patientId,
+            invitedPatientName: String(name || ""),
+            status: "PENDING",
+            createdAt: now(),
+            inviterDiscountPercent: null,
+            invitedDiscountPercent: null,
+            discountPercent: null,
+            checkInAt: null,
+            approvedAt: null,
+            clinicCode: validatedClinicCode,
+          });
+          writeJson(REF_FILE, referralList);
         }
       }
     } catch (err) {
