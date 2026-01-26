@@ -387,6 +387,7 @@
       const res = await fetch(`${API}/api/admin/clinic`, { headers });
       if (!res.ok) return;
       const clinic = await res.json();
+      console.log("Clinic data from API:", clinic); // Debug: Log the full clinic structure
       const toNumOrNull = (v) => {
         if (v === "" || v === undefined || v === null) return null;
         const n = Number(v);
@@ -415,6 +416,17 @@
 
       defaultInviterPercent = inviter;
       defaultInvitedPercent = invited;
+      
+      // Debug: Log the extracted values
+      console.log("Extracted referral defaults:", {
+        level1Raw,
+        invitedLevel1Raw,
+        inviter,
+        invited,
+        defaultInviterPercent,
+        defaultInvitedPercent
+      });
+      
       if (defaultInviterPercent != null || defaultInvitedPercent != null) {
         const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent ?? 0, invited: defaultInvitedPercent ?? 0 }) : `Varsayılan indirimler: Davet Eden %${defaultInviterPercent ?? 0}, Davet Edilen %${defaultInvitedPercent ?? 0}`;
         setMsg(msg, "ok");
