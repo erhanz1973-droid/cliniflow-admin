@@ -442,6 +442,7 @@
 
       // Supabase clinic config is stored in settings.referralLevels / settings.referralLevel1Percent.
       // File-based clinics may still have defaultInviterDiscountPercent/defaultInvitedDiscountPercent.
+      // Backend API returns defaultInviterDiscountPercent and defaultInvitedDiscountPercent directly.
       const level1Raw =
         clinic?.settings?.referralLevel1Percent ??
         clinic?.settings?.referralLevels?.level1 ??
