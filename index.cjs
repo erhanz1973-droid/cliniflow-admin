@@ -3156,7 +3156,7 @@ app.get("/api/admin/registrations", (req, res) => {
   res.json({ ok: true, list });
 });
 
-app.get("/api/admin/patients", requireAdminToken, async (req, res) => {
+app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   try {
     // PRODUCTION: Supabase only, file-based disabled
     if (!isSupabaseEnabled()) {
@@ -3206,7 +3206,7 @@ app.get("/api/admin/patients", requireAdminToken, async (req, res) => {
 // IMPORTANT:
 // - No file writes (PAT_FILE / REG_FILE / TOK_FILE) here.
 // - Update happens in Supabase ONLY.
-app.post("/api/admin/approve", requireAdminToken, async (req, res) => {
+app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
   try {
     const { patientId } = req.body || {};
     if (!patientId) {
@@ -3821,8 +3821,8 @@ app.post(
 );
 
 // ADMIN travel updates
-app.put("/api/admin/patient/:patientId/travel", requireAdminToken, saveTravelHandler);
-app.post("/api/admin/patient/:patientId/travel", requireAdminToken, saveTravelHandler);
+app.put("/api/admin/patient/:patientId/travel", requireAdminAuth, saveTravelHandler);
+app.post("/api/admin/patient/:patientId/travel", requireAdminAuth, saveTravelHandler);
 
 // Legacy routes (backward compatibility)
 app.post("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
@@ -6474,7 +6474,7 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 });
 
 // POST /api/admin/chat/upload (Admin uploads files/images to patient chat)
-app.post("/api/admin/chat/upload", requireAdminToken, chatUpload.array("files", 5), async (req, res) => {
+app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5), async (req, res) => {
   try {
     console.log("[Admin Chat Upload] Request received");
     console.log("[Admin Chat Upload] Body keys:", Object.keys(req.body || {}));
@@ -6746,7 +6746,7 @@ app.get("/api/procedures", (req, res) => {
 // Admin alias for deployments that expect scoped endpoint
 
 // GET /api/admin/clinic (Admin için) - token-based (multi-clinic)
-app.get("/api/admin/clinic", requireAdminToken, (req, res) => {
+app.get("/api/admin/clinic", requireAdminAuth, (req, res) => {
   try {
     // requireAdminToken middleware already sets req.clinic
     // Use it directly - no need to lookup again
@@ -6810,7 +6810,7 @@ function planToMaxPatients(plan) {
 }
 
 // PUT /api/admin/clinic (Admin günceller) - token-based (multi-clinic)
-app.put("/api/admin/clinic", requireAdminToken, async (req, res) => {
+app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
   try {
     // requireAdminToken middleware already sets req.clinic
     // Use it directly - no need to lookup again
@@ -7119,7 +7119,7 @@ app.get("/api/me/referrals", requireToken, (req, res) => {
 });
 
 // GET /api/admin/referrals?status=PENDING|APPROVED|REJECTED
-app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
+app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
   try {
     const statusRaw = req.query.status;
     const status = String(statusRaw || "").trim().toUpperCase();
@@ -7335,7 +7335,7 @@ app.get("/api/admin/referrals", requireAdminToken, async (req, res) => {
 });
 
 // DELETE /api/admin/referrals/:referralId (admin cleanup)
-app.delete("/api/admin/referrals/:referralId", requireAdminToken, async (req, res) => {
+app.delete("/api/admin/referrals/:referralId", requireAdminAuth, async (req, res) => {
   try {
     const referralId = String(req.params.referralId || "").trim();
     if (!referralId) return res.status(400).json({ ok: false, error: "referral_id_required" });
@@ -7879,7 +7879,7 @@ app.put("/api/referral/:referralId", requireAdminOrPatientToken, async (req, res
 });
 
 // PATCH /api/admin/referrals/:id/approve
-app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res) => {
+app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const body = req.body || {};
@@ -8123,7 +8123,7 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
 });
 
 // PATCH /api/admin/referrals/:id/reject
-app.patch("/api/admin/referrals/:id/reject", requireAdminToken, async (req, res) => {
+app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -8659,7 +8659,7 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
 
 // GET /api/admin/referral-events
 // Get all referral events (admin view)
-app.get("/api/admin/referral-events", requireAdminToken, async (req, res) => {
+app.get("/api/admin/referral-events", requireAdminAuth, async (req, res) => {
   try {
     const respondFromFile = () => {
       const events = readJson(REF_EVENT_FILE, []);
