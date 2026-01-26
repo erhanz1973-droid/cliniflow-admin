@@ -7887,7 +7887,6 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
           .select('*')
           .eq('id', id)
           .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
-          .is('deleted_at', null) // Exclude soft-deleted
           .single();
         
         if (fetchError || !referral) {
