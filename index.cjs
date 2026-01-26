@@ -810,22 +810,12 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
   console.log(`[sendOTPEmail] ========================================`);
   
   const apiKey = process.env.BREVO_API_KEY;
-  const fromEmail = process.env.SMTP_FROM; // ⬅️ BURASI ÖNEMLİ
+  const fromEmail = process.env.SMTP_FROM || SMTP_FROM; // prefer explicit env, fallback to default
   const fromName = process.env.BREVO_FROM_NAME || "Clinifly";
 
   console.log(`[sendOTPEmail] BREVO_API_KEY: ${apiKey ? 'SET' : 'NOT SET'}`);
   console.log(`[sendOTPEmail] SMTP_FROM: ${fromEmail || 'NOT SET'}`);
   console.log(`[sendOTPEmail] BREVO_FROM_NAME: ${fromName}`);
-
-  if (!apiKey) {
-    console.error(`[sendOTPEmail] ❌ BREVO_API_KEY not set!`);
-    throw new Error("BREVO_API_KEY not set");
-  }
-
-  if (!fromEmail) {
-    console.error(`[sendOTPEmail] ❌ SMTP_FROM not set!`);
-    throw new Error("SMTP_FROM not set");
-  }
 
   const safeLang = normalizePatientLanguage(lang);
   const subject =
@@ -848,6 +838,39 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
         <p>This code is valid for 5 minutes.</p>
       </div>
     `;
+
+  // Prefer Brevo REST API when configured; otherwise fall back to SMTP transporter if present.
+  if (!apiKey) {
+    if (!emailTransporter) {
+      console.error(`[sendOTPEmail] ❌ No BREVO_API_KEY and SMTP transporter is not configured`);
+      throw new Error("email_not_configured");
+    }
+    console.log(`[sendOTPEmail] BREVO_API_KEY missing; using SMTP transporter fallback`);
+    try {
+      const info = await emailTransporter.sendMail({
+        from: fromEmail || "noreply@clinifly.net",
+        to: email,
+        subject,
+        html: htmlContent,
+        text: safeLang === "tr"
+          ? `Clinifly doğrulama kodunuz: ${otpCode} (5 dk geçerli)`
+          : `Your Clinifly verification code: ${otpCode} (valid for 5 minutes)`,
+      });
+      console.log(`[sendOTPEmail] ✅ Email sent via SMTP transporter`, {
+        messageId: info?.messageId || null,
+        accepted: info?.accepted || null,
+      });
+      return info;
+    } catch (e) {
+      console.error(`[sendOTPEmail] ❌ SMTP transporter send failed:`, e?.message || e);
+      throw e;
+    }
+  }
+
+  if (!fromEmail) {
+    console.error(`[sendOTPEmail] ❌ SMTP_FROM not set!`);
+    throw new Error("SMTP_FROM not set");
+  }
 
   const payload = {
     sender: {
@@ -1743,13 +1766,29 @@ app.post("/api/register", async (req, res) => {
         const uuidLike = (s) =>
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
 
-        const inviterCandidates = Array.from(
+        let inviterCandidates = Array.from(
           new Set([inviter.id, inviter.patient_id].filter(Boolean))
-        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+        );
 
-        const invitedCandidates = Array.from(
+        let invitedCandidates = Array.from(
           new Set([supabasePatientRow?.id, supabasePatientRow?.patient_id, patientId].filter(Boolean))
-        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+        );
+
+        // Some production schemas store referrals.*_patient_id as UUID.
+        // Ensure we try UUID ids first by resolving from patient_id (p_xxx) when needed.
+        const resolvedInviterUuids = (await Promise.all(inviterCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
+        inviterCandidates = Array.from(new Set([...inviterCandidates, ...resolvedInviterUuids]));
+        inviterCandidates = [
+          ...inviterCandidates.filter((x) => uuidLike(x)),
+          ...inviterCandidates.filter((x) => !uuidLike(x)),
+        ];
+
+        const resolvedInvitedUuids = (await Promise.all(invitedCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
+        invitedCandidates = Array.from(new Set([...invitedCandidates, ...resolvedInvitedUuids]));
+        invitedCandidates = [
+          ...invitedCandidates.filter((x) => uuidLike(x)),
+          ...invitedCandidates.filter((x) => !uuidLike(x)),
+        ];
 
         // Self-referral guard (compare any representation)
         const inviterSet = new Set(inviterCandidates.map((x) => String(x)));
@@ -1774,7 +1813,7 @@ app.post("/api/register", async (req, res) => {
                 inviter_patient_id: invId,
                 invited_patient_id: invitedId,
                 referral_code: generateReferralCodeV2(),
-                status: "pending",
+                status: "PENDING",
                 inviter_discount_percent: null,
                 invited_discount_percent: null,
                 discount_percent: null,
@@ -1963,20 +2002,36 @@ app.post("/api/patient/register", async (req, res) => {
 
   // Validate clinic code if provided
   let validatedClinicCode = null;
+  let foundClinicId = null;
   if (clinicCode && String(clinicCode).trim()) {
     const code = String(clinicCode).trim().toUpperCase();
     let foundClinic = null;
     
     console.log(`[REGISTER /api/patient/register] Validating clinic code: ${code}`);
+
+    // SUPABASE: Primary lookup (source of truth)
+    if (isSupabaseEnabled()) {
+      try {
+        foundClinic = await getClinicByCode(code);
+        if (foundClinic) {
+          foundClinicId = foundClinic.id;
+          console.log(`[REGISTER /api/patient/register] Found clinic in Supabase: ${foundClinic.id}`);
+        }
+      } catch (e) {
+        console.error(`[REGISTER /api/patient/register] Error checking clinic in Supabase:`, e?.message || e);
+      }
+    }
     
     // First check CLINIC_FILE (single clinic object)
-    const singleClinic = readJson(CLINIC_FILE, {});
-    if (singleClinic && singleClinic.clinicCode) {
-      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-      console.log(`[REGISTER /api/patient/register] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
-      if (singleClinicCode === code) {
-        foundClinic = singleClinic;
-        console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINIC_FILE`);
+    if (!foundClinic) {
+      const singleClinic = readJson(CLINIC_FILE, {});
+      if (singleClinic && singleClinic.clinicCode) {
+        const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
+        console.log(`[REGISTER /api/patient/register] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+        if (singleClinicCode === code) {
+          foundClinic = singleClinic;
+          console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINIC_FILE`);
+        }
       }
     }
     
@@ -1996,6 +2051,7 @@ app.post("/api/patient/register", async (req, res) => {
             console.log(`[REGISTER /api/patient/register] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
             if (clinicCodeUpper === code) {
               foundClinic = clinic;
+              foundClinicId = foundClinicId || clinicId;
               console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINICS_FILE: ${clinicId}`);
               break;
             }
@@ -2192,6 +2248,7 @@ app.post("/api/patient/register", async (req, res) => {
     phone: phoneNormalized, // Use normalized phone
     email: emailNormalized,
     status: "PENDING",
+    clinicCode: validatedClinicCode, // Keep parity with /api/register
     createdAt: now(),
     updatedAt: now(),
   };
@@ -2293,13 +2350,29 @@ app.post("/api/patient/register", async (req, res) => {
         const uuidLike = (s) =>
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
 
-        const inviterCandidates = Array.from(
+        let inviterCandidates = Array.from(
           new Set([inviter.id, inviter.patient_id].filter(Boolean))
-        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+        );
 
-        const invitedCandidates = Array.from(
+        let invitedCandidates = Array.from(
           new Set([supabasePatientRow?.id, supabasePatientRow?.patient_id, patientId].filter(Boolean))
-        ).sort((a, b) => Number(uuidLike(b)) - Number(uuidLike(a)));
+        );
+
+        // Some production schemas store referrals.*_patient_id as UUID.
+        // Ensure we try UUID ids first by resolving from patient_id (p_xxx) when needed.
+        const resolvedInviterUuids = (await Promise.all(inviterCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
+        inviterCandidates = Array.from(new Set([...inviterCandidates, ...resolvedInviterUuids]));
+        inviterCandidates = [
+          ...inviterCandidates.filter((x) => uuidLike(x)),
+          ...inviterCandidates.filter((x) => !uuidLike(x)),
+        ];
+
+        const resolvedInvitedUuids = (await Promise.all(invitedCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
+        invitedCandidates = Array.from(new Set([...invitedCandidates, ...resolvedInvitedUuids]));
+        invitedCandidates = [
+          ...invitedCandidates.filter((x) => uuidLike(x)),
+          ...invitedCandidates.filter((x) => !uuidLike(x)),
+        ];
 
         // Self-referral guard (compare any representation)
         const inviterSet = new Set(inviterCandidates.map((x) => String(x)));
@@ -2324,7 +2397,7 @@ app.post("/api/patient/register", async (req, res) => {
                 inviter_patient_id: invId,
                 invited_patient_id: invitedId,
                 referral_code: generateReferralCodeV2(),
-                status: "pending",
+                status: "PENDING",
                 inviter_discount_percent: null,
                 invited_discount_percent: null,
                 discount_percent: null,
@@ -2665,18 +2738,24 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
     
-    // Check if SMTP is configured
-    if (!emailTransporter) {
-      console.error("[OTP] ❌ SMTP not configured - cannot send OTP!");
-      console.error("[OTP] emailTransporter is:", emailTransporter);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "smtp_not_configured", 
-        message: "Email servisi yapılandırılmamış. Lütfen destek ile iletişime geçin." 
+    // Check if email sending is configured (Brevo REST API or SMTP transporter)
+    const hasBrevo = !!process.env.BREVO_API_KEY;
+    const hasSmtpTransporter = !!emailTransporter;
+    if (!hasBrevo && !hasSmtpTransporter) {
+      console.error("[OTP] ❌ Email not configured - cannot send OTP!");
+      console.error("[OTP]   BREVO_API_KEY:", hasBrevo ? "SET" : "NOT SET");
+      console.error("[OTP]   SMTP transporter:", hasSmtpTransporter ? "SET" : "NOT SET");
+      // Keep legacy error code for client compatibility
+      return res.status(500).json({
+        ok: false,
+        error: "smtp_not_configured",
+        message: "Email servisi yapılandırılmamış. Lütfen destek ile iletişime geçin.",
       });
     }
-    
-    console.log("[OTP] ✅ SMTP is configured, proceeding...");
+    console.log("[OTP] ✅ Email sending is configured, proceeding...", {
+      brevo: hasBrevo,
+      smtp: hasSmtpTransporter,
+    });
     
     // Clean up expired OTPs
     cleanupExpiredOTPs();
@@ -7369,6 +7448,49 @@ async function getPatientClinicIdForReferral(patientId) {
   }
 }
 
+async function resolvePatientUuidForReferral(candidate) {
+  const s = String(candidate || "").trim();
+  if (!s) return null;
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+  if (isUuid) return s;
+  if (!isSupabaseEnabled()) return null;
+  try {
+    const uuidLike = (v) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v || "").trim());
+
+    // Some schemas store the legacy id in `patient_id` and the UUID in `id`.
+    // Others might only have `id`. Try both `id` and `patient_id` match.
+    const q1 = await supabase
+      .from("patients")
+      .select("id, patient_id")
+      .or(`id.eq.${s},patient_id.eq.${s}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (!q1.error && q1.data) {
+      const candidates = [q1.data.id, q1.data.patient_id].filter(Boolean);
+      const found = candidates.find((v) => uuidLike(v));
+      if (found) return String(found).trim();
+    }
+
+    if (q1.error && isMissingColumnError(q1.error, "patient_id")) {
+      const q2 = await supabase
+        .from("patients")
+        .select("id")
+        .eq("id", s)
+        .limit(1)
+        .maybeSingle();
+      if (!q2.error && q2.data?.id && uuidLike(q2.data.id)) {
+        return String(q2.data.id).trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 function generateReferralCodeV2() {
   // Short, URL-safe code. Collision is guarded by DB unique index + retry.
   const bytes = crypto.randomBytes(6).toString("base64").replaceAll("+", "").replaceAll("/", "").replaceAll("=", "");
@@ -7382,6 +7504,43 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
     const patientId = String(req.patientId || "").trim();
     if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
     if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_disabled" });
+
+    // Resolve inviter candidates (UUID vs legacy p_xxx) to support evolving schemas.
+    let inviterRow = null;
+    try {
+      const q1 = await supabase
+        .from("patients")
+        .select("id, patient_id, clinic_id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+      if (!q1.error && q1.data) inviterRow = q1.data;
+      const isMissingPatientIdCol =
+        q1.error && isMissingColumnError(q1.error, "patient_id");
+      const isNotFound = String(q1.error?.code || "") === "PGRST116";
+      if (!inviterRow && (isMissingPatientIdCol || isNotFound)) {
+        const q2 = await supabase
+          .from("patients")
+          .select("id, patient_id, clinic_id")
+          .eq("id", patientId)
+          .maybeSingle();
+        if (!q2.error && q2.data) inviterRow = q2.data;
+      }
+    } catch {
+      // best-effort only
+    }
+
+    const uuidLike = (s) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || ""));
+    let inviterCandidates = Array.from(
+      new Set([inviterRow?.id, inviterRow?.patient_id, patientId].filter(Boolean))
+    );
+
+    const resolvedInviterUuids = (await Promise.all(inviterCandidates.map(resolvePatientUuidForReferral))).filter(Boolean);
+    inviterCandidates = Array.from(new Set([...inviterCandidates, ...resolvedInviterUuids]));
+    inviterCandidates = [
+      ...inviterCandidates.filter((x) => uuidLike(x)),
+      ...inviterCandidates.filter((x) => !uuidLike(x)),
+    ];
 
     const clinicId = req.clinicId || (await getPatientClinicIdForReferral(patientId));
     let clinicCode = null;
@@ -7409,33 +7568,57 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
     let lastErr = null;
     for (let i = 0; i < 6; i++) {
       const referral_code = generateReferralCodeV2();
-      const insertPayload = {
-        // keep existing schema fields (clinic_id is optional)
-        ...(clinicId ? { clinic_id: clinicId } : {}),
-        ...(clinicCode ? { clinic_code: clinicCode } : {}),
-        inviter_patient_id: patientId,
-        referral_code,
-        status: "pending",
-        reward_currency: "EUR",
-      };
-
       const doInsert = async (payload) =>
         supabase.from("referrals").insert(payload).select("*").single();
 
-      let { data, error } = await doInsert(insertPayload);
-      if (error && clinicCode && isMissingColumnError(error, "clinic_code")) {
-        const fallbackPayload = { ...insertPayload };
-        delete fallbackPayload.clinic_code;
-        ({ data, error } = await doInsert(fallbackPayload));
+      let inserted = null;
+      let insertError = null;
+
+      // Try different inviter id representations (uuid first, then legacy)
+      for (const inviterId of inviterCandidates) {
+        const insertPayload = {
+          // keep existing schema fields (clinic_id is optional)
+          ...(clinicId ? { clinic_id: clinicId } : {}),
+          ...(clinicCode ? { clinic_code: clinicCode } : {}),
+          inviter_patient_id: inviterId,
+          referral_code,
+          status: "PENDING",
+          reward_currency: "EUR",
+        };
+
+        let { data, error } = await doInsert(insertPayload);
+
+        // Schema-evolution fallbacks
+        if (error && clinicCode && isMissingColumnError(error, "clinic_code")) {
+          const fallbackPayload = { ...insertPayload };
+          delete fallbackPayload.clinic_code;
+          ({ data, error } = await doInsert(fallbackPayload));
+        }
+        if (error && isMissingColumnError(error, "reward_currency")) {
+          const fallbackPayload = { ...insertPayload };
+          delete fallbackPayload.reward_currency;
+          ({ data, error } = await doInsert(fallbackPayload));
+        }
+
+        if (!error) {
+          inserted = data;
+          break;
+        }
+
+        insertError = error;
+        // UUID mismatch -> try next candidate representation
+        if (isInvalidUuidError(error)) continue;
+        // Unique violation -> handled by outer retry (new referral code)
+        break;
       }
 
-      if (!error) {
-        let verified = data;
+      if (inserted) {
+        let verified = inserted;
         try {
           const { data: verifyRow, error: verifyErr } = await supabase
             .from("referrals")
             .select("*")
-            .eq("id", data.id)
+            .eq("id", inserted.id)
             .single();
           if (!verifyErr && verifyRow) {
             verified = verifyRow;
@@ -7457,14 +7640,14 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
         });
       }
 
-      lastErr = error;
+      lastErr = insertError;
       // Unique violation -> retry with a new code
-      if (String(error.code || "") === "23505") continue;
+      if (String(insertError?.code || "") === "23505") continue;
 
       console.error("[REFERRAL] Supabase save failed", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
+        message: insertError?.message,
+        code: insertError?.code,
+        details: insertError?.details,
       });
       return res.status(500).json({ ok: false, error: "referral_invite_failed" });
     }
