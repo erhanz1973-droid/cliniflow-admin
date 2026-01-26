@@ -9843,7 +9843,7 @@ app.get("/api/super-admin/me", superAdminGuard, (req, res) => {
 
 // GET /api/super-admin/clinics
 // Get all clinics with basic statistics (protected)
-app.get("/api/super-admin/clinics", superAdminGuard, (req, res) => {
+app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
   try {
     const clinics = readJson(CLINICS_FILE, {});
     const singleClinic = readJson(CLINIC_FILE, {});
@@ -9852,6 +9852,82 @@ app.get("/api/super-admin/clinics", superAdminGuard, (req, res) => {
     
     // Convert clinics object to array
     let clinicsList = [];
+    
+    // Add clinics from Supabase
+    if (isSupabaseEnabled) {
+      try {
+        const { data: supabaseClinics, error } = await supabase
+          .from("clinics")
+          .select(`
+            id,
+            name,
+            email,
+            clinic_code,
+            phone,
+            address,
+            created_at,
+            updated_at,
+            plan,
+            enabled_modules
+          `)
+          .order("created_at", { ascending: false });
+        
+        if (!error && supabaseClinics) {
+          for (const clinic of supabaseClinics) {
+            const clinicCode = (clinic.clinic_code || "").toUpperCase();
+            
+            // Calculate basic stats for this clinic
+            const clinicPatients = Object.values(patients).filter(p => 
+              (p.clinicCode || p.clinic_code || "").toUpperCase() === clinicCode
+            );
+            
+            // Create a set of clinic patient IDs for faster lookup
+            const clinicPatientIds = new Set(clinicPatients.map(p => p.patientId || p.patient_id).filter(Boolean));
+            
+            // Filter referrals where either inviter or invited patient belongs to this clinic
+            const referralsList = Array.isArray(referrals) ? referrals : Object.values(referrals);
+            const clinicReferrals = referralsList.filter(r => {
+              if (!r) return false;
+              const inviterId = String(r.inviterPatientId || "").trim();
+              const invitedId = String(r.invitedPatientId || "").trim();
+              return clinicPatientIds.has(inviterId) || clinicPatientIds.has(invitedId);
+            });
+            
+            // Count messages for this clinic's patients
+            let messageCount = 0;
+            for (const patient of clinicPatients) {
+              const patientId = patient.patientId || patient.patient_id;
+              if (patientId && patients[patientId] && patients[patientId].messages) {
+                messageCount += Object.keys(patients[patientId].messages).length;
+              }
+            }
+            
+            clinicsList.push({
+              id: clinic.id,
+              clinicId: clinic.id,
+              name: clinic.name,
+              email: clinic.email,
+              clinicCode: clinic.clinic_code,
+              phone: clinic.phone,
+              address: clinic.address,
+              status: "ACTIVE", // All Supabase clinics are considered active
+              plan: clinic.plan,
+              enabledModules: clinic.enabled_modules,
+              createdAt: clinic.created_at,
+              updatedAt: clinic.updated_at,
+              stats: {
+                patientCount: clinicPatients.length,
+                messageCount: messageCount,
+                referralCount: clinicReferrals.length,
+                activeReferralCount: clinicReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE").length
+              }
+            });
+          }
+        }
+      } catch (supabaseError) {
+        console.warn("[SUPER_ADMIN] Failed to load clinics from Supabase:", supabaseError);
+      }
+    }
     
     // Add clinics from CLINICS_FILE
     for (const clinicId in clinics) {
