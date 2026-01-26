@@ -7878,6 +7878,10 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
     if (isSupabaseEnabled()) {
       try {
         // Get referral from Supabase
+        console.log("[REFERRAL APPROVE] Searching for referral with ID:", id);
+        console.log("[REFERRAL APPROVE] Clinic ID from token:", req.clinicId);
+        console.log("[REFERRAL APPROVE] Full clinic object:", req.clinic);
+        
         const { data: referral, error: fetchError } = await supabase
           .from('referrals')
           .select('*')
@@ -7888,6 +7892,7 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminToken, async (req, res
         
         if (fetchError || !referral) {
           console.warn("[REFERRAL APPROVE] Supabase referral not found, falling back to file");
+          console.warn("[REFERRAL APPROVE] Fetch error:", fetchError);
           throw new Error("supabase_referral_not_found");
         }
         
