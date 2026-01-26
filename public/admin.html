@@ -1139,6 +1139,30 @@
     }
   }
 
+  function ensureNavBadge(linkId, badgeId) {
+    const link = document.getElementById(linkId);
+    if (!link) return null;
+
+    let badgeEl = document.getElementById(badgeId);
+    if (!badgeEl) {
+      badgeEl = link.querySelector(`#${badgeId}`) || link.querySelector(".nav-badge");
+    }
+
+    if (!badgeEl) {
+      badgeEl = document.createElement("span");
+      badgeEl.id = badgeId;
+      badgeEl.className = "nav-badge";
+      badgeEl.style.display = "none";
+      link.appendChild(badgeEl);
+      return badgeEl;
+    }
+
+    // Ensure expected id/class in case DOM got re-rendered
+    if (badgeEl.id !== badgeId) badgeEl.id = badgeId;
+    if (!badgeEl.classList.contains("nav-badge")) badgeEl.classList.add("nav-badge");
+    return badgeEl;
+  }
+
   // Load unread message count for badge
   async function loadUnreadMessageCount() {
     const token = getAdminToken();
@@ -1215,15 +1239,8 @@
       }
       previousUnreadCount = totalUnread;
 
-      // Update badge - try multiple methods to find the element
-      let badgeEl = document.getElementById("chatBadge");
-      if (!badgeEl) {
-        // Try finding via parent link
-        const chatLink = document.getElementById("chatNavLink");
-        if (chatLink) {
-          badgeEl = chatLink.querySelector(".nav-badge");
-        }
-      }
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("chatNavLink", "chatBadge");
       if (badgeEl) {
         if (totalUnread > 0) {
           badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
@@ -1232,21 +1249,6 @@
         } else {
           badgeEl.style.display = "none";
           console.log("[DASHBOARD] Chat badge hidden (no unread messages)");
-        }
-      } else {
-        console.warn("[DASHBOARD] chatBadge element not found - trying to recreate");
-        // Try to recreate badge if it doesn't exist
-        const chatLink = document.getElementById("chatNavLink");
-        if (chatLink && !chatLink.querySelector(".nav-badge")) {
-          const newBadge = document.createElement("span");
-          newBadge.id = "chatBadge";
-          newBadge.className = "nav-badge";
-          newBadge.style.display = totalUnread > 0 ? "flex" : "none";
-          if (totalUnread > 0) {
-            newBadge.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
-          }
-          chatLink.appendChild(newBadge);
-          console.log("[DASHBOARD] Chat badge recreated");
         }
       }
     } catch (error) {
@@ -1276,34 +1278,14 @@
       }
       previousPendingPatients = pendingCount;
 
-      // Update badge - try multiple methods to find the element
-      let badgeEl = document.getElementById("patientsBadge");
-      if (!badgeEl) {
-        const patientsLink = document.getElementById("patientsNavLink");
-        if (patientsLink) {
-          badgeEl = patientsLink.querySelector(".nav-badge");
-        }
-      }
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("patientsNavLink", "patientsBadge");
       if (badgeEl) {
         if (pendingCount > 0) {
           badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
           badgeEl.style.display = "flex";
         } else {
           badgeEl.style.display = "none";
-        }
-      } else {
-        console.warn("[DASHBOARD] patientsBadge element not found - trying to recreate");
-        const patientsLink = document.getElementById("patientsNavLink");
-        if (patientsLink && !patientsLink.querySelector(".nav-badge")) {
-          const newBadge = document.createElement("span");
-          newBadge.id = "patientsBadge";
-          newBadge.className = "nav-badge";
-          newBadge.style.display = pendingCount > 0 ? "flex" : "none";
-          if (pendingCount > 0) {
-            newBadge.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
-          }
-          patientsLink.appendChild(newBadge);
-          console.log("[DASHBOARD] Patients badge recreated");
         }
       }
     } catch (error) {
@@ -1332,34 +1314,14 @@
       }
       previousPendingReferrals = pendingCount;
 
-      // Update badge - try multiple methods to find the element
-      let badgeEl = document.getElementById("referralsBadge");
-      if (!badgeEl) {
-        const referralsLink = document.getElementById("referralsNavLink");
-        if (referralsLink) {
-          badgeEl = referralsLink.querySelector(".nav-badge");
-        }
-      }
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("referralsNavLink", "referralsBadge");
       if (badgeEl) {
         if (pendingCount > 0) {
           badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
           badgeEl.style.display = "flex";
         } else {
           badgeEl.style.display = "none";
-        }
-      } else {
-        console.warn("[DASHBOARD] referralsBadge element not found - trying to recreate");
-        const referralsLink = document.getElementById("referralsNavLink");
-        if (referralsLink && !referralsLink.querySelector(".nav-badge")) {
-          const newBadge = document.createElement("span");
-          newBadge.id = "referralsBadge";
-          newBadge.className = "nav-badge";
-          newBadge.style.display = pendingCount > 0 ? "flex" : "none";
-          if (pendingCount > 0) {
-            newBadge.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
-          }
-          referralsLink.appendChild(newBadge);
-          console.log("[DASHBOARD] Referrals badge recreated");
         }
       }
     } catch (error) {
@@ -1370,6 +1332,10 @@
   // Load all badges
   async function loadAllBadges() {
     console.log("[DASHBOARD] Loading all badges...");
+    // Ensure badges exist (i18n may re-render nav DOM)
+    ensureNavBadge("chatNavLink", "chatBadge");
+    ensureNavBadge("patientsNavLink", "patientsBadge");
+    ensureNavBadge("referralsNavLink", "referralsBadge");
     // Use allSettled to ensure all badges load even if one fails
     await Promise.allSettled([
       loadUnreadMessageCount().catch(err => {
