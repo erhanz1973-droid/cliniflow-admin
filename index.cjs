@@ -7761,13 +7761,13 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
       for (const orClause of queryVariants) {
         let q = supabase.from("referrals").select(`
           *,
-          inviter_patient:inviter_patient_id (
+          inviter_patient:patients!fk_referrals_inviter (
             patientId:patient_id,
             firstName:first_name,
             lastName:last_name,
             fullName:full_name
           ),
-          invited_patient:invited_patient_id (
+          invited_patient:patients!referrals_invited_patient_id_fkey (
             patientId:patient_id,
             firstName:first_name,
             lastName:last_name,

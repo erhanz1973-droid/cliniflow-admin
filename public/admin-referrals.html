@@ -519,7 +519,8 @@
   async function loadReferrals() {
     const adminToken = getAdminToken();
     if (!adminToken) {
-      setMsg("⚠️ Admin token bulunamadı. Lütfen admin olarak giriş yapın.", "err");
+      const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "⚠️ Admin token bulunamadı. Lütfen admin olarak giriş yapın.";
+      setMsg(msg, "err");
       return;
     }
 
