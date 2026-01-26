@@ -9239,8 +9239,16 @@ async function requireAdminAuth(req, res, next) {
         req.clinicStatus = clinic.status || "ACTIVE";  // Use direct status field
         req.clinic = clinic;
         
+        console.log("[requireAdminAuth] Clinic auth check:", {
+          clinicCode: req.clinicCode,
+          clinicId: req.clinicId,
+          status: req.clinicStatus,
+          isSuspended: req.clinicStatus === "SUSPENDED"
+        });
+        
         // Only reject if clinic is suspended
         if (req.clinicStatus === "SUSPENDED") {
+          console.log("[requireAdminAuth] ❌ Blocking suspended clinic:", req.clinicCode);
           return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
         }
         
