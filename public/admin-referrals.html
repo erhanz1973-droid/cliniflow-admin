@@ -412,7 +412,7 @@
 
     try {
       const statusRaw = document.getElementById('statusFilter').value;
-      const status = statusRaw ? String(statusRaw).toLowerCase() : "";
+      const status = statusRaw ? String(statusRaw).toUpperCase() : "";
       const url = status
         ? `${API}/api/admin/referrals?status=${encodeURIComponent(status)}`
         : `${API}/api/admin/referrals`;
@@ -780,7 +780,7 @@
     const token = getAdminToken();
     if (!token) return;
     try {
-      const res = await fetch(`${API}/api/admin/referrals?status=pending`, {
+      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
         headers: adminHeaders({ Accept: "application/json" }),
         cache: "no-store",
       });
