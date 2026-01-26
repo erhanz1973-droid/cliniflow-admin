@@ -9850,6 +9850,30 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
     const patients = readJson(PAT_FILE, {});
     const referrals = readJson(REF_FILE, {});
     
+    // Get patients from Supabase for accurate stats
+    let supabasePatients = [];
+    if (isSupabaseEnabled) {
+      try {
+        const { data: patientsData, error } = await supabase
+          .from("patients")
+          .select(`
+            patient_id,
+            clinic_id,
+            name,
+            email,
+            phone,
+            status,
+            created_at
+          `);
+        
+        if (!error && patientsData) {
+          supabasePatients = patientsData;
+        }
+      } catch (supabaseError) {
+        console.warn("[SUPER_ADMIN] Failed to load patients from Supabase:", supabaseError);
+      }
+    }
+    
     // Convert clinics object to array
     let clinicsList = [];
     
@@ -9876,13 +9900,13 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
           for (const clinic of supabaseClinics) {
             const clinicCode = (clinic.clinic_code || "").toUpperCase();
             
-            // Calculate basic stats for this clinic
-            const clinicPatients = Object.values(patients).filter(p => 
-              (p.clinicCode || p.clinic_code || "").toUpperCase() === clinicCode
+            // Calculate basic stats for this clinic using Supabase patients
+            const clinicPatients = supabasePatients.filter(p => 
+              p.clinic_id === clinic.id
             );
             
             // Create a set of clinic patient IDs for faster lookup
-            const clinicPatientIds = new Set(clinicPatients.map(p => p.patientId || p.patient_id).filter(Boolean));
+            const clinicPatientIds = new Set(clinicPatients.map(p => p.patient_id).filter(Boolean));
             
             // Filter referrals where either inviter or invited patient belongs to this clinic
             const referralsList = Array.isArray(referrals) ? referrals : Object.values(referrals);
@@ -9893,10 +9917,10 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
               return clinicPatientIds.has(inviterId) || clinicPatientIds.has(invitedId);
             });
             
-            // Count messages for this clinic's patients
+            // Count messages for this clinic's patients (using file-based for now)
             let messageCount = 0;
             for (const patient of clinicPatients) {
-              const patientId = patient.patientId || patient.patient_id;
+              const patientId = patient.patient_id;
               if (patientId && patients[patientId] && patients[patientId].messages) {
                 messageCount += Object.keys(patients[patientId].messages).length;
               }
