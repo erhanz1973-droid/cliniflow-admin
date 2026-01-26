@@ -9852,9 +9852,12 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
     
     // Get patients from Supabase for accurate stats
     let supabasePatients = [];
+    let supabaseMessages = [];
+    let supabaseReferrals = [];
     if (isSupabaseEnabled) {
       try {
-        const { data: patientsData, error } = await supabase
+        // Get patients
+        const { data: patientsData, error: patientsError } = await supabase
           .from("patients")
           .select(`
             patient_id,
@@ -9866,11 +9869,42 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
             created_at
           `);
         
-        if (!error && patientsData) {
+        if (!patientsError && patientsData) {
           supabasePatients = patientsData;
         }
+
+        // Get messages
+        const { data: messagesData, error: messagesError } = await supabase
+          .from("messages")
+          .select(`
+            id,
+            patient_id,
+            content,
+            created_at
+          `);
+        
+        if (!messagesError && messagesData) {
+          supabaseMessages = messagesData;
+        }
+
+        // Get referrals
+        const { data: referralsData, error: referralsError } = await supabase
+          .from("referrals")
+          .select(`
+            id,
+            inviter_patient_id,
+            invited_patient_id,
+            status,
+            created_at,
+            approved_at
+          `);
+        
+        if (!referralsError && referralsData) {
+          supabaseReferrals = referralsData;
+        }
+        
       } catch (supabaseError) {
-        console.warn("[SUPER_ADMIN] Failed to load patients from Supabase:", supabaseError);
+        console.warn("[SUPER_ADMIN] Failed to load data from Supabase:", supabaseError);
       }
     }
     
@@ -9909,22 +9943,17 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
             const clinicPatientIds = new Set(clinicPatients.map(p => p.patient_id).filter(Boolean));
             
             // Filter referrals where either inviter or invited patient belongs to this clinic
-            const referralsList = Array.isArray(referrals) ? referrals : Object.values(referrals);
-            const clinicReferrals = referralsList.filter(r => {
+            const clinicReferrals = supabaseReferrals.filter(r => {
               if (!r) return false;
-              const inviterId = String(r.inviterPatientId || "").trim();
-              const invitedId = String(r.invitedPatientId || "").trim();
+              const inviterId = String(r.inviter_patient_id || "").trim();
+              const invitedId = String(r.invited_patient_id || "").trim();
               return clinicPatientIds.has(inviterId) || clinicPatientIds.has(invitedId);
             });
             
-            // Count messages for this clinic's patients (using file-based for now)
-            let messageCount = 0;
-            for (const patient of clinicPatients) {
-              const patientId = patient.patient_id;
-              if (patientId && patients[patientId] && patients[patientId].messages) {
-                messageCount += Object.keys(patients[patientId].messages).length;
-              }
-            }
+            // Count messages for this clinic's patients using Supabase messages
+            const messageCount = supabaseMessages.filter(m => 
+              clinicPatientIds.has(m.patient_id)
+            ).length;
             
             clinicsList.push({
               id: clinic.id,
