@@ -405,6 +405,23 @@
       console.log("clinic.defaultInviterDiscountPercent:", clinic.defaultInviterDiscountPercent);
       console.log("clinic.defaultInvitedDiscountPercent:", clinic.defaultInvitedDiscountPercent);
       
+      // Log ALL properties in settings to find referral data
+      console.log("All settings properties:");
+      Object.keys(clinic.settings || {}).forEach(key => {
+        console.log(`  ${key}:`, clinic.settings[key]);
+        if (key.toLowerCase().includes('referral') || key.toLowerCase().includes('discount')) {
+          console.log(`    ^ Found referral/discount related property: ${key}`);
+        }
+      });
+      
+      // Also check ALL clinic properties for referral data
+      console.log("All clinic properties:");
+      Object.keys(clinic || {}).forEach(key => {
+        if (key.toLowerCase().includes('referral') || key.toLowerCase().includes('discount')) {
+          console.log(`  Found clinic property: ${key}:`, clinic[key]);
+        }
+      });
+      
       // Check if settings is a string that needs parsing
       if (typeof clinic.settings === 'string') {
         try {
