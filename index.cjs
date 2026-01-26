@@ -7785,7 +7785,11 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
                 inviterPatientId: ref.inviter_patient_id,
                 invitedPatientId: ref.invited_patient_id,
                 inviterPatientName: result.inviterPatientName,
-                invitedPatientName: result.invitedPatientName
+                invitedPatientName: result.invitedPatientName,
+                discountPercent: ref.discount_percent,
+                inviterDiscountPercent: ref.inviter_discount_percent,
+                invitedDiscountPercent: ref.invited_discount_percent,
+                legacyDiscountPercent: legacyItem.discountPercent
               });
               return result;
             }
