@@ -395,6 +395,28 @@
       }
       const clinic = await res.json();
       console.log("Clinic data from API:", clinic); // Debug: Log the full clinic structure
+      
+      // Debug: Explore all possible paths for referral settings
+      console.log("Checking all possible referral paths:");
+      console.log("clinic.settings:", clinic.settings);
+      console.log("clinic.settings?.referralLevel1Percent:", clinic.settings?.referralLevel1Percent);
+      console.log("clinic.settings?.referralLevels:", clinic.settings?.referralLevels);
+      console.log("clinic.referralLevels:", clinic.referralLevels);
+      console.log("clinic.defaultInviterDiscountPercent:", clinic.defaultInviterDiscountPercent);
+      console.log("clinic.defaultInvitedDiscountPercent:", clinic.defaultInvitedDiscountPercent);
+      
+      // Check if settings is a string that needs parsing
+      if (typeof clinic.settings === 'string') {
+        try {
+          const parsedSettings = JSON.parse(clinic.settings);
+          console.log("Parsed clinic.settings:", parsedSettings);
+          console.log("Parsed settings referral paths:");
+          console.log("parsedSettings.referralLevel1Percent:", parsedSettings.referralLevel1Percent);
+          console.log("parsedSettings.referralLevels:", parsedSettings.referralLevels);
+        } catch (e) {
+          console.warn("Failed to parse clinic.settings as JSON:", e);
+        }
+      }
       const toNumOrNull = (v) => {
         if (v === "" || v === undefined || v === null) return null;
         const n = Number(v);
@@ -438,10 +460,10 @@
         const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent ?? 0, invited: defaultInvitedPercent ?? 0 }) : `Varsayılan indirimler: Davet Eden %${defaultInviterPercent ?? 0}, Davet Edilen %${defaultInvitedPercent ?? 0}`;
         setMsg(msg, "ok");
       } else {
-        // Fallback: if no discount data found, try to use hardcoded values based on your settings
+        // Fallback: if no discount data found, use values that comply with backend validation (0-50)
         console.warn("No discount data found in clinic settings, using fallback values");
-        defaultInviterPercent = 66; // Based on your Level 1 setting
-        defaultInvitedPercent = 66; // Same as inviter for now
+        defaultInviterPercent = 25; // Within 0-50 range as required by backend
+        defaultInvitedPercent = 25; // Same as inviter for now
         const msg = window.i18n ? window.i18n.t('referrals.defaultDiscounts', { inviter: defaultInviterPercent, invited: defaultInvitedPercent }) : `Varsayılan indirimler (fallback): Davet Eden %${defaultInviterPercent}, Davet Edilen %${defaultInvitedPercent}`;
         setMsg(msg, "ok");
       }
