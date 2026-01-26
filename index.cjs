@@ -10228,11 +10228,19 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
       // Check Supabase
       if (isSupabaseEnabled) {
         try {
+          console.log(`[SUPER_ADMIN] Looking for clinic in Supabase: ${clinicId}`);
           const { data: supabaseClinic, error } = await supabase
             .from("clinics")
             .select("id, name, email, status")
             .eq("id", clinicId)
             .single();
+          
+          console.log(`[SUPER_ADMIN] Supabase clinic lookup result:`, { 
+            clinicId, 
+            found: !!supabaseClinic, 
+            status: supabaseClinic?.status,
+            error: error?.message 
+          });
           
           if (!error && supabaseClinic) {
             clinic = supabaseClinic;
@@ -10253,6 +10261,12 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
     
     if (isSupabaseClinic) {
       // Update in Supabase
+      console.log(`[SUPER_ADMIN] Updating clinic in Supabase: ${clinicId}`, {
+        currentStatus: oldStatus,
+        newStatus: "SUSPENDED",
+        reason: reason || "Suspended by super admin"
+      });
+      
       const { error } = await supabase
         .from("clinics")
         .update({
@@ -10265,6 +10279,8 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
         console.error("[SUPER_ADMIN] Failed to suspend clinic in Supabase:", error);
         return res.status(500).json({ ok: false, error: "update_failed", message: "Failed to suspend clinic" });
       }
+      
+      console.log(`[SUPER_ADMIN] Successfully updated clinic in Supabase: ${clinicId}`);
     } else {
       // Update in file
       clinic.status = "SUSPENDED";
