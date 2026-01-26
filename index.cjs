@@ -9236,7 +9236,7 @@ async function requireAdminAuth(req, res, next) {
       if (clinic) {
         req.clinicId = clinic.id;              // Supabase UUID
         req.clinicCode = clinic.clinic_code;   // e.g. "ORDU"
-        req.clinicStatus = clinic.settings?.status || "ACTIVE";
+        req.clinicStatus = clinic.status || "ACTIVE";  // Use direct status field
         req.clinic = clinic;
         
         // Only reject if clinic is suspended
