@@ -8715,7 +8715,7 @@ app.get("/api/admin/referral-events", requireAdminToken, async (req, res) => {
 // GET /api/admin/events
 // Get all events from all patients (travel events + treatment events)
 // Filters: upcoming (next 14 days, excluding today), overdue (past but not completed)
-app.get("/api/admin/events", requireAdminToken, async (req, res) => {
+app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
   try {
     const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
     if (!clinicCode) {
