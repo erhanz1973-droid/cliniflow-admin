@@ -456,6 +456,14 @@
       // File-based clinics may still have defaultInviterDiscountPercent/defaultInvitedDiscountPercent.
       // Backend API returns default_inviter_discount_percent and default_invited_discount_percent directly.
       // Settings may be a JSON string that needs parsing.
+      
+      // Debug each path specifically
+      console.log("Debugging extraction paths:");
+      console.log("1. parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
+      console.log("2. parsedSettings?.referralLevels?.level1:", parsedSettings?.referralLevels?.level1);
+      console.log("3. clinic?.referralLevels?.level1:", clinic?.referralLevels?.level1);
+      console.log("4. clinic?.default_inviter_discount_percent:", clinic?.default_inviter_discount_percent);
+      
       const level1Raw =
         parsedSettings?.referralLevel1Percent ??
         parsedSettings?.referralLevels?.level1 ??
@@ -465,6 +473,12 @@
       const inviter = toNumOrNull(level1Raw);
       
       // For invited discount, check the same paths first, then fallback to invited-specific fields
+      console.log("Debugging invited extraction paths:");
+      console.log("1. parsedSettings?.referralLevel1Percent:", parsedSettings?.referralLevel1Percent);
+      console.log("2. parsedSettings?.referralLevels?.level1:", parsedSettings?.referralLevels?.level1);
+      console.log("3. clinic?.referralLevels?.level1:", clinic?.referralLevels?.level1);
+      console.log("4. clinic?.default_invited_discount_percent:", clinic?.default_invited_discount_percent);
+      
       const invitedLevel1Raw =
         parsedSettings?.referralLevel1Percent ??
         parsedSettings?.referralLevels?.level1 ??
