@@ -7759,11 +7759,41 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
 
       let lastError = null;
       for (const orClause of queryVariants) {
-        let q = supabase.from("referrals").select("*").or(orClause);
+        let q = supabase.from("referrals").select(`
+          *,
+          inviter_patient:inviter_patient_id (
+            patientId:patient_id,
+            firstName:first_name,
+            lastName:last_name,
+            fullName:full_name
+          ),
+          invited_patient:invited_patient_id (
+            patientId:patient_id,
+            firstName:first_name,
+            lastName:last_name,
+            fullName:full_name
+          )
+        `).or(orClause);
         if (req.isAdmin && req.clinicId) q = q.eq("clinic_id", req.clinicId);
         const { data, error } = await q.order("created_at", { ascending: false });
         if (!error) {
-          let items = (data || []).map(mapReferralRowToLegacyItem).filter(Boolean);
+          let items = (data || []).map(ref => {
+            const legacyItem = mapReferralRowToLegacyItem(ref);
+            if (legacyItem) {
+              return {
+                ...legacyItem,
+                inviterPatientName: ref.inviter_patient ? 
+                  (ref.inviter_patient.fullName || 
+                   `${ref.inviter_patient.firstName || ''} ${ref.inviter_patient.lastName || ''}`.trim() || 
+                   ref.inviter_patient.patientId) : null,
+                invitedPatientName: ref.invited_patient ? 
+                  (ref.invited_patient.fullName || 
+                   `${ref.invited_patient.firstName || ''} ${ref.invited_patient.lastName || ''}`.trim() || 
+                   ref.invited_patient.patientId) : null
+              };
+            }
+            return null;
+          }).filter(Boolean);
           if (status) items = items.filter((x) => x.status === status);
           if (items.length === 0) {
             return respondFromFile();
