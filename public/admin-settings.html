@@ -507,7 +507,7 @@
       }
 
       // Load clinic settings from API (uses token to identify clinic)
-      const res = await fetch(`${API}/api/admin/clinic`, {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json'
@@ -657,6 +657,12 @@
         const payload = {
       plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
       referral_discount_percent: $("referralDiscountPercent").value.trim(),
+      // 🎯 Eski referral sistemi için settings
+      settings: {
+        referralLevels: {
+          level1: parseInt($("referralDiscountPercent").value) || 10
+        }
+      }
     };
     
     // NEVER send clinic_code in UPDATE requests
@@ -778,7 +784,7 @@
         return;
       }
 
-      const res = await fetch(`${API}/api/admin/treatment-prices`, {
+      const res = await fetch(`${API_BASE}/api/admin/treatment-prices`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json'
@@ -931,7 +937,7 @@
           };
 
           promises.push(
-            fetch(`${API}/api/admin/treatment-prices`, {
+            fetch(`${API_BASE}/api/admin/treatment-prices`, {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${token}`,
@@ -952,7 +958,7 @@
           };
 
           promises.push(
-            fetch(`${API}/api/admin/treatment-prices`, {
+            fetch(`${API_BASE}/api/admin/treatment-prices`, {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${token}`,
