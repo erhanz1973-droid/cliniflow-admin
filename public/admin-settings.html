@@ -642,88 +642,90 @@
     console.log("🚀 SAVE CLICKED - Form submit triggered!");
     e.preventDefault();
     
-    // Get admin token from localStorage
-    const token = localStorage.getItem('admin_token') || '';
-    
-    if (!token) {
-      const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
-      $("status").innerHTML = `<div class="status error">${msg}</div>`;
-      return;
-    }
-
-        const payload = {
-      plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
-      referral_discount_percent: $("referralDiscountPercent").value.trim(),
-      // 🎯 Eski referral sistemi için settings
-      settings: {
-        referralLevels: {
-          level1: parseInt($("referralDiscountPercent").value) || 10
-        }
+    try {
+      // Get admin token from localStorage
+      const token = localStorage.getItem('admin_token') || '';
+      
+      if (!token) {
+        const msg = 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
+        $("#status").innerHTML = '<div class="status error">' + msg + '</div>';
+        return;
       }
-    };
-    
-    // NEVER send clinic_code in UPDATE requests
-    delete payload.clinic_code;
-    delete payload.id;
-    delete payload.created_at;
-    delete payload.clinicId;
-    
-    console.log("Submitting payload with plan:", payload.plan);
-    console.log("Dropdown value:", $("plan")?.value);
-    console.log("clinicPlan variable:", clinicPlan);
-    console.log("Complete payload being sent:", JSON.stringify(payload, null, 2));
-    console.log("Referral discount from input:", $("referralDiscountPercent").value.trim());
-    const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
-    if (!brandingLocked) {
-      const colors = getSelectedColors();
-      payload.branding = {
-        clinicName: $("clinicName").value.trim(),
-        clinicLogoUrl: $("clinicLogoUrl").value.trim(),
-        address: $("clinicAddress").value.trim(),
-        googleMapLink: $("googleMapLink").value.trim(),
-        primaryColor: colors.primaryColor,
-        secondaryColor: colors.secondaryColor,
-        welcomeMessage: $("welcomeMessage").value.trim(),
-        showPoweredBy: $("showPoweredBy")?.checked !== false,
+
+      const payload = {
+        plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
+        referral_discount_percent: $("referralDiscountPercent").value.trim(),
+        // 🎯 Eski referral sistemi için settings
+        settings: {
+          referralLevels: {
+            level1: parseInt($("referralDiscountPercent").value) || 10
+          }
+        }
       };
-    }
+      
+      // NEVER send clinic_code in UPDATE requests
+      delete payload.clinic_code;
+      delete payload.id;
+      delete payload.created_at;
+      delete payload.clinicId;
+      
+      console.log("Submitting payload with plan:", payload.plan);
+      console.log("Dropdown value:", $("plan")?.value);
+      console.log("clinicPlan variable:", clinicPlan);
+      console.log("Complete payload being sent:", JSON.stringify(payload, null, 2));
+      console.log("Referral discount from input:", $("referralDiscountPercent").value.trim());
+      const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
+      if (!brandingLocked) {
+        const colors = getSelectedColors();
+        payload.branding = {
+          clinicName: $("clinicName").value.trim(),
+          clinicLogoUrl: $("clinicLogoUrl").value.trim(),
+          address: $("clinicAddress").value.trim(),
+          googleMapLink: $("googleMapLink").value.trim(),
+          primaryColor: colors.primaryColor,
+          secondaryColor: colors.secondaryColor,
+          welcomeMessage: $("welcomeMessage").value.trim(),
+          showPoweredBy: $("showPoweredBy")?.checked !== false,
+        };
+      }
 
-    const loadingMsg = 'Kaydediliyor...';
-    $("#status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
-      
-    console.log("🚀 SENDING PUT /api/admin/clinic", payload);
-      
-    const res = await fetch(API_BASE + '/api/admin/clinic', {
-      method: "PUT",
-      headers: { 
-        "Content-Type": "application/json",
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
+      const loadingMsg = 'Kaydediliyor...';
+      $("#status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
+        
+      console.log("🚀 SENDING PUT /api/admin/clinic", payload);
+        
+      const res = await fetch(API_BASE + '/api/admin/clinic', {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': 'Bearer ' + token,
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
 
-    const data = await res.json();
+      const data = await res.json();
+        
+      console.log("Backend response:", data);
+      console.log("Submitted plan was:", payload.plan);
       
-    console.log("Backend response:", data);
-    console.log("Submitted plan was:", payload.plan);
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'HTTP ' + res.status);
+      }
+
+      const successMsg = '✅ Ayarlar kaydedildi!';
+      $("#status").innerHTML = '<div class="status success">' + successMsg + '</div>';
+      
+      // Update the local clinicPlan variable to reflect the saved plan
+      clinicPlan = payload.plan;
+      console.log("Updated local clinicPlan to:", clinicPlan);
     
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || 'HTTP ' + res.status);
+    } catch (error) {
+      console.error("Save clinic settings error:", error);
+      const errorMsg = 'Kaydetme hatası: ' + error.message;
+      $("#status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
     }
-
-    const successMsg = '✅ Ayarlar kaydedildi!';
-    $("#status").innerHTML = '<div class="status success">' + successMsg + '</div>';
-    
-    // Update the local clinicPlan variable to reflect the saved plan
-    clinicPlan = payload.plan;
-    console.log("Updated local clinicPlan to:", clinicPlan);
-  
-  } catch (error) {
-    console.error("Save clinic settings error:", error);
-    const errorMsg = 'Kaydetme hatası: ' + error.message;
-    $("#status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
-  }
+  });
 
   // Load settings on page load
   loadClinicSettings();
