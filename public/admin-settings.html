@@ -495,7 +495,7 @@
       const token = localStorage.getItem('admin_token') || '';
       
       if (!token) {
-        const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
+        const msg = 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
         $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
         return;
       }
@@ -631,7 +631,7 @@
 
     } catch (error) {
       console.error("Load clinic settings error:", error);
-      const msg = window.i18n ? window.i18n.t('settings.errors.loadFailed', { error: error.message }) : `Ayarlar yüklenemedi: ${error.message}`;
+      const msg = 'Ayarlar yüklenemedi: ' + error.message;
       $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
     }
   }
@@ -778,7 +778,7 @@
       const token = localStorage.getItem('admin_token') || '';
       if (!token) {
         console.log("❌ No token found");
-        const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı.';
+        const msg = 'Admin token bulunamadı.';
         $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
         return;
       }
@@ -820,7 +820,7 @@
       console.log("✅ loadPrices() completed");
     } catch (error) {
       console.error("❌ Load prices error:", error);
-      const msg = window.i18n ? window.i18n.t('settings.errors.pricesLoadFailed', { error: error.message }) : `Fiyatlar yüklenemedi: ${error.message}`;
+      const msg = 'Fiyatlar yüklenemedi: ' + error.message;
       $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
     }
   }
