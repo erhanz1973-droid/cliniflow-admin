@@ -6915,8 +6915,10 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         console.log(`[PUT /api/admin/clinic] Updating clinic in Supabase: ${req.clinicId}`);
         
         // Prepare update data for Supabase (remove password from update, handle separately)
+        const isCreate = false; // PUT endpoint - always update, never create
+        
         const supabaseUpdate = {
-          clinic_code: updated.clinicCode || updated.code,
+         ...(isCreate ? { clinic_code: updated.clinicCode || updated.code } : {}),
           name: updated.name,
           plan: updated.plan,
           max_patients: updated.max_patients,
@@ -6940,8 +6942,33 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           supabaseUpdate.password_hash = passwordHash;
         }
         
-        await updateClinic(req.clinicId, supabaseUpdate);
-        console.log(`[PUT /api/admin/clinic] ✅ Clinic updated in Supabase`);
+        console.log("[DEBUG] isCreate:", isCreate);
+        console.log("[DEBUG] supabaseUpdate keys:", Object.keys(supabaseUpdate));
+        console.log("[DEBUG] supabaseUpdate payload:", supabaseUpdate);
+        
+        // 🔒 UPDATE sırasında unique alanları koru
+        delete supabaseUpdate.clinic_code;
+        
+        console.log("[DEBUG] Supabase update payload:", supabaseUpdate);
+        
+        const { data, error } = await supabase
+          .from("clinics")
+          .update(supabaseUpdate)
+          .eq("id", req.clinicId)
+          .select()
+          .single();
+        
+        if (error) {
+          console.error("[PUT /api/admin/clinic] Supabase update error:", error);
+          return res.status(400).json({ ok: false, error: error.message });
+        }
+        
+        console.log(`[PUT /api/admin/clinic] ✅ Clinic updated in Supabase:`, data);
+        
+        // Return success response immediately for Supabase
+        const { password_hash, ...safeData } = data || updated;
+        return res.json({ ok: true, clinic: safeData });
+        
       } catch (supabaseError) {
         console.error(`[PUT /api/admin/clinic] ❌ Failed to update clinic in Supabase:`, supabaseError.message);
         // Continue with file-based storage as fallback
