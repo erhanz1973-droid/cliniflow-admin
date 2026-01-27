@@ -89,10 +89,14 @@
             HOTEL: "Otel",
             AIRPORT_PICKUP: "Havalimanı Karşılama",
             TREATMENT: "Tedavi",
-            CONSULT: "Konsültasyon",
-            FOLLOWUP: "Takip",
-            LAB: "Lab / Tarama",
-            HEALTH: "Genel Kontrol"
+            CONSULT: "Muayene",
+            FOLLOWUP: "Kontrol",
+            LAB: "Laboratuvar / Tarama",
+            HEALTH: "Sağlık Formu",
+            APPOINTMENT: "Randevu",
+            PAYMENT: "Ödeme",
+            SURGERY: "Cerrahi",
+            CHECKUP: "Kontrol"
           },
           summary: {
             overdue: "Gecikmiş:",
@@ -405,7 +409,11 @@
             CONSULT: "Consultation",
             FOLLOWUP: "Follow-up",
             LAB: "Lab / Scan",
-            HEALTH: "General Check-up"
+            HEALTH: "Health Form",
+            APPOINTMENT: "Appointment",
+            PAYMENT: "Payment",
+            SURGERY: "Surgery",
+            CHECKUP: "Checkup"
           },
           summary: {
             overdue: "Overdue:",
