@@ -496,7 +496,10 @@
       
       if (!token) {
         const msg = 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
-        $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
+        const statusEl = $("status");
+        if (statusEl) {
+          statusEl.innerHTML = '<div class="status error">' + msg + '</div>';
+        }
         return;
       }
 
@@ -632,7 +635,10 @@
     } catch (error) {
       console.error("Load clinic settings error:", error);
       const msg = 'Ayarlar yüklenemedi: ' + error.message;
-      $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
+      const statusEl = $("status");
+      if (statusEl) {
+        statusEl.innerHTML = '<div class="status error">' + msg + '</div>';
+      }
     }
   }
 
@@ -690,7 +696,10 @@
       }
 
       const loadingMsg = 'Kaydediliyor...';
-      $("#status")?.innerHTML = '<div class="status">' + loadingMsg + '</div>';
+      const loadingStatusEl = $("#status");
+      if (loadingStatusEl) {
+        loadingStatusEl.innerHTML = '<div class="status">' + loadingMsg + '</div>';
+      }
         
       console.log("🚀 SENDING PUT /api/admin/clinic", payload);
         
@@ -714,7 +723,10 @@
       }
 
       const successMsg = '✅ Ayarlar kaydedildi!';
-      $("#status")?.innerHTML = '<div class="status success">' + successMsg + '</div>';
+      const successStatusEl = $("#status");
+      if (successStatusEl) {
+        successStatusEl.innerHTML = '<div class="status success">' + successMsg + '</div>';
+      }
       
       // Update the local clinicPlan variable to reflect the saved plan
       clinicPlan = payload.plan;
@@ -723,7 +735,10 @@
     } catch (error) {
       console.error("Save clinic settings error:", error);
       const errorMsg = 'Kaydetme hatası: ' + error.message;
-      $("#status")?.innerHTML = '<div class="status error">' + errorMsg + '</div>';
+      const statusErrorEl = $("#status");
+      if (statusErrorEl) {
+        statusErrorEl.innerHTML = '<div class="status error">' + errorMsg + '</div>';
+      }
     }
   });
 
