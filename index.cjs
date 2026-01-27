@@ -9942,6 +9942,15 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
           for (const clinic of supabaseClinics) {
             const clinicCode = (clinic.clinic_code || "").toUpperCase();
             
+            // Debug: Log each clinic from Supabase
+            console.log(`[SUPER_ADMIN] Processing Supabase clinic:`, {
+              id: clinic.id,
+              name: clinic.name,
+              clinic_code: clinic.clinic_code,
+              status: clinic.status,
+              statusUpper: (clinic.status || "").toUpperCase()
+            });
+            
             // Calculate basic stats for this clinic using Supabase patients
             const clinicPatients = supabasePatients.filter(p => 
               p.clinic_id === clinic.id
