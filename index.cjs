@@ -8175,8 +8175,19 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
           .single();
         
         if (updateError) {
-          console.error(`[REFERRAL REJECT] Supabase error:`, updateError);
-          return res.status(500).json({ ok: false, error: "update_failed" });
+          console.error(`[REFERRAL REJECT] Supabase error:`, {
+            error: updateError,
+            message: updateError.message,
+            details: updateError.details,
+            code: updateError.code,
+            hint: updateError.hint
+          });
+          return res.status(500).json({ 
+            ok: false, 
+            error: "update_failed", 
+            message: updateError.message || "Failed to reject referral",
+            details: updateError.details
+          });
         }
         
         console.log(`[REFERRAL REJECT] ✅ Rejected referral ${id} in Supabase`);
