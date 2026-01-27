@@ -6925,9 +6925,6 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           address: updated.address,
           phone: updated.phone,
           website: updated.website,
-          // 🎯 Yeni referral sistem field'ları
-          referral_per_invite_percent: parseInt(body.referralPerInvitePercent) || 10,
-          referral_max_total_percent: parseInt(body.referralMaxTotalPercent) || 10,
           settings: {
             branding: updatedBranding,
             defaultInviterDiscountPercent: inviterPercent,
@@ -10859,13 +10856,13 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
     }
 
-    const clinicId = req.clinicId;
-    if (!clinicId || !req.clinic?.id) {
-      return res.status(400).json({
-        ok: false,
-        error: "clinic_not_synced",
-        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
-      });
+    // 🔒 FIX: Ensure clinicId is available
+    const clinicId = req.clinicId || req.clinic?.id;
+    console.log("[PRICES GET] clinicId:", clinicId);
+    
+    if (!clinicId) {
+      console.error("[PRICES GET] Missing clinicId");
+      return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
     const { data, error } = await supabase
@@ -10926,13 +10923,13 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
     }
 
-    const clinicId = req.clinicId;
-    if (!clinicId || !req.clinic?.id) {
-      return res.status(400).json({
-        ok: false,
-        error: "clinic_not_synced",
-        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
-      });
+    // 🔒 FIX: Ensure clinicId is available
+    const clinicId = req.clinicId || req.clinic?.id;
+    console.log("[PRICES POST] clinicId:", clinicId);
+    
+    if (!clinicId) {
+      console.error("[PRICES POST] Missing clinicId");
+      return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
     const { treatment_name, default_price, currency, is_active } = req.body || {};
@@ -11053,18 +11050,19 @@ app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res)
       return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
     }
 
-    const clinicId = req.clinicId;
+    // 🔒 FIX: Ensure clinicId is available
+    const clinicId = req.clinicId || req.clinic?.id;
+    console.log("[PRICES DELETE] clinicId:", clinicId);
+    
+    if (!clinicId) {
+      console.error("[PRICES DELETE] Missing clinicId");
+      return res.status(400).json({ ok: false, error: "clinic_id_missing" });
+    }
+
     const { id } = req.params;
 
     if (!id) {
       return res.status(400).json({ ok: false, error: "id_required", message: "Price ID is required" });
-    }
-    if (!clinicId || !req.clinic?.id) {
-      return res.status(400).json({
-        ok: false,
-        error: "clinic_not_synced",
-        message: "Clinic not found in Supabase. Re-register clinic or run clinic migration.",
-      });
     }
 
     const { data, error } = await supabase
