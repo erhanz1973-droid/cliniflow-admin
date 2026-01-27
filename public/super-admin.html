@@ -741,9 +741,14 @@
     container.innerHTML = '<div class="loading">Loading clinics...</div>';
 
     try {
+      console.log("[SUPER_ADMIN] Loading clinics from:", `${API}/api/super-admin/clinics`);
+      
       const res = await fetch(`${API}/api/super-admin/clinics`, {
         headers: superAdminHeaders({ Accept: "application/json" })
       });
+
+      console.log("[SUPER_ADMIN] Response status:", res.status);
+      console.log("[SUPER_ADMIN] Response headers:", res.headers.get("content-type"));
 
       // Check content type before parsing
       const contentType = res.headers.get("content-type");
@@ -751,6 +756,7 @@
       
       if (contentType && contentType.includes("application/json")) {
         data = await res.json();
+        console.log("[SUPER_ADMIN] Response data:", data);
       } else {
         const text = await res.text();
         console.error("Non-JSON response:", text.substring(0, 200));
