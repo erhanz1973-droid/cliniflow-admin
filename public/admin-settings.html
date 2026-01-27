@@ -1071,15 +1071,13 @@
     if (discount === 0) {
       previewText.innerHTML = '<span style="color: #ef4444;">❌ No discount will be applied</span>';
     } else if (discount <= 10) {
-      previewText.innerHTML = `✅ <strong>${discount}% discount</strong> will be applied to both referrer and referred patient.<br><span style="color: #10b981;">💡 Great starting point for attracting new patients!</span>`;
+      previewText.innerHTML = '✅ <strong>' + discount + '% discount</strong> will be applied to both referrer and referred patient.<br><span style="color: #10b981;">💡 Great starting point for attracting new patients!</span>';
     } else if (discount <= 20) {
-      previewText.innerHTML = `🎉 <strong>${discount}% discount</strong> for both parties.<br><span style="color: #f59e0b;">⚠️ Higher discount but more attractive referrals!</span>`;
-    } else if (discount <= 30) {
-      previewText.innerHTML = `🚀 <strong>${discount}% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>`;
+      previewText.innerHTML = '🎉 <strong>' + discount + '% discount</strong> for both parties.<br><span style="color: #f59e0b;">⚠️ Higher discount but more attractive referrals!</span>';
     } else {
-      previewText.innerHTML = `🚀 <strong>${discount}% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>`;
+      previewText.innerHTML = '🚀 <strong>' + discount + '% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>';
     }
-  };
+  }
 
   // Initialize preview on page load
   document.addEventListener('DOMContentLoaded', function() {
