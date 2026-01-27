@@ -6812,7 +6812,13 @@ function planToMaxPatients(plan) {
 // PUT /api/admin/clinic (Admin günceller) - token-based (multi-clinic)
 app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
   try {
-    // requireAdminToken middleware already sets req.clinic
+      // 🔒 UPDATE sırasında unique alanları koru
+    delete req.body.clinic_code
+    delete req.body.clinicCode
+    delete req.body.code
+
+    console.log("[DEBUG] clinic update payload:", req.body)
+// requireAdminToken middleware already sets req.clinic
     // Use it directly - no need to lookup again
     if (!req.clinic) {
       console.error("[PUT /api/admin/clinic] Clinic not found in req.clinic, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
