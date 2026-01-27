@@ -613,45 +613,32 @@
     const typeUpper = String(type).toUpperCase();
     const key = `dashboard.upcoming.eventTypes.${typeUpper}`;
     
-    // Debug: Log i18n status
-    console.log("[getEventTypeLabel] Debug:", {
-      type: type,
-      typeUpper: typeUpper,
-      key: key,
-      hasI18n: !!window.i18n,
-      i18nObj: window.i18n,
-      currentLang: window.i18n ? window.i18n.currentLang : null
-    });
-    
+    // Try to get translation from i18n system
     const translated = window.i18n ? window.i18n.t(key) : null;
-    console.log("[getEventTypeLabel] Translation result:", {
-      translated: translated,
-      isKey: translated === key
-    });
     
-    // Fallback to hardcoded if translation not found
+    // If translation found and it's not the key itself, return it
     if (translated && translated !== key) {
       return translated;
     }
-    // Fallback labels (should not be used if i18n is working)
+    
+    // Fallback to English labels if i18n is not working
     const fallbackLabels = {
-      "TRAVEL_EVENT": "Seyahat Etkinliği",
-      "FLIGHT": "Uçuş",
-      "HOTEL": "Otel",
-      "AIRPORT_PICKUP": "Havalimanı Karşılama",
-      "TREATMENT": "Tedavi",
-      "CONSULT": "Muayene",
-      "FOLLOWUP": "Kontrol",
-      "LAB": "Laboratuvar / Tarama",
-      "HEALTH": "Sağlık Formu",
-      "APPOINTMENT": "Randevu",
-      "PAYMENT": "Ödeme",
-      "SURGERY": "Cerrahi",
-      "CHECKUP": "Kontrol"
+      "TRAVEL_EVENT": "Travel Event",
+      "FLIGHT": "Flight",
+      "HOTEL": "Hotel",
+      "AIRPORT_PICKUP": "Airport Pickup",
+      "TREATMENT": "Treatment",
+      "CONSULT": "Consultation",
+      "FOLLOWUP": "Follow-up",
+      "LAB": "Lab / Scan",
+      "HEALTH": "Health Form",
+      "APPOINTMENT": "Appointment",
+      "PAYMENT": "Payment",
+      "SURGERY": "Surgery",
+      "CHECKUP": "Checkup"
     };
-    const fallback = fallbackLabels[typeUpper] || type;
-    console.log("[getEventTypeLabel] Using fallback:", fallback);
-    return fallback;
+    
+    return fallbackLabels[typeUpper] || type;
   }
 
   function renderOverdueBanner(overdue) {
@@ -867,7 +854,7 @@
             <div style="flex:1;">
               <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                 <span style="font-size:18px;">${eventIcon}</span>
-                <div class="item-title" ${titleStyle}>${evt.title || getEventTypeLabel(evt.type)}</div>
+                <div class="item-title" ${titleStyle}>${getEventTypeLabel(evt.type) || evt.title}</div>
               </div>
               <div class="item-meta" ${metaStyle}>
                 ${patientName || ''}

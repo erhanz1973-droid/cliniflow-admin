@@ -709,25 +709,29 @@
         z-index: 1000;
         display: flex;
         gap: 8px;
-        background: var(--card, #020617);
-        border: 1px solid var(--b, #1f2937);
-        border-radius: 8px;
-        padding: 4px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        background: var(--card, #1f2937);
+        border: 1px solid var(--b, #374151);
+        border-radius: 12px;
+        padding: 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        backdrop-filter: blur(10px);
       `;
       
       const trBtn = document.createElement('button');
-      trBtn.textContent = 'TR';
+      trBtn.textContent = '🇹🇷 TR';
       trBtn.style.cssText = `
-        padding: 6px 12px;
+        padding: 8px 14px;
         border: none;
-        border-radius: 6px;
+        border-radius: 8px;
         background: ${this.currentLang === 'tr' ? 'var(--p, #2563eb)' : 'transparent'};
         color: ${this.currentLang === 'tr' ? '#fff' : 'var(--muted, #a7b2c8)'};
         cursor: pointer;
         font-weight: 600;
         font-size: 13px;
-        transition: all 0.2s;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 4px;
       `;
       trBtn.onclick = () => {
         if (typeof window.onLanguageChange === 'function') window.onLanguageChange('tr');
@@ -735,17 +739,20 @@
       };
       
       const enBtn = document.createElement('button');
-      enBtn.textContent = 'EN';
+      enBtn.textContent = '🇬🇧 EN';
       enBtn.style.cssText = `
-        padding: 6px 12px;
+        padding: 8px 14px;
         border: none;
-        border-radius: 6px;
+        border-radius: 8px;
         background: ${this.currentLang === 'en' ? 'var(--p, #2563eb)' : 'transparent'};
         color: ${this.currentLang === 'en' ? '#fff' : 'var(--muted, #a7b2c8)'};
         cursor: pointer;
         font-weight: 600;
         font-size: 13px;
-        transition: all 0.2s;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        gap: 4px;
       `;
       enBtn.onclick = () => {
         if (typeof window.onLanguageChange === 'function') window.onLanguageChange('en');
