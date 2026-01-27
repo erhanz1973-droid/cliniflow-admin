@@ -244,6 +244,40 @@
         </select>
         <div class="muted" data-i18n="settings.subscriptionPlanHelp">FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.</div>
 
+        <div style="background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <h3 style="margin: 0 0 16px 0; color: var(--primary, #2563eb); font-size: 16px;" data-i18n="settings.referralSettings">🎯 Referral Ayarları</h3>
+          <div class="muted" data-i18n="settings.referralSettingsHelp">Davet sistemi için kazanç oranlarını belirleyin. PRO planında esnek ayarlar mevcuttur.</div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
+            <div>
+              <label data-i18n="settings.referralPerInvite">Davet başına kazanç (%)</label>
+              <input type="number" id="referralPerInvitePercent" min="0" max="50" value="10" data-i18n-placeholder="settings.referralPerInvitePlaceholder" />
+              <div class="muted" style="font-size: 12px; margin-top: 4px;" data-i18n="settings.referralPerInviteHelp">Her başarılı davet için verilecek indirim</div>
+            </div>
+            <div>
+              <label data-i18n="settings.referralMaxTotal">Maksimum toplam indirim (%)</label>
+              <input type="number" id="referralMaxTotalPercent" min="0" max="50" value="10" data-i18n-placeholder="settings.referralMaxTotalPlaceholder" />
+              <div class="muted" style="font-size: 12px; margin-top: 4px;" data-i18n="settings.referralMaxTotalHelp">Davet edenin kazanabileceği maksimum indirim</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 20px; margin: 20px 0;">
+          <h3 style="margin: 0 0 16px 0; color: var(--warning, #f59e0b); font-size: 16px;" data-i18n="settings.temporaryPatientLimit">🔧 Geçici Hasta Limiti</h3>
+          <div class="muted" data-i18n="settings.temporaryPatientLimitHelp">Satış ve onboarding süreçleri için geçici hasta limiti ekleyin. Bu, normal plan limitinin üzerine eklenir.</div>
+          
+          <div style="display: flex; gap: 12px; align-items: end; margin-top: 16px;">
+            <div style="flex: 1;">
+              <label data-i18n="settings.temporaryLimit">Geçici Limit</label>
+              <input type="number" id="temporaryLimit" min="0" placeholder="5" data-i18n-placeholder="settings.temporaryLimitPlaceholder" />
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="saveTemporaryLimit" style="background: var(--g); color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;" data-i18n="settings.saveTemporaryLimit">Geçici Limiti Kaydet</button>
+              <button type="button" id="removeTemporaryLimit" style="background: var(--r); color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; display: none;" data-i18n="settings.removeTemporaryLimit">Geçici Limiti Kaldır</button>
+            </div>
+          </div>
+          <div id="temporaryLimitStatus" style="margin-top: 12px; font-size: 14px; color: var(--muted);"></div>
+        </div>
 
         <label data-i18n="settings.clinicName">Clinic Name</label>
         <input type="text" id="clinicName" placeholder="My Clinic" />
@@ -473,19 +507,54 @@
       
       const clinic = await res.json();
       
+      console.log("Complete clinic object from backend:", clinic);
+      console.log("Clinic plan fields:", {
+        plan: clinic.plan,
+        subscriptionPlan: clinic.subscriptionPlan,
+        'settings.plan': clinic.settings?.plan,
+        'settings.subscriptionPlan': clinic.settings?.subscriptionPlan
+      });
+      console.log("Clinic discount fields:", {
+        'settings.referralLevel1Percent': clinic.settings?.referralLevel1Percent,
+        'settings.referralLevels.level1': clinic.settings?.referralLevels?.level1,
+        'referralLevels.level1': clinic.referralLevels?.level1,
+        'default_inviter_discount_percent': clinic.default_inviter_discount_percent,
+        'referral_discount_percent': clinic.referral_discount_percent,
+        'inviter_discount_percent': clinic.inviter_discount_percent,
+        'discount_percent': clinic.discount_percent
+      });
+      
       // Backend returns clinic object directly, not wrapped in { ok: true, clinic: {...} }
       const branding = clinic.branding || {};
       // IMPORTANT:
       // - subscriptionStatus is NOT a plan (can be TRIAL/ACTIVE) and would break the dropdown.
       // - Only use plan fields for plan UI.
-      clinicPlan = normalizePlanValue(
-        clinic.plan ||
-          clinic.subscriptionPlan ||
-          clinic.settings?.subscriptionPlan ||
-          clinic.settings?.plan ||
+      const loadedPlan = normalizePlanValue(
+        clinic.plan ??
+          clinic.subscriptionPlan ??
+          clinic.settings?.subscriptionPlan ??
+          clinic.settings?.plan ??
+          clinic.clinicPlan ??
+          clinic.subscription_plan ??
           "FREE"
       );
-      if ($("plan")) $("plan").value = clinicPlan;
+      
+      console.log("Plan loading - checking all fields:", {
+        'clinic.plan': clinic.plan,
+        'clinic.subscriptionPlan': clinic.subscriptionPlan,
+        'clinic.settings?.subscriptionPlan': clinic.settings?.subscriptionPlan,
+        'clinic.settings?.plan': clinic.settings?.plan,
+        'clinic.clinicPlan': clinic.clinicPlan,
+        'clinic.subscription_plan': clinic.subscription_plan,
+        'final loadedPlan': loadedPlan
+      });
+      
+      // Update both the dropdown and the global variable
+      clinicPlan = loadedPlan;
+      if ($("plan")) {
+        $("plan").value = loadedPlan;
+        console.log("Loaded and set plan:", loadedPlan);
+      }
       applyBrandingLock(clinicPlan);
 
       // Populate form
@@ -499,24 +568,52 @@
       
       // Set referral discount value (handle null/undefined)
       const discount = 
+        clinic.referral_discount_percent ??
+        clinic.settings?.referral_discount_percent ??
+        clinic.inviter_discount_percent ??
+        clinic.settings?.inviter_discount_percent ??
+        clinic.discount_percent ??
+        clinic.settings?.discount_percent ??
         clinic.settings?.referralLevel1Percent ??
         clinic.settings?.referralLevels?.level1 ??
         clinic.referralLevels?.level1 ??
         clinic.default_inviter_discount_percent ??
+        clinic.referralLevel1Percent ??
         null;
       
-      const currentStoredDiscount = getStoredReferralDiscount();
+      console.log("=== DISCOUNT FIELD DEBUG ===");
+      console.log("Complete clinic object:", JSON.stringify(clinic, null, 2));
+      console.log("All discount fields checked:", {
+        'referral_discount_percent': clinic.referral_discount_percent,
+        'settings.referral_discount_percent': clinic.settings?.referral_discount_percent,
+        'inviter_discount_percent': clinic.inviter_discount_percent,
+        'settings.inviter_discount_percent': clinic.settings?.inviter_discount_percent,
+        'discount_percent': clinic.discount_percent,
+        'settings.discount_percent': clinic.settings?.discount_percent,
+        'settings.referralLevel1Percent': clinic.settings?.referralLevel1Percent,
+        'settings.referralLevels.level1': clinic.settings?.referralLevels?.level1,
+        'referralLevels.level1': clinic.referralLevels?.level1,
+        'default_inviter_discount_percent': clinic.default_inviter_discount_percent,
+        'referralLevel1Percent': clinic.referralLevel1Percent
+      });
+      console.log("=== END DEBUG ===");
+      console.log("Final calculated discount:", discount);
       const useDiscount = discount !== null ? discount : currentStoredDiscount;
       applyReferralDiscount(useDiscount);
       if (discount !== null) {
         storeReferralDiscount(discount);
       }
 
-      // Guard against any later overwrite (translations or other inits)
-      setTimeout(() => applyReferralDiscount(getStoredReferralDiscount() || useDiscount, { onlyEmpty: true }), 0);
-      setTimeout(() => applyReferralDiscount(getStoredReferralDiscount() || useDiscount, { onlyEmpty: true }), 500);
-      
       console.log("Loaded referral discount:", discount);
+      console.log("Stored discount to localStorage:", discount);
+
+      // 🎯 Yeni referral sistem field'larını yükle
+      if ($("referralPerInvitePercent")) {
+        $("referralPerInvitePercent").value = clinic.referral_per_invite_percent || 10;
+      }
+      if ($("referralMaxTotalPercent")) {
+        $("referralMaxTotalPercent").value = clinic.referral_max_total_percent || 10;
+      }
 
     } catch (error) {
       console.error("Load clinic settings error:", error);
@@ -528,6 +625,7 @@
   $("plan") && $("plan").addEventListener("change", (e) => applyBrandingLock(e.target.value));
 
   $("clinicForm").addEventListener("submit", async (e) => {
+    console.log("🚀 SAVE CLICKED - Form submit triggered!");
     e.preventDefault();
     
     // Get admin token from localStorage
@@ -541,8 +639,20 @@
 
         const payload = {
       plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
-      referralLevel1Percent: $("referralDiscountPercent").value.trim(),
+      referral_discount_percent: $("referralDiscountPercent").value.trim(),
     };
+    
+    // NEVER send clinic_code in UPDATE requests
+    delete payload.clinic_code;
+    delete payload.id;
+    delete payload.created_at;
+    delete payload.clinicId;
+    
+    console.log("Submitting payload with plan:", payload.plan);
+    console.log("Dropdown value:", $("plan")?.value);
+    console.log("clinicPlan variable:", clinicPlan);
+    console.log("Complete payload being sent:", JSON.stringify(payload, null, 2));
+    console.log("Referral discount from input:", $("referralDiscountPercent").value.trim());
     const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
     if (!brandingLocked) {
       payload.branding = {
@@ -560,6 +670,8 @@
       const loadingMsg = window.i18n ? window.i18n.t('settings.saveLoading') : 'Kaydediliyor...';
       $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
       
+      console.log("🚀 SENDING PUT /api/admin/clinic", payload);
+      
       const res = await fetch(`${API}/api/admin/clinic`, {
         method: "PUT",
         headers: { 
@@ -572,15 +684,23 @@
 
       const data = await res.json();
       
+      console.log("Backend response:", data);
+      console.log("Submitted plan was:", payload.plan);
+      
       if (!res.ok || !data.ok) {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
       const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
       $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
-      storeReferralDiscount(payload.referralLevel1Percent || null);
+      storeReferralDiscount(payload.referral_discount_percent || null);
+      
+      // Update the local clinicPlan variable to reflect the saved plan
+      clinicPlan = payload.plan;
+      console.log("Updated local clinicPlan to:", clinicPlan);
       
     } catch (error) {
+      clinicPlan = payload.plan;
       console.error("Save clinic settings error:", error);
       const errorMsg = window.i18n ? window.i18n.t('settings.errors.saveFailed', { error: error.message }) : `Kaydetme hatası: ${error.message}`;
       $("status").innerHTML = `<div class="status error">${errorMsg}</div>`;
@@ -898,6 +1018,128 @@
       applyReferralDiscount(storedDiscount, { onlyEmpty: true });
     }
   };
+
+  // Temporary Patient Limit Functions
+  async function loadTemporaryLimit() {
+    const token = localStorage.getItem("admin_token");
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (res.ok) {
+        const clinic = await res.json();
+        const temporaryLimit = clinic.temporaryPatientLimit || 0;
+        updateTemporaryLimitUI(temporaryLimit);
+      }
+    } catch (error) {
+      console.error('Load temporary limit error:', error);
+    }
+  }
+
+  function updateTemporaryLimitUI(limit) {
+    const input = $('temporaryLimit');
+    const saveBtn = $('saveTemporaryLimit');
+    const removeBtn = $('removeTemporaryLimit');
+    const status = $('temporaryLimitStatus');
+
+    if (limit > 0) {
+      input.value = limit;
+      saveBtn.style.display = 'none';
+      removeBtn.style.display = 'block';
+      
+      const statusText = window.i18n ? 
+        window.i18n.t('settings.temporaryLimitActive', { count: limit }) :
+        `Mevcut geçici limit: +${limit} hasta`;
+      status.textContent = statusText;
+      status.style.color = 'var(--g, #16a34a)';
+    } else {
+      input.value = '';
+      saveBtn.style.display = 'block';
+      removeBtn.style.display = 'none';
+      status.textContent = '';
+    }
+  }
+
+  async function saveTemporaryLimit() {
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      alert(window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı');
+      return;
+    }
+
+    const input = $('temporaryLimit');
+    const limit = parseInt(input.value) || 0;
+
+    if (limit < 0) {
+      alert('Geçici limit 0 veya pozitif bir sayı olmalıdır.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ temporaryPatientLimit: limit })
+      });
+
+      if (res.ok) {
+        updateTemporaryLimitUI(limit);
+        alert(`Geçici hasta limiti başarıyla ${limit > 0 ? `+${limit} olarak` : 'kaldırıldı'}`);
+      } else {
+        throw new Error('Kayıt başarısız');
+      }
+    } catch (error) {
+      console.error('Save temporary limit error:', error);
+      alert('Geçici limit kaydedilemedi: ' + error.message);
+    }
+  }
+
+  async function removeTemporaryLimit() {
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      alert(window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ temporaryPatientLimit: 0 })
+      });
+
+      if (res.ok) {
+        updateTemporaryLimitUI(0);
+        alert('Geçici hasta limiti kaldırıldı.');
+      } else {
+        throw new Error('Kaldırma başarısız');
+      }
+    } catch (error) {
+      console.error('Remove temporary limit error:', error);
+      alert('Geçici limit kaldırılamadı: ' + error.message);
+    }
+  }
+
+  // Event listeners for temporary limit
+  $('saveTemporaryLimit')?.addEventListener('click', saveTemporaryLimit);
+  $('removeTemporaryLimit')?.addEventListener('click', removeTemporaryLimit);
+
+  // Load temporary limit on page load
+  loadTemporaryLimit();
 
   // Enhanced Referral Discount Functions
   function setReferralDiscount(value) {

@@ -107,6 +107,100 @@
         }
       },
       
+      // Pricing (pricing.html)
+      pricing: {
+        title: "Clinifly Fiyatlandırma",
+        subtitle: "Aktif hasta sayınıza göre esnek planlar",
+        info: "Planlar <span class=\"highlight\">aktif hasta sayısına</span> göre belirlenir. Mevcut hastalarınızla çalışmaya devam edebilirsiniz.",
+        free: {
+          name: "Free",
+          description: "Clinifly'i gerçek hastalarla denemeniz için.",
+          cta: "Başla"
+        },
+        basic: {
+          name: "Basic",
+          badge: "Popüler",
+          description: "Günlük hasta iletişimi olan klinikler için ideal.",
+          cta: "Upgrade Et"
+        },
+        pro: {
+          name: "Pro",
+          description: "Büyüyen klinikler için limitsiz kullanım.",
+          cta: "İletişime Geç"
+        },
+        features: {
+          allCore: "Tüm core özellikler",
+          patientCommunication: "Hasta iletişimi",
+          fileSharing: "Dosya paylaşımı",
+          referral: "Referral sistemi",
+          branding: "Clinifly branding",
+          customBranding: "Özel branding",
+          analytics: "Temel analizler",
+          support: "E-posta desteği",
+          unlimitedPatients: "Sınırsız hasta",
+          advancedReferral: "Gelişmiş referral (level, kampanya)",
+          prioritySupport: "Öncelikli destek",
+          onboarding: "Özel onboarding"
+        },
+        comparison: {
+          feature: "Özellik",
+          free: "Free",
+          basic: "Basic",
+          pro: "Pro",
+          patients: "Aktif Hasta Sayısı",
+          unlimited: "Sınırsız",
+          coreFeatures: "Core Özellikler",
+          branding: "Clinifly Branding",
+          customBranding: "Özel Branding",
+          referral: "Referral Sistemi",
+          advancedReferral: "Gelişmiş Referral",
+          analytics: "Analizler",
+          support: "Destek",
+          community: "Topluluk",
+          email: "E-posta",
+          priority: "Öncelikli"
+        },
+        faq: {
+          title: "Sıkça Sorulan Sorular",
+          q1: {
+            question: "Aktif hasta sayısı nasıl hesaplanır?",
+            answer: "Sadece APPROVED (onaylı) durumundaki hastalar sayılır. Pending, rejected veya cancelled durumundaki hastalar limite dahil edilmez."
+          },
+          q2: {
+            question: "Limit dolduğunda ne olur?",
+            answer: "Mevcut hastalarınızla çalışmaya devam edebilirsiniz. Sadece yeni hasta onayı engellenir. Upgrade yaptığınızda işlemlerinize devam edebilirsiniz."
+          },
+          q3: {
+            question: "Plan değiştirebilir miyim?",
+            answer: "Evet, istediğiniz zaman planınızı yükseltebilir veya düşürebilirsiniz. Değişiklikler anında geçerli olur."
+          },
+          q4: {
+            question: "Ödeme yöntemleri nelerdir?",
+            answer: "Kredi kartı, banka transferi ve yerel ödeme yöntemlerini kabul ediyoruz. Ödemeler SSL güvenliği ile korunur."
+          }
+        },
+        contact: {
+          title: "Özel ihtiyaçlarınız mı var?",
+          description: "Büyük klinikler ve kurumsal çözümler için özel planlar sunuyoruz.",
+          button: "İletişime Geç"
+        }
+      },
+      
+      // Treatment (admin-treatment.html)
+      treatment: {
+        patientName: "Hasta Adı (Seç)",
+        selectPatient: "— Hasta seç —",
+        patientHelp: "Hasta listesinden Treatment'a basınca otomatik seçilir. Buradan hasta değiştirince otomatik yüklenir.",
+        noPatientSelected: "Hasta seçilmedi. Lütfen hasta seçin.",
+        loadingTreatments: "Tedaviler yükleniyor...",
+        noTreatments: "Bu hasta için tedavi planı bulunamadı.",
+        addTreatment: "Tedavi Ekle",
+        saveTreatment: "Tedaviyi Kaydet",
+        treatmentSaved: "✅ Tedavi başarıyla kaydedildi!",
+        treatmentDeleted: "✅ Tedavi başarıyla silindi!",
+        confirmDelete: "Bu tedaviyi silmek istediğinizden emin misiniz?"
+      },
+      
       // Login (admin-login.html)
       login: {
         title: "Klinik Girişi",
@@ -213,10 +307,25 @@
         referralDiscountHelp: "Başarılı referral sonrası uygulanacak indirim yüzdesi",
         referralLevel1: "Seviye 1 (%)",
         referralLevel1Help: "1. başarılı referral sonrası toplam indirim",
+        referralSettings: "🎯 Referral Ayarları",
+        referralSettingsHelp: "Davet sistemi için kazanç oranlarını belirleyin. PRO planında esnek ayarlar mevcuttur.",
+        referralPerInvite: "Davet başına kazanç (%)",
+        referralPerInvitePlaceholder: "10",
+        referralPerInviteHelp: "Her başarılı davet için verilecek indirim",
+        referralMaxTotal: "Maksimum toplam indirim (%)",
+        referralMaxTotalPlaceholder: "10",
+        referralMaxTotalHelp: "Davet edenin kazanabileceği maksimum indirim",
         referralLevel2: "Seviye 2 (%)",
         referralLevel2Help: "2. başarılı referral sonrası toplam indirim",
         referralLevel3: "Seviye 3 (%)",
         referralLevel3Help: "3+ referral için maksimum indirim",
+        temporaryPatientLimit: "🔧 Geçici Hasta Limiti",
+        temporaryPatientLimitHelp: "Satış ve onboarding süreçleri için geçici hasta limiti ekleyin. Bu, normal plan limitinin üzerine eklenir.",
+        temporaryLimit: "Geçici Limit",
+        temporaryLimitPlaceholder: "Ek hasta sayısı (örn: 5)",
+        saveTemporaryLimit: "Geçici Limiti Kaydet",
+        removeTemporaryLimit: "Geçici Limiti Kaldır",
+        temporaryLimitActive: "Mevcut geçici limit: +{count} hasta",
         save: "💾 Ayarları Kaydet",
         saveLoading: "Kaydediliyor...",
         treatmentPriceList: "💰 Tedavi Fiyat Listesi",
@@ -281,7 +390,16 @@
           noToken: "⚠️ Admin token bulunamadı. Lütfen önce giriş yapın.",
           unauthorized: "❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.",
           loadFailed: "❌ Hasta listesi yüklenemedi: {error}",
-          approveFailed: "❌ Onaylama hatası: {error}"
+          approveFailed: "❌ Onaylama hatası: {error}",
+          patientLimitReached: "⚠️ Aktif hasta limitinize ulaştınız. Yeni hasta eklemek için planınızı yükseltebilirsiniz.",
+          patientLimitReachedTitle: "Hasta Limiti Doldu"
+        },
+        limits: {
+          title: "Aktif Hasta Limiti",
+          message: "Mevcut planınızda {current}/{limit} aktif hasta bulunuyor.",
+          upgradeMessage: "Yeni hasta eklemek için planınızı yükseltebilirsiniz.",
+          upgradeButton: "Planı Yükselt",
+          continueButton: "Mevcut Hastalarla Devam Et"
         }
       },
       
@@ -424,6 +542,100 @@
         }
       },
       
+      // Pricing (pricing.html)
+      pricing: {
+        title: "Clinifly Pricing",
+        subtitle: "Flexible plans based on your active patient count",
+        info: "Plans are based on <span class=\"highlight\">active patient count</span>. You can continue working with your existing patients.",
+        free: {
+          name: "Free",
+          description: "Try Clinifly with real patients.",
+          cta: "Get Started"
+        },
+        basic: {
+          name: "Basic",
+          badge: "Popular",
+          description: "Ideal for clinics with daily patient communication.",
+          cta: "Upgrade"
+        },
+        pro: {
+          name: "Pro",
+          description: "Unlimited usage for growing clinics.",
+          cta: "Contact Us"
+        },
+        features: {
+          allCore: "All core features",
+          patientCommunication: "Patient communication",
+          fileSharing: "File sharing",
+          referral: "Referral system",
+          branding: "Clinifly branding",
+          customBranding: "Custom branding",
+          analytics: "Basic analytics",
+          support: "Email support",
+          unlimitedPatients: "Unlimited patients",
+          advancedReferral: "Advanced referral (levels, campaigns)",
+          prioritySupport: "Priority support",
+          onboarding: "Custom onboarding"
+        },
+        comparison: {
+          feature: "Feature",
+          free: "Free",
+          basic: "Basic",
+          pro: "Pro",
+          patients: "Active Patients",
+          unlimited: "Unlimited",
+          coreFeatures: "Core Features",
+          branding: "Clinifly Branding",
+          customBranding: "Custom Branding",
+          referral: "Referral System",
+          advancedReferral: "Advanced Referral",
+          analytics: "Analytics",
+          support: "Support",
+          community: "Community",
+          email: "Email",
+          priority: "Priority"
+        },
+        faq: {
+          title: "Frequently Asked Questions",
+          q1: {
+            question: "How is active patient count calculated?",
+            answer: "Only APPROVED (active) patients are counted. Pending, rejected, or cancelled patients are not included in the limit."
+          },
+          q2: {
+            question: "What happens when I reach the limit?",
+            answer: "You can continue working with your existing patients. Only new patient approvals are blocked. You can upgrade to continue operations."
+          },
+          q3: {
+            question: "Can I change plans?",
+            answer: "Yes, you can upgrade or downgrade your plan at any time. Changes take effect immediately."
+          },
+          q4: {
+            question: "What payment methods do you accept?",
+            answer: "We accept credit cards, bank transfers, and local payment methods. All payments are secured with SSL."
+          }
+        },
+        contact: {
+          title: "Have special requirements?",
+          description: "We offer custom plans for large clinics and enterprise solutions.",
+          button: "Contact Us"
+        }
+      },
+      
+      // Treatment (admin-treatment.html)
+      treatment: {
+        patientName: "Patient Name (Select)",
+        selectPatient: "— Select patient —",
+        patientHelp: "Automatically selected when clicking Treatment from patient list. Automatically loads when changing patient here.",
+        noPatientSelected: "No patient selected. Please select a patient.",
+        loadingTreatments: "Loading treatments...",
+        noTreatments: "No treatment plan found for this patient.",
+        addTreatment: "Add Treatment",
+        saveTreatment: "Save Treatment",
+        treatmentSaved: "✅ Treatment saved successfully!",
+        treatmentDeleted: "✅ Treatment deleted successfully!",
+        confirmDelete: "Are you sure you want to delete this treatment?"
+      },
+      
       // Login (admin-login.html)
       login: {
         title: "Clinic Login",
@@ -514,6 +726,14 @@
         subscriptionPlanHelp: "You can change FREE / BASIC / PRO package here.",
         plan: "Plan",
         branding: "Branding",
+        referralSettings: "🎯 Referral Settings",
+        referralSettingsHelp: "Set referral earnings rates. Flexible settings available in PRO plan.",
+        referralPerInvite: "Per Invite Earnings (%)",
+        referralPerInvitePlaceholder: "10",
+        referralPerInviteHelp: "Discount given for each successful referral",
+        referralMaxTotal: "Maximum Total Discount (%)",
+        referralMaxTotalPlaceholder: "10",
+        referralMaxTotalHelp: "Maximum discount the referrer can earn",
         clinicName: "Clinic Name",
         clinicLogoUrl: "Clinic Logo URL",
         clinicLogoUrlHelp: "Logo will be displayed for Pro plan",
@@ -534,6 +754,13 @@
         referralLevel2Help: "Total discount after 2 successful referrals",
         referralLevel3: "Level 3 (%)",
         referralLevel3Help: "Maximum discount for 3+ referrals",
+        temporaryPatientLimit: "🔧 Temporary Patient Limit",
+        temporaryPatientLimitHelp: "Add temporary patient limit for sales and onboarding processes. This is added on top of the normal plan limit.",
+        temporaryLimit: "Temporary Limit",
+        temporaryLimitPlaceholder: "Additional patients (e.g., 5)",
+        saveTemporaryLimit: "Save Temporary Limit",
+        removeTemporaryLimit: "Remove Temporary Limit",
+        temporaryLimitActive: "Current temporary limit: +{count} patients",
         save: "💾 Save Settings",
         saveLoading: "Saving...",
         treatmentPriceList: "💰 Treatment Price List",
@@ -598,7 +825,16 @@
           noToken: "⚠️ Admin token not found. Please login first.",
           unauthorized: "❌ Authorization error. Please login again.",
           loadFailed: "❌ Failed to load patient list: {error}",
-          approveFailed: "❌ Approval error: {error}"
+          approveFailed: "❌ Approval error: {error}",
+          patientLimitReached: "⚠️ You've reached your active patient limit. Upgrade your plan to add new patients.",
+          patientLimitReachedTitle: "Patient Limit Reached"
+        },
+        limits: {
+          title: "Active Patient Limit",
+          message: "Your current plan has {current}/{limit} active patients.",
+          upgradeMessage: "Upgrade your plan to add new patients.",
+          upgradeButton: "Upgrade Plan",
+          continueButton: "Continue with Existing Patients"
         }
       },
       
