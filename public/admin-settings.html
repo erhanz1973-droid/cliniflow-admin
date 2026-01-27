@@ -484,7 +484,7 @@
     const discountInput = $("referralDiscountPercent");
     const onlyEmpty = options.onlyEmpty === true;
 
-    if ((!onlyEmpty || !discountInput.value) && discount !== null && discount !== undefined) {
+    if (discountInput && (!onlyEmpty || !discountInput.value) && discount !== null && discount !== undefined) {
       discountInput.value = String(discount);
     }
   }
@@ -572,13 +572,13 @@
       applyBrandingLock(clinicPlan);
 
       // Populate form
-      $("clinicName").value = branding.clinicName || clinic.name || "";
-      $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
-      $("clinicAddress").value = branding.address || clinic.address || "";
-      $("googleMapLink").value = branding.googleMapLink || clinic.googleMapsUrl || "";
-      $("primaryColor").value = branding.primaryColor || "#2563EB";
-      $("secondaryColor").value = branding.secondaryColor || "#10B981";
-      $("welcomeMessage").value = branding.welcomeMessage || "";
+      if ($("clinicName")) $("clinicName").value = branding.clinicName || clinic.name || "";
+      if ($("clinicLogoUrl")) $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
+      if ($("clinicAddress")) $("clinicAddress").value = branding.address || clinic.address || "";
+      if ($("googleMapLink")) $("googleMapLink").value = branding.googleMapLink || clinic.googleMapsUrl || "";
+      if ($("primaryColor")) $("primaryColor").value = branding.primaryColor || "#2563EB";
+      if ($("secondaryColor")) $("secondaryColor").value = branding.secondaryColor || "#10B981";
+      if ($("welcomeMessage")) $("welcomeMessage").value = branding.welcomeMessage || "";
       
       // Set referral discount value (handle null/undefined)
       const discount = 
