@@ -612,7 +612,23 @@
     if (!type) return type || "";
     const typeUpper = String(type).toUpperCase();
     const key = `dashboard.upcoming.eventTypes.${typeUpper}`;
+    
+    // Debug: Log i18n status
+    console.log("[getEventTypeLabel] Debug:", {
+      type: type,
+      typeUpper: typeUpper,
+      key: key,
+      hasI18n: !!window.i18n,
+      i18nObj: window.i18n,
+      currentLang: window.i18n ? window.i18n.currentLang : null
+    });
+    
     const translated = window.i18n ? window.i18n.t(key) : null;
+    console.log("[getEventTypeLabel] Translation result:", {
+      translated: translated,
+      isKey: translated === key
+    });
+    
     // Fallback to hardcoded if translation not found
     if (translated && translated !== key) {
       return translated;
@@ -633,7 +649,9 @@
       "SURGERY": "Cerrahi",
       "CHECKUP": "Kontrol"
     };
-    return fallbackLabels[typeUpper] || type;
+    const fallback = fallbackLabels[typeUpper] || type;
+    console.log("[getEventTypeLabel] Using fallback:", fallback);
+    return fallback;
   }
 
   function renderOverdueBanner(overdue) {
