@@ -6925,6 +6925,9 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           address: updated.address,
           phone: updated.phone,
           website: updated.website,
+          // 🎯 Yeni referral sistem field'ları
+          referral_per_invite_percent: parseInt(body.referralPerInvitePercent) || 10,
+          referral_max_total_percent: parseInt(body.referralMaxTotalPercent) || 10,
           settings: {
             branding: updatedBranding,
             defaultInviterDiscountPercent: inviterPercent,

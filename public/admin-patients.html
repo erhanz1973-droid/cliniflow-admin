@@ -747,6 +747,13 @@
         return;
       }
 
+      // Check patient limit before approval
+      const limitCheck = await checkPatientLimit();
+      if (!limitCheck.canApprove) {
+        showPatientLimitModal(limitCheck);
+        return;
+      }
+
       const confirmMessage = window.i18n ? window.i18n.t('patients.approveConfirm', { patientId }) : `Hastayı onaylamak istediğinize emin misiniz? (${patientId})`;
       if (!confirm(confirmMessage)) {
         return;
@@ -776,6 +783,137 @@
         const message = window.i18n ? window.i18n.t('patients.errors.approveFailed', { error: error.message }) : '❌ Onaylama hatası: ' + error.message;
         showError(message);
       }
+    }
+
+    async function checkPatientLimit() {
+      const token = getAdminToken();
+      if (!token) {
+        return { canApprove: false, error: 'No token' };
+      }
+
+      try {
+        // Get clinic info to check plan
+        const clinicRes = await fetch(`${API_BASE}/api/admin/clinic`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!clinicRes.ok) {
+          return { canApprove: true }; // If we can't check, allow approval
+        }
+
+        const clinic = await clinicRes.json();
+        const plan = clinic.subscriptionPlan || 'FREE';
+        
+        // Get current approved patients count
+        const patientsRes = await fetch(`${API_BASE}/api/admin/patients?status=APPROVED`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!patientsRes.ok) {
+          return { canApprove: true }; // If we can't check, allow approval
+        }
+
+        const patients = await patientsRes.json();
+        const currentApproved = Array.isArray(patients) ? patients.length : 0;
+        
+        // Define limits
+        const limits = {
+          'FREE': 5,
+          'BASIC': 15,
+          'PRO': Infinity
+        };
+
+        const limit = limits[plan] || 5;
+        const canApprove = currentApproved < limit;
+
+        return {
+          canApprove,
+          current: currentApproved,
+          limit,
+          plan,
+          clinic
+        };
+      } catch (error) {
+        console.error('Limit check error:', error);
+        return { canApprove: true }; // If check fails, allow approval
+      }
+    }
+
+    function showPatientLimitModal(limitCheck) {
+      const modal = document.createElement('div');
+      modal.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+      `;
+
+      const content = document.createElement('div');
+      content.style.cssText = `
+        background: var(--card, #1f2937);
+        border: 1px solid var(--border, #374151);
+        border-radius: 16px;
+        padding: 32px;
+        max-width: 480px;
+        width: 90%;
+        text-align: center;
+      `;
+
+      const title = window.i18n ? window.i18n.t('patients.limits.title') : 'Aktif Hasta Limiti';
+      const message = window.i18n ? 
+        window.i18n.t('patients.limits.message', { current: limitCheck.current, limit: limitCheck.limit }) :
+        `Mevcut planınızda ${limitCheck.current}/${limitCheck.limit} aktif hasta bulunuyor.`;
+      const upgradeMessage = window.i18n ? window.i18n.t('patients.limits.upgradeMessage') : 'Yeni hasta eklemek için planınızı yükseltebilirsiniz.';
+      const upgradeButton = window.i18n ? window.i18n.t('patients.limits.upgradeButton') : 'Planı Yükselt';
+      const continueButton = window.i18n ? window.i18n.t('patients.limits.continueButton') : 'Mevcut Hastalarla Devam Et';
+
+      content.innerHTML = `
+        <h2 style="margin: 0 0 16px 0; color: var(--warning, #f59e0b); font-size: 24px;">⚠️ ${title}</h2>
+        <p style="margin: 0 0 8px 0; color: var(--text, #e6eaf2); font-size: 16px;">${message}</p>
+        <p style="margin: 0 0 24px 0; color: var(--muted, #a7b2c8); font-size: 14px;">${upgradeMessage}</p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+          <button onclick="window.open('/pricing.html', '_blank')" style="
+            background: var(--primary, #2563eb);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+          ">${upgradeButton}</button>
+          <button onclick="this.closest('div[style*=fixed]').remove()" style="
+            background: transparent;
+            color: var(--muted, #a7b2c8);
+            border: 1px solid var(--border, #374151);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+          ">${continueButton}</button>
+        </div>
+      `;
+
+      modal.appendChild(content);
+      document.body.appendChild(modal);
+
+      // Close on backdrop click
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.remove();
+        }
+      });
     }
 
     function getPatientNameById(patientId) {

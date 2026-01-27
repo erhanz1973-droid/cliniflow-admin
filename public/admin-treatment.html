@@ -323,20 +323,20 @@
       <div class="navbar-right">
         <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
         <div class="lang-toggle">
-          <span class="active">TR</span>
+          <span class="active" onclick="window.switchLanguage('tr')">TR</span>
           <span>|</span>
-          <span>EN</span>
+          <span onclick="window.switchLanguage('en')">EN</span>
         </div>
         <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
       </div>
     </nav>
 
     <div class="card" style="margin-bottom:12px;">
-      <label>Hasta Adı (Seç)</label>
+      <label data-i18n="treatment.patientName">Hasta Adı (Seç)</label>
       <select id="patientSelect">
-        <option value="">— Hasta seç —</option>
+        <option value="" data-i18n="treatment.selectPatient">— Hasta seç —</option>
       </select>
-      <div class="muted" style="margin-top:4px;">Hasta listesinden Treatment'a basınca otomatik seçilir. Buradan hasta değiştirince otomatik yüklenir.</div>
+      <div class="muted" style="margin-top:4px;" data-i18n="treatment.patientHelp">Hasta listesinden Treatment'a basınca otomatik seçilir. Buradan hasta değiştirince otomatik yüklenir.</div>
       <input id="patientIdHidden" type="hidden" value="" />
     </div>
 
