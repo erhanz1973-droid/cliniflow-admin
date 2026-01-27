@@ -614,9 +614,6 @@
       console.log("Final calculated discount:", discount);
       const useDiscount = discount !== null ? discount : currentStoredDiscount;
       applyReferralDiscount(useDiscount);
-      if (discount !== null) {
-        storeReferralDiscount(discount);
-      }
 
       console.log("Loaded referral discount:", discount);
       console.log("Stored discount to localStorage:", discount);
@@ -692,7 +689,7 @@
     }
 
     const loadingMsg = 'Kaydediliyor...';
-    $("status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
+    $("#status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
       
     console.log("🚀 SENDING PUT /api/admin/clinic", payload);
       
@@ -716,8 +713,7 @@
     }
 
     const successMsg = '✅ Ayarlar kaydedildi!';
-    $("status").innerHTML = '<div class="status success">' + successMsg + '</div>';
-    storeReferralDiscount(payload.referral_discount_percent || null);
+    $("#status").innerHTML = '<div class="status success">' + successMsg + '</div>';
     
     // Update the local clinicPlan variable to reflect the saved plan
     clinicPlan = payload.plan;
@@ -726,7 +722,7 @@
   } catch (error) {
     console.error("Save clinic settings error:", error);
     const errorMsg = 'Kaydetme hatası: ' + error.message;
-    $("status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
+    $("#status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
   }
   });
 
