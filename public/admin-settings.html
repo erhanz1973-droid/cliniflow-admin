@@ -691,7 +691,7 @@
       };
     }
 
-    const loadingMsg = window.i18n ? window.i18n.t('settings.saveLoading') : 'Kaydediliyor...';
+    const loadingMsg = 'Kaydediliyor...';
     $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
       
     console.log("🚀 SENDING PUT /api/admin/clinic", payload);
@@ -715,18 +715,18 @@
       throw new Error(data.error || `HTTP ${res.status}`);
     }
 
-    const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
+    const successMsg = '✅ Ayarlar kaydedildi!';
     $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
     storeReferralDiscount(payload.referral_discount_percent || null);
     
     // Update the local clinicPlan variable to reflect the saved plan
     clinicPlan = payload.plan;
     console.log("Updated local clinicPlan to:", clinicPlan);
-    
+  
   } catch (error) {
     console.error("Save clinic settings error:", error);
-    const errorMsg = window.i18n ? window.i18n.t('settings.errors.saveFailed', { error: error.message }) : `Kaydetme hatası: ${error.message}`;
-    $("status").innerHTML = `<div class="status error">${errorMsg}</div>`;
+    const errorMsg = 'Kaydetme hatası: ' + error.message;
+    $("status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
   }
   });
 
