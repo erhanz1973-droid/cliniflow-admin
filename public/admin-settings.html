@@ -194,11 +194,75 @@
       color:#6ee7b7;
       border:1px solid #059669;
     }
-    .status.error{
-      background:#7f1d1d;
-      color:#fca5a5;
-      border:1px solid #dc2626;
-    }
+    .status.error { background: #dc2626; }
+  
+  /* Color Palette Styles */
+  .color-palette-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
+    gap: 8px;
+    padding: 12px;
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  
+  .color-option {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.2s ease;
+    position: relative;
+  }
+  
+  .color-option:hover {
+    transform: scale(1.1);
+    border-color: #8b5cf6;
+    z-index: 10;
+  }
+  
+  .color-option.selected {
+    border-color: #10b981;
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+  }
+  
+  .color-tooltip {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111827;
+    color: #e5e7eb;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    margin-bottom: 4px;
+    z-index: 1000;
+  }
+  
+  .color-option:hover .color-tooltip {
+    opacity: 1;
+  }
+  
+  .color-category {
+    margin-bottom: 16px;
+  }
+  
+  .color-category-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #9ca3af;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
   </style>
 </head>
 <body>
@@ -244,65 +308,6 @@
         </select>
         <div class="muted" data-i18n="settings.subscriptionPlanHelp">FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.</div>
 
-        <div style="background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 20px; margin: 20px 0;">
-          <h3 style="margin: 0 0 16px 0; color: var(--primary, #2563eb); font-size: 16px;" data-i18n="settings.referralSettings">🎯 Referral Ayarları</h3>
-          <div class="muted" data-i18n="settings.referralSettingsHelp">Davet sistemi için kazanç oranlarını belirleyin. PRO planında esnek ayarlar mevcuttur.</div>
-          
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px;">
-            <div>
-              <label data-i18n="settings.referralPerInvite">Davet başına kazanç (%)</label>
-              <input type="number" id="referralPerInvitePercent" min="0" max="50" value="10" data-i18n-placeholder="settings.referralPerInvitePlaceholder" />
-              <div class="muted" style="font-size: 12px; margin-top: 4px;" data-i18n="settings.referralPerInviteHelp">Her başarılı davet için verilecek indirim</div>
-            </div>
-            <div>
-              <label data-i18n="settings.referralMaxTotal">Maksimum toplam indirim (%)</label>
-              <input type="number" id="referralMaxTotalPercent" min="0" max="50" value="10" data-i18n-placeholder="settings.referralMaxTotalPlaceholder" />
-              <div class="muted" style="font-size: 12px; margin-top: 4px;" data-i18n="settings.referralMaxTotalHelp">Davet edenin kazanabileceği maksimum indirim</div>
-            </div>
-          </div>
-        </div>
-
-        <div style="background: var(--card); border: 1px solid var(--b); border-radius: 12px; padding: 20px; margin: 20px 0;">
-          <h3 style="margin: 0 0 16px 0; color: var(--warning, #f59e0b); font-size: 16px;" data-i18n="settings.temporaryPatientLimit">🔧 Geçici Hasta Limiti</h3>
-          <div class="muted" data-i18n="settings.temporaryPatientLimitHelp">Satış ve onboarding süreçleri için geçici hasta limiti ekleyin. Bu, normal plan limitinin üzerine eklenir.</div>
-          
-          <div style="display: flex; gap: 12px; align-items: end; margin-top: 16px;">
-            <div style="flex: 1;">
-              <label data-i18n="settings.temporaryLimit">Geçici Limit</label>
-              <input type="number" id="temporaryLimit" min="0" placeholder="5" data-i18n-placeholder="settings.temporaryLimitPlaceholder" />
-            </div>
-            <div style="display: flex; gap: 8px;">
-              <button type="button" id="saveTemporaryLimit" style="background: var(--g); color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;" data-i18n="settings.saveTemporaryLimit">Geçici Limiti Kaydet</button>
-              <button type="button" id="removeTemporaryLimit" style="background: var(--r); color: white; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; display: none;" data-i18n="settings.removeTemporaryLimit">Geçici Limiti Kaldır</button>
-            </div>
-          </div>
-          <div id="temporaryLimitStatus" style="margin-top: 12px; font-size: 14px; color: var(--muted);"></div>
-        </div>
-
-        <label data-i18n="settings.clinicName">Clinic Name</label>
-        <input type="text" id="clinicName" placeholder="My Clinic" />
-        
-        <label data-i18n="settings.clinicLogoUrl">Clinic Logo URL</label>
-        <input type="url" id="clinicLogoUrl" placeholder="https://example.com/logo.png" />
-        <div class="muted" data-i18n="settings.clinicLogoUrlHelp">Pro plan için logo görüntülenir</div>
-        
-        <label data-i18n="settings.address">Clinic Address</label>
-        <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
-        <div class="muted" data-i18n="settings.addressHelp">Pro plan için hasta ekranında görüntülenir</div>
-        
-        <label data-i18n="settings.googleMapLink">Google Maps Link</label>
-        <input type="url" id="googleMapLink" placeholder="https://maps.google.com/?q=..." />
-        <div class="muted" data-i18n="settings.googleMapLinkHelp">Pro plan için hasta ekranında görüntülenir</div>
-        
-        <label data-i18n="settings.primaryColor">Primary Color (Hex)</label>
-        <input type="text" id="primaryColor" placeholder="#2563EB" pattern="#[0-9A-Fa-f]{6}" />
-        
-        <label data-i18n="settings.secondaryColor">Secondary Color (Hex)</label>
-        <input type="text" id="secondaryColor" placeholder="#10B981" pattern="#[0-9A-Fa-f]{6}" />
-        
-        <label data-i18n="settings.welcomeMessage">Welcome Message</label>
-        <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
-
         <h2 style="margin-top: 32px; display: flex; align-items: center; gap: 8px;" data-i18n="settings.referralDiscounts">
           🎁 Referral Discounts
           <span style="background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">BETA</span>
@@ -343,25 +348,6 @@
             </div>
           </div>
           
-          <!-- Quick Preset Buttons -->
-          <div style="display: flex; gap: 8px; margin-top: 12px;">
-            <button type="button" onclick="setReferralDiscount(5)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
-              5%
-            </button>
-            <button type="button" onclick="setReferralDiscount(10)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
-              10%
-            </button>
-            <button type="button" onclick="setReferralDiscount(15)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
-              15%
-            </button>
-            <button type="button" onclick="setReferralDiscount(20)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
-              20%
-            </button>
-            <button type="button" onclick="setReferralDiscount(25)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
-              25%
-            </button>
-          </div>
-          
           <!-- Preview Section -->
           <div id="referralPreview" style="margin-top: 16px; padding: 16px; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 8px;">
             <div style="font-size: 14px; font-weight: 600; color: #a78bfa; margin-bottom: 8px;">💡 Preview:</div>
@@ -370,6 +356,34 @@
             </div>
           </div>
         </div>
+
+        <label data-i18n="settings.clinicName">Klinik Adı</label>
+        <input type="text" id="clinicName" placeholder="My Clinic" />
+        
+        <label data-i18n="settings.clinicLogoUrl">Clinic Logo URL</label>
+        <input type="url" id="clinicLogoUrl" placeholder="https://example.com/logo.png" />
+        <div class="muted" data-i18n="settings.clinicLogoUrlHelp">Pro plan için logo görüntülenir</div>
+        
+        <label data-i18n="settings.address">Clinic Address</label>
+        <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
+        <div class="muted" data-i18n="settings.addressHelp">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label data-i18n="settings.googleMapLink">Google Maps Link</label>
+        <input type="url" id="googleMapLink" placeholder="https://maps.google.com/?q=..." />
+        <div class="muted" data-i18n="settings.googleMapLinkHelp">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label data-i18n="settings.primaryColor">Primary Color</label>
+        <div id="primaryColorPalette" class="color-palette-container">
+          <!-- Renk paleti JavaScript ile doldurulacak -->
+        </div>
+        
+        <label data-i18n="settings.secondaryColor">Secondary Color</label>
+        <div id="secondaryColorPalette" class="color-palette-container">
+          <!-- Renk paleti JavaScript ile doldurulacak -->
+        </div>
+        
+        <label data-i18n="settings.welcomeMessage">Welcome Message</label>
+        <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
         
         <button type="submit" style="margin-top: 16px;" data-i18n="settings.save">💾 Save Settings</button>
       </form>
@@ -412,7 +426,7 @@
     } catch {}
   })();
 
-  const API = "https://cliniflow-admin.onrender.com";
+  const API_BASE = "https://cliniflow-admin.onrender.com";
   const $ = (id) => document.getElementById(id);
 
   let clinicPlan = "";
@@ -615,6 +629,9 @@
         $("referralMaxTotalPercent").value = clinic.referral_max_total_percent || 10;
       }
 
+      // 🎨 Renk paletini yükle
+      setSelectedColors(branding.primaryColor, branding.secondaryColor);
+
     } catch (error) {
       console.error("Load clinic settings error:", error);
       const msg = window.i18n ? window.i18n.t('settings.errors.loadFailed', { error: error.message }) : `Ayarlar yüklenemedi: ${error.message}`;
@@ -655,56 +672,56 @@
     console.log("Referral discount from input:", $("referralDiscountPercent").value.trim());
     const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
     if (!brandingLocked) {
+      const colors = getSelectedColors();
       payload.branding = {
         clinicName: $("clinicName").value.trim(),
         clinicLogoUrl: $("clinicLogoUrl").value.trim(),
         address: $("clinicAddress").value.trim(),
         googleMapLink: $("googleMapLink").value.trim(),
-        primaryColor: $("primaryColor").value.trim(),
-        secondaryColor: $("secondaryColor").value.trim(),
+        primaryColor: colors.primaryColor,
+        secondaryColor: colors.secondaryColor,
         welcomeMessage: $("welcomeMessage").value.trim(),
+        showPoweredBy: $("showPoweredBy")?.checked !== false,
       };
     }
 
-    try {
-      const loadingMsg = window.i18n ? window.i18n.t('settings.saveLoading') : 'Kaydediliyor...';
-      $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
+    const loadingMsg = window.i18n ? window.i18n.t('settings.saveLoading') : 'Kaydediliyor...';
+    $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
       
-      console.log("🚀 SENDING PUT /api/admin/clinic", payload);
+    console.log("🚀 SENDING PUT /api/admin/clinic", payload);
       
-      const res = await fetch(`${API}/api/admin/clinic`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
+    const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+      method: "PUT",
+      headers: { 
+        "Content-Type": "application/json",
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
 
-      const data = await res.json();
+    const data = await res.json();
       
-      console.log("Backend response:", data);
-      console.log("Submitted plan was:", payload.plan);
-      
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-
-      const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
-      $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
-      storeReferralDiscount(payload.referral_discount_percent || null);
-      
-      // Update the local clinicPlan variable to reflect the saved plan
-      clinicPlan = payload.plan;
-      console.log("Updated local clinicPlan to:", clinicPlan);
-      
-    } catch (error) {
-      clinicPlan = payload.plan;
-      console.error("Save clinic settings error:", error);
-      const errorMsg = window.i18n ? window.i18n.t('settings.errors.saveFailed', { error: error.message }) : `Kaydetme hatası: ${error.message}`;
-      $("status").innerHTML = `<div class="status error">${errorMsg}</div>`;
+    console.log("Backend response:", data);
+    console.log("Submitted plan was:", payload.plan);
+    
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
     }
+
+    const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
+    $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
+    storeReferralDiscount(payload.referral_discount_percent || null);
+    
+    // Update the local clinicPlan variable to reflect the saved plan
+    clinicPlan = payload.plan;
+    console.log("Updated local clinicPlan to:", clinicPlan);
+    
+  } catch (error) {
+    console.error("Save clinic settings error:", error);
+    const errorMsg = window.i18n ? window.i18n.t('settings.errors.saveFailed', { error: error.message }) : `Kaydetme hatası: ${error.message}`;
+    $("status").innerHTML = `<div class="status error">${errorMsg}</div>`;
+  }
   });
 
   // Load settings on page load
@@ -1019,128 +1036,6 @@
     }
   };
 
-  // Temporary Patient Limit Functions
-  async function loadTemporaryLimit() {
-    const token = localStorage.getItem("admin_token");
-    if (!token) return;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json'
-        }
-      });
-
-      if (res.ok) {
-        const clinic = await res.json();
-        const temporaryLimit = clinic.temporaryPatientLimit || 0;
-        updateTemporaryLimitUI(temporaryLimit);
-      }
-    } catch (error) {
-      console.error('Load temporary limit error:', error);
-    }
-  }
-
-  function updateTemporaryLimitUI(limit) {
-    const input = $('temporaryLimit');
-    const saveBtn = $('saveTemporaryLimit');
-    const removeBtn = $('removeTemporaryLimit');
-    const status = $('temporaryLimitStatus');
-
-    if (limit > 0) {
-      input.value = limit;
-      saveBtn.style.display = 'none';
-      removeBtn.style.display = 'block';
-      
-      const statusText = window.i18n ? 
-        window.i18n.t('settings.temporaryLimitActive', { count: limit }) :
-        `Mevcut geçici limit: +${limit} hasta`;
-      status.textContent = statusText;
-      status.style.color = 'var(--g, #16a34a)';
-    } else {
-      input.value = '';
-      saveBtn.style.display = 'block';
-      removeBtn.style.display = 'none';
-      status.textContent = '';
-    }
-  }
-
-  async function saveTemporaryLimit() {
-    const token = localStorage.getItem("admin_token");
-    if (!token) {
-      alert(window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı');
-      return;
-    }
-
-    const input = $('temporaryLimit');
-    const limit = parseInt(input.value) || 0;
-
-    if (limit < 0) {
-      alert('Geçici limit 0 veya pozitif bir sayı olmalıdır.');
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ temporaryPatientLimit: limit })
-      });
-
-      if (res.ok) {
-        updateTemporaryLimitUI(limit);
-        alert(`Geçici hasta limiti başarıyla ${limit > 0 ? `+${limit} olarak` : 'kaldırıldı'}`);
-      } else {
-        throw new Error('Kayıt başarısız');
-      }
-    } catch (error) {
-      console.error('Save temporary limit error:', error);
-      alert('Geçici limit kaydedilemedi: ' + error.message);
-    }
-  }
-
-  async function removeTemporaryLimit() {
-    const token = localStorage.getItem("admin_token");
-    if (!token) {
-      alert(window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı');
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/api/admin/clinic`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({ temporaryPatientLimit: 0 })
-      });
-
-      if (res.ok) {
-        updateTemporaryLimitUI(0);
-        alert('Geçici hasta limiti kaldırıldı.');
-      } else {
-        throw new Error('Kaldırma başarısız');
-      }
-    } catch (error) {
-      console.error('Remove temporary limit error:', error);
-      alert('Geçici limit kaldırılamadı: ' + error.message);
-    }
-  }
-
-  // Event listeners for temporary limit
-  $('saveTemporaryLimit')?.addEventListener('click', saveTemporaryLimit);
-  $('removeTemporaryLimit')?.addEventListener('click', removeTemporaryLimit);
-
-  // Load temporary limit on page load
-  loadTemporaryLimit();
-
   // Enhanced Referral Discount Functions
   function setReferralDiscount(value) {
     const input = document.getElementById('referralDiscountPercent');
@@ -1162,10 +1057,12 @@
       previewText.innerHTML = `✅ <strong>${discount}% discount</strong> will be applied to both referrer and referred patient.<br><span style="color: #10b981;">💡 Great starting point for attracting new patients!</span>`;
     } else if (discount <= 20) {
       previewText.innerHTML = `🎉 <strong>${discount}% discount</strong> for both parties.<br><span style="color: #f59e0b;">⚠️ Higher discount but more attractive referrals!</span>`;
+    } else if (discount <= 30) {
+      previewText.innerHTML = `🚀 <strong>${discount}% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>`;
     } else {
       previewText.innerHTML = `🚀 <strong>${discount}% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>`;
     }
-  }
+  };
 
   // Initialize preview on page load
   document.addEventListener('DOMContentLoaded', function() {
@@ -1173,8 +1070,176 @@
     if (input) {
       updateReferralPreview(input.value);
     }
+    
+    // Initialize color palettes
+    initializeColorPalettes();
   });
+
+  // Color Palette System
+  const COLOR_PALETTE = {
+    blue: {
+      name: "Blue / Trust",
+      colors: {
+        sky: "#0EA5E9",
+        blue: "#3B82F6", 
+        indigo: "#6366F1",
+        navy: "#1E3A8A",
+        cyan: "#06B6D4"
+      }
+    },
+    green: {
+      name: "Green / Health",
+      colors: {
+        emerald: "#10B981",
+        green: "#22C55E",
+        lime: "#84CC16",
+        teal: "#14B8A6",
+        mint: "#10B981"
+      }
+    },
+    purple: {
+      name: "Purple / Premium",
+      colors: {
+        purple: "#A855F7",
+        violet: "#8B5CF6",
+        fuchsia: "#D946EF",
+        pink: "#EC4899",
+        rose: "#F43F5E"
+      }
+    },
+    orange: {
+      name: "Orange / Action",
+      colors: {
+        orange: "#F97316",
+        amber: "#F59E0B",
+        yellow: "#EAB308",
+        warm: "#FB923C",
+        bright: "#FCD34D"
+      }
+    },
+    red: {
+      name: "Red / Campaign",
+      colors: {
+        red: "#EF4444",
+        rose: "#F43F5E",
+        pink: "#EC4899",
+        crimson: "#DC2626",
+        scarlet: "#E11D48"
+      }
+    },
+    neutral: {
+      name: "Neutral / Corporate",
+      colors: {
+        gray: "#6B7280",
+        slate: "#475569",
+        zinc: "#71717A",
+        stone: "#78716C",
+        neutral: "#737373"
+      }
+    }
+  };
+
+  let selectedPrimaryColor = "";
+  let selectedSecondaryColor = "";
+
+  function initializeColorPalettes() {
+    renderColorPalette('primaryColorPalette', 'primary');
+    renderColorPalette('secondaryColorPalette', 'secondary');
+  }
+
+  function renderColorPalette(containerId, type) {
+    const container = $(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    // Plan bazlı kısıtlama
+    const currentPlan = clinicPlan || "FREE";
+    const isBasicPlan = currentPlan === "BASIC";
+    
+    Object.entries(COLOR_PALETTE).forEach(([categoryKey, category]) => {
+      // BASIC plan için sınırlı renkler
+      if (isBasicPlan && categoryKey !== 'blue' && categoryKey !== 'green') {
+        return; // Sadece Blue ve Green kategorileri
+      }
+
+      const categoryDiv = document.createElement('div');
+      categoryDiv.className = 'color-category';
+
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'color-category-title';
+      titleDiv.textContent = category.name;
+      categoryDiv.appendChild(titleDiv);
+
+      const colorsDiv = document.createElement('div');
+      colorsDiv.style.cssText = 'display: grid; grid-template-columns: repeat(auto-fit, minmax(40px, 1fr)); gap: 8px;';
+
+      Object.entries(category.colors).forEach(([colorKey, hex]) => {
+        const colorOption = document.createElement('div');
+        colorOption.className = 'color-option';
+        colorOption.style.backgroundColor = hex;
+        colorOption.dataset.colorKey = colorKey;
+        colorOption.dataset.hex = hex;
+        colorOption.dataset.type = type;
+
+        // Tooltip
+        const tooltip = document.createElement('div');
+        tooltip.className = 'color-tooltip';
+        tooltip.textContent = `${colorKey} (${hex})`;
+        colorOption.appendChild(tooltip);
+
+        // Seçili renk kontrolü
+        const currentColor = type === 'primary' ? selectedPrimaryColor : selectedSecondaryColor;
+        if (currentColor === colorKey) {
+          colorOption.classList.add('selected');
+        }
+
+        // Click event
+        colorOption.addEventListener('click', () => selectColor(colorKey, hex, type));
+
+        colorsDiv.appendChild(colorOption);
+      });
+
+      categoryDiv.appendChild(colorsDiv);
+      container.appendChild(categoryDiv);
+    });
+  }
+
+  function selectColor(colorKey, hex, type) {
+    // Seçili rengi güncelle
+    if (type === 'primary') {
+      selectedPrimaryColor = colorKey;
+    } else {
+      selectedSecondaryColor = colorKey;
+    }
+
+    // UI'ı güncelle
+    const container = $(`${type}ColorPalette`);
+    if (container) {
+      container.querySelectorAll('.color-option').forEach(option => {
+        option.classList.remove('selected');
+        if (option.dataset.type === type && option.dataset.colorKey === colorKey) {
+          option.classList.add('selected');
+        }
+      });
+    }
+
+    console.log(`Selected ${type} color: ${colorKey} (${hex})`);
+  }
+
+  function getSelectedColors() {
+    return {
+      primaryColor: selectedPrimaryColor,
+      secondaryColor: selectedSecondaryColor
+    };
+  }
+
+  function setSelectedColors(primary, secondary) {
+    selectedPrimaryColor = primary || "";
+    selectedSecondaryColor = secondary || "";
+    initializeColorPalettes();
+  }
+
 </script>
 </body>
 </html>
-
