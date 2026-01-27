@@ -496,7 +496,7 @@
       
       if (!token) {
         const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
-        $("status").innerHTML = `<div class="status error">${msg}</div>`;
+        $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
         return;
       }
 
@@ -632,7 +632,7 @@
     } catch (error) {
       console.error("Load clinic settings error:", error);
       const msg = window.i18n ? window.i18n.t('settings.errors.loadFailed', { error: error.message }) : `Ayarlar yüklenemedi: ${error.message}`;
-      $("status").innerHTML = `<div class="status error">${msg}</div>`;
+      $("status")?.innerHTML = '<div class="status error">' + msg + '</div>';
     }
   }
 
@@ -690,7 +690,7 @@
       }
 
       const loadingMsg = 'Kaydediliyor...';
-      $("#status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
+      $("#status")?.innerHTML = '<div class="status">' + loadingMsg + '</div>';
         
       console.log("🚀 SENDING PUT /api/admin/clinic", payload);
         
@@ -714,7 +714,7 @@
       }
 
       const successMsg = '✅ Ayarlar kaydedildi!';
-      $("#status").innerHTML = '<div class="status success">' + successMsg + '</div>';
+      $("#status")?.innerHTML = '<div class="status success">' + successMsg + '</div>';
       
       // Update the local clinicPlan variable to reflect the saved plan
       clinicPlan = payload.plan;
@@ -723,7 +723,7 @@
     } catch (error) {
       console.error("Save clinic settings error:", error);
       const errorMsg = 'Kaydetme hatası: ' + error.message;
-      $("#status").innerHTML = '<div class="status error">' + errorMsg + '</div>';
+      $("#status")?.innerHTML = '<div class="status error">' + errorMsg + '</div>';
     }
   });
 
