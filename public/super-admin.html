@@ -549,6 +549,15 @@
       const clinicId = clinic.clinicId || clinic.id || "";
       const stats = clinic.stats || {};
       
+      // Debug: Log clinic status
+      console.log("[SUPER_ADMIN] Rendering clinic:", {
+        id: clinicId,
+        name: clinic.name,
+        status: clinic.status,
+        statusUpper: statusUpper,
+        shouldShowActivate: statusUpper === "SUSPENDED"
+      });
+      
       html += '<tr>';
       html += '<td><strong>' + (clinic.clinicCode || clinic.code || "—") + '</strong></td>';
       html += '<td>';
