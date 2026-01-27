@@ -10321,7 +10321,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
 
 // PATCH /api/super-admin/clinics/:clinicId/activate
 // Activate a clinic (change status from SUSPENDED to ACTIVE)
-app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, (req, res) => {
+app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async (req, res) => {
   try {
     const { clinicId } = req.params;
     
@@ -10334,6 +10334,7 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, (req, 
     
     let clinic = null;
     let isSingleClinic = false;
+    let isSupabaseClinic = false;
     
     // Check CLINICS_FILE first
     if (clinics[clinicId]) {
@@ -10344,30 +10345,83 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, (req, 
       clinic = singleClinic;
       isSingleClinic = true;
     } else {
-      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+      // Check Supabase
+      if (isSupabaseEnabled) {
+        try {
+          console.log(`[SUPER_ADMIN] Looking for clinic in Supabase: ${clinicId}`);
+          const { data: supabaseClinic, error } = await supabase
+            .from("clinics")
+            .select("id, name, email, status")
+            .eq("id", clinicId)
+            .single();
+          
+          console.log(`[SUPER_ADMIN] Supabase clinic lookup result:`, { 
+            clinicId, 
+            found: !!supabaseClinic, 
+            status: supabaseClinic?.status,
+            error: error?.message 
+          });
+          
+          if (!error && supabaseClinic) {
+            clinic = supabaseClinic;
+            isSupabaseClinic = true;
+          }
+        } catch (supabaseError) {
+          console.warn("[SUPER_ADMIN] Failed to check Supabase clinic:", supabaseError);
+        }
+      }
+      
+      if (!clinic) {
+        return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Clinic not found" });
+      }
     }
     
     // Update status to ACTIVE
     const oldStatus = clinic.status || "SUSPENDED";
-    clinic.status = "ACTIVE";
-    clinic.suspendedAt = undefined;
-    clinic.suspendedReason = undefined;
-    clinic.updatedAt = Date.now();
     
-    // Save to appropriate file
-    if (isSingleClinic) {
-      writeJson(CLINIC_FILE, clinic);
+    if (isSupabaseClinic) {
+      // Update in Supabase
+      console.log(`[SUPER_ADMIN] Activating clinic in Supabase: ${clinicId}`, {
+        currentStatus: oldStatus,
+        newStatus: "ACTIVE"
+      });
+      
+      const { error } = await supabase
+        .from("clinics")
+        .update({
+          status: "ACTIVE",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", clinicId);
+      
+      if (error) {
+        console.error("[SUPER_ADMIN] Failed to activate clinic in Supabase:", error);
+        return res.status(500).json({ ok: false, error: "update_failed", message: "Failed to activate clinic" });
+      }
+      
+      console.log(`[SUPER_ADMIN] Successfully activated clinic in Supabase: ${clinicId}`);
     } else {
-      clinics[clinicId] = clinic;
-      writeJson(CLINICS_FILE, clinics);
+      // Update in file
+      clinic.status = "ACTIVE";
+      clinic.suspendedAt = undefined;
+      clinic.suspendedReason = undefined;
+      clinic.updatedAt = Date.now();
+      
+      // Save to appropriate file
+      if (isSingleClinic) {
+        writeJson(CLINIC_FILE, clinic);
+      } else {
+        clinics[clinicId] = clinic;
+        writeJson(CLINICS_FILE, clinics);
+      }
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} activated (status: ${oldStatus} -> ACTIVE)`);
+    console.log(`[SUPER_ADMIN] Clinic ${clinicId} activated (status: ${oldStatus} -> ACTIVE), source: ${isSupabaseClinic ? "Supabase" : "File"}`);
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
       ok: true, 
-      clinic: clinicWithoutPassword,
+      clinic: { ...clinicWithoutPassword, status: "ACTIVE" },
       message: "Clinic activated successfully"
     });
   } catch (error) {
