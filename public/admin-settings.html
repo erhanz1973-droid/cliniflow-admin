@@ -839,20 +839,13 @@
     });
 
     const categories = ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"];
-    const categoryLabels = window.i18n ? {
-      "EVENTS": window.i18n.t('settings.categoryLabels.EVENTS'),
-      "PROSTHETIC": window.i18n.t('settings.categoryLabels.PROSTHETIC'),
-      "RESTORATIVE": window.i18n.t('settings.categoryLabels.RESTORATIVE'),
-      "ENDODONTIC": window.i18n.t('settings.categoryLabels.ENDODONTIC'),
-      "SURGICAL": window.i18n.t('settings.categoryLabels.SURGICAL'),
-      "IMPLANT": window.i18n.t('settings.categoryLabels.IMPLANT')
-    } : {
+    const categoryLabels = {
       "EVENTS": "Events (Etkinlikler)",
       "PROSTHETIC": "Prosthetic (Protez)",
       "RESTORATIVE": "Restorative (Restoratif)",
-      "ENDODONTIC": "Endodontic (Endodontik)",
+      "ENDODONTIC": "Endodontic (Endodonti)",
       "SURGICAL": "Surgical (Cerrahi)",
-      "IMPLANT": "Implant"
+      "IMPLANT": "Implant (Implant)"
     };
 
     let html = '';
@@ -862,11 +855,7 @@
       html += `<div style="margin-bottom: 24px;">`;
       html += `<h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--p);">${categoryLabels[category]}</h3>`;
       html += `<table style="width: 100%; border-collapse: collapse;">`;
-      const headers = window.i18n ? {
-        treatment: window.i18n.t('settings.tableHeaders.treatment'),
-        price: window.i18n.t('settings.tableHeaders.price'),
-        active: window.i18n.t('settings.tableHeaders.active')
-      } : {
+      const headers = {
         treatment: "Treatment",
         price: "Price",
         active: "Active"
@@ -919,7 +908,7 @@
       const saveBtn = $("saveAllPricesBtn");
       if (saveBtn) {
         saveBtn.disabled = true;
-        const savingText = window.i18n ? window.i18n.t('settings.savingPrices') : '💾 Saving...';
+        const savingText = '💾 Saving...';
         saveBtn.textContent = savingText;
       }
 
@@ -990,7 +979,7 @@
       const successMsg = document.createElement('div');
       successMsg.className = 'status success';
       successMsg.style.marginTop = '16px';
-      const successText = window.i18n ? window.i18n.t('settings.pricesSaved') : '✅ Tüm fiyatlar başarıyla kaydedildi!';
+      const successText = '✅ Tüm fiyatlar başarıyla kaydedildi!';
       successMsg.textContent = successText;
       const container = $("priceListContainer").parentElement;
       const existingMsg = container.querySelector('.status.success');
@@ -1004,13 +993,13 @@
       await loadPrices();
     } catch (error) {
       console.error("Save all prices error:", error);
-      const errorMsg = window.i18n ? window.i18n.t('settings.errors.pricesSaveFailed', { error: error.message }) : `Fiyatlar kaydedilemedi: ${error.message}`;
+      const errorMsg = 'Fiyatlar kaydedilemedi: ' + error.message;
       alert(errorMsg);
     } finally {
       const saveBtn = $("saveAllPricesBtn");
       if (saveBtn) {
         saveBtn.disabled = false;
-        const saveText = window.i18n ? window.i18n.t('settings.saveAllPrices') : '💾 Save All Prices';
+        const saveText = '💾 Save All Prices';
         saveBtn.textContent = saveText;
       }
     }
@@ -1025,27 +1014,22 @@
   // Update UI when language changes
   window.onI18nUpdated = function(lang) {
     // Update all dynamic text
-    if (window.i18n) {
+    if (false) { // Disabled for now
       // Update status messages if they exist
       const statusEl = $("status");
       if (statusEl && statusEl.innerHTML) {
         // Re-render status if it contains translatable content
         // This is handled by i18n system automatically for data-i18n elements
       }
-      
+
       // Update save button text
       const saveBtn = $("saveAllPricesBtn");
       if (saveBtn && !saveBtn.disabled) {
-        saveBtn.textContent = window.i18n.t('settings.saveAllPrices');
+        saveBtn.textContent = '💾 Save All Prices';
       }
       
       // Re-render prices table with new language
-      if (prices && Object.keys(prices).length > 0) {
-        renderPrices();
-      }
-    }
-    const storedDiscount = getStoredReferralDiscount();
-    if (storedDiscount !== null) {
+      renderPrices();
       applyReferralDiscount(storedDiscount, { onlyEmpty: true });
     }
   };
