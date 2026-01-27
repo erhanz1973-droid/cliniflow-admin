@@ -269,11 +269,73 @@
         <label data-i18n="settings.welcomeMessage">Welcome Message</label>
         <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
 
-        <h2 style="margin-top: 24px;" data-i18n="settings.referralDiscounts">🎁 Referral Discounts</h2>
-        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak indirim oranı</div>
-        <label data-i18n="settings.referralDiscount">Referral İndirim Oranı (%)</label>
-        <input type="number" id="referralDiscountPercent" placeholder="örn: 10" min="0" max="50" />
-        <div class="muted" data-i18n="settings.referralDiscountHelp">Başarılı referral sonrası uygulanacak indirim yüzdesi</div>
+        <h2 style="margin-top: 32px; display: flex; align-items: center; gap: 8px;" data-i18n="settings.referralDiscounts">
+          🎁 Referral Discounts
+          <span style="background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;">BETA</span>
+        </h2>
+        <div class="muted" style="margin-bottom: 20px; padding: 16px; background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; border-radius: 8px;" data-i18n="settings.referralDiscountsHelp">
+          Configure discount percentages for successful referrals. Both the referrer and the referred patient receive these discounts.
+        </div>
+        
+        <!-- Referral Discount Input with Enhanced UI -->
+        <div style="background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 20px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <div style="width: 40px; height: 40px; background: linear-gradient(135deg, #8b5cf6, #7c3aed); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px;">
+              🎁
+            </div>
+            <div style="flex: 1;">
+              <label style="display: block; font-weight: 600; margin-bottom: 4px; color: #e5e7eb;" data-i18n="settings.referralDiscount">
+                Referral Discount (%)
+              </label>
+              <div style="font-size: 14px; color: #9ca3af;" data-i18n="settings.referralDiscountHelp">
+                Discount applied to both referrer and referred patient
+              </div>
+            </div>
+          </div>
+          
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <input 
+              type="number" 
+              id="referralDiscountPercent" 
+              placeholder="10" 
+              min="0" 
+              max="50" 
+              step="1"
+              style="flex: 1; padding: 12px 16px; background: #111827; border: 1px solid #374151; border-radius: 8px; color: #e5e7eb; font-size: 16px; font-weight: 500;"
+              oninput="updateReferralPreview(this.value)"
+            />
+            <div style="padding: 8px 16px; background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; border-radius: 8px; color: #a78bfa; font-size: 14px; font-weight: 600;">
+              %
+            </div>
+          </div>
+          
+          <!-- Quick Preset Buttons -->
+          <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button type="button" onclick="setReferralDiscount(5)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
+              5%
+            </button>
+            <button type="button" onclick="setReferralDiscount(10)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
+              10%
+            </button>
+            <button type="button" onclick="setReferralDiscount(15)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
+              15%
+            </button>
+            <button type="button" onclick="setReferralDiscount(20)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
+              20%
+            </button>
+            <button type="button" onclick="setReferralDiscount(25)" style="padding: 6px 12px; background: #374151; border: 1px solid #4b5563; border-radius: 6px; color: #9ca3af; font-size: 12px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">
+              25%
+            </button>
+          </div>
+          
+          <!-- Preview Section -->
+          <div id="referralPreview" style="margin-top: 16px; padding: 16px; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2); border-radius: 8px;">
+            <div style="font-size: 14px; font-weight: 600; color: #a78bfa; margin-bottom: 8px;">💡 Preview:</div>
+            <div id="referralPreviewText" style="font-size: 13px; color: #9ca3af; line-height: 1.5;">
+              Set a discount to see how it works
+            </div>
+          </div>
+        </div>
         
         <button type="submit" style="margin-top: 16px;" data-i18n="settings.save">💾 Save Settings</button>
       </form>
@@ -836,6 +898,40 @@
       applyReferralDiscount(storedDiscount, { onlyEmpty: true });
     }
   };
+
+  // Enhanced Referral Discount Functions
+  function setReferralDiscount(value) {
+    const input = document.getElementById('referralDiscountPercent');
+    if (input) {
+      input.value = value;
+      updateReferralPreview(value);
+    }
+  }
+
+  function updateReferralPreview(value) {
+    const previewText = document.getElementById('referralPreviewText');
+    if (!previewText) return;
+    
+    const discount = parseInt(value) || 0;
+    
+    if (discount === 0) {
+      previewText.innerHTML = '<span style="color: #ef4444;">❌ No discount will be applied</span>';
+    } else if (discount <= 10) {
+      previewText.innerHTML = `✅ <strong>${discount}% discount</strong> will be applied to both referrer and referred patient.<br><span style="color: #10b981;">💡 Great starting point for attracting new patients!</span>`;
+    } else if (discount <= 20) {
+      previewText.innerHTML = `🎉 <strong>${discount}% discount</strong> for both parties.<br><span style="color: #f59e0b;">⚠️ Higher discount but more attractive referrals!</span>`;
+    } else {
+      previewText.innerHTML = `🚀 <strong>${discount}% discount</strong> - Maximum level!<br><span style="color: #ef4444;">⚠️ Very generous - ensure profitability!</span>`;
+    }
+  }
+
+  // Initialize preview on page load
+  document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('referralDiscountPercent');
+    if (input) {
+      updateReferralPreview(input.value);
+    }
+  });
 </script>
 </body>
 </html>
