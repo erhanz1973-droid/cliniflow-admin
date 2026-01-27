@@ -335,6 +335,63 @@
         <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
       </div>
     </nav>
+    
+    <!-- Suspended Clinic Notice -->
+    <div id="suspendedNotice" style="display: none; margin: 20px 0; padding: 24px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(251, 191, 36, 0.05)); border: 1px solid rgba(245, 158, 11, 0.3); border-left: 4px solid var(--warn); border-radius: 16px; position: relative; overflow: hidden;">
+      <!-- Background Pattern -->
+      <div style="position: absolute; top: 0; right: 0; width: 200px; height: 200px; background: radial-gradient(circle, rgba(245, 158, 11, 0.1) 0%, transparent 70%); opacity: 0.5;"></div>
+      
+      <div style="position: relative; z-index: 1;">
+        <!-- Header -->
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+          <div style="width: 48px; height: 48px; background: rgba(245, 158, 11, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px;">
+            ⚠️
+          </div>
+          <div>
+            <h2 style="margin: 0; font-size: 20px; font-weight: 700; color: #fbbf24;" data-i18n="clinicSuspended.title">Hesabınız Geçici Olarak Askıya Alındı</h2>
+            <p style="margin: 4px 0 0 0; font-size: 14px; color: var(--muted);" data-i18n="clinicSuspended.description">Klinik hesabınız şu anda aktif değildir.</p>
+          </div>
+        </div>
+        
+        <!-- Content Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px;">
+          <!-- Left Column -->
+          <div>
+            <h3 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 600; color: #fbbf24;" data-i18n="clinicSuspended.reasonTitle">Askıya Alma Nedeni</h3>
+            <p style="margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted);" data-i18n="clinicSuspended.reasonGeneric">Hesabınız sistem ve güvenlik kontrolleri kapsamında incelenmektedir.</p>
+          </div>
+          
+          <!-- Right Column -->
+          <div>
+            <h3 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 600; color: #fbbf24;" data-i18n="clinicSuspended.whatToDoTitle">Nasıl Tekrar Aktif Olur?</h3>
+            <ul style="margin: 0; padding-left: 16px; font-size: 14px; line-height: 1.5; color: var(--muted);">
+              <li data-i18n="clinicSuspended.steps[0]">Destek ekibimiz hesabınızı inceliyor</li>
+              <li data-i18n="clinicSuspended.steps[1]">Gerekli olması halinde sizinle iletişime geçilecektir</li>
+              <li data-i18n="clinicSuspended.steps[2]">Sorularınız için bizimle iletişime geçebilirsiniz</li>
+            </ul>
+          </div>
+        </div>
+        
+        <!-- Actions -->
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <button onclick="window.open('mailto:support@clinifly.net', '_blank')" style="padding: 10px 20px; background: var(--warn); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#d97706'" onmouseout="this.style.background='var(--warn)'">
+            📧 <span data-i18n="clinicSuspended.contactSupport">Destek ile İletişime Geç</span>
+          </button>
+          <button onclick="showSuspendedDetails()" style="padding: 10px 20px; background: transparent; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(245, 158, 11, 0.1)'" onmouseout="this.style.background='transparent'">
+            <span data-i18n="clinicSuspended.learnMore">Daha Fazla Bilgi</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Status Badge (Top Right) -->
+    <div id="suspendedStatusBadge" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 1000; padding: 8px 16px; background: rgba(245, 158, 11, 0.2); border: 1px solid var(--warn); border-radius: 20px; font-size: 12px; font-weight: 600; color: #fbbf24; backdrop-filter: blur(10px);">
+      <span data-i18n="clinicSuspended.statusBadge">Durum: Askıda</span>
+    </div>
+    
+    <!-- Blur Overlay for Main Content -->
+    <div id="mainContentBlur" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px); z-index: 10; pointer-events: none;"></div>
+    
     <div id="clinicInfo" style="margin-bottom:20px; padding:16px; background:var(--card); border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:12px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);">
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
         <div id="clinicName" style="font-weight:700; font-size:18px; color:#ffffff;">—</div>
@@ -401,6 +458,7 @@
     </div>
   </div>
 
+  <script src="/suspended-clinic.js"></script>
 <script>
   // If a patient is selected, make top-nav Travel link carry patientId.
   (function bindNavTravelLink() {

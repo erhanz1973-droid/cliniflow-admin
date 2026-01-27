@@ -29,6 +29,23 @@
         warning: "Uyarı"
       },
       
+      // Suspended Clinic Messages
+      clinicSuspended: {
+        title: "Hesabınız Geçici Olarak Askıya Alındı",
+        description: "Klinik hesabınız şu anda aktif değildir. Bu süre boyunca dashboard ve hasta işlemlerine erişim kısıtlanmıştır.",
+        reasonTitle: "Askıya Alma Nedeni",
+        reasonGeneric: "Hesabınız sistem ve güvenlik kontrolleri kapsamında incelenmektedir.",
+        whatToDoTitle: "Nasıl Tekrar Aktif Olur?",
+        steps: [
+          "Destek ekibimiz hesabınızı inceliyor",
+          "Gerekli olması halinde sizinle iletişime geçilecektir",
+          "Sorularınız için bizimle iletişime geçebilirsiniz"
+        ],
+        contactSupport: "Destek ile İletişime Geç",
+        learnMore: "Daha Fazla Bilgi",
+        statusBadge: "Durum: Askıda"
+      },
+      
       // Dashboard (admin.html)
       dashboard: {
         title: "Clinifly Admin – Dashboard",
@@ -321,6 +338,23 @@
         error: "Error",
         success: "Success",
         warning: "Warning"
+      },
+      
+      // Suspended Clinic Messages
+      clinicSuspended: {
+        title: "Your Account Has Been Temporarily Suspended",
+        description: "Your clinic account is currently inactive. Access to the dashboard and patient features is restricted.",
+        reasonTitle: "Suspension Reason",
+        reasonGeneric: "Your account is under review for system and security checks.",
+        whatToDoTitle: "How to Reactivate?",
+        steps: [
+          "Our support team is reviewing your account",
+          "We will contact you if necessary",
+          "You can contact us with any questions"
+        ],
+        contactSupport: "Contact Support",
+        learnMore: "Learn More",
+        statusBadge: "Status: Suspended"
       },
       
       // Dashboard (admin.html)
