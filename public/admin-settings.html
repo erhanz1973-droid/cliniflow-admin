@@ -692,15 +692,15 @@
     }
 
     const loadingMsg = 'Kaydediliyor...';
-    $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
+    $("status").innerHTML = '<div class="status">' + loadingMsg + '</div>';
       
     console.log("🚀 SENDING PUT /api/admin/clinic", payload);
       
-    const res = await fetch(`${API_BASE}/api/admin/clinic`, {
+    const res = await fetch(API_BASE + '/api/admin/clinic', {
       method: "PUT",
       headers: { 
         "Content-Type": "application/json",
-        'Authorization': `Bearer ${token}`,
+        'Authorization': 'Bearer ' + token,
         'Accept': 'application/json'
       },
       body: JSON.stringify(payload)
@@ -712,11 +712,11 @@
     console.log("Submitted plan was:", payload.plan);
     
     if (!res.ok || !data.ok) {
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new Error(data.error || 'HTTP ' + res.status);
     }
 
     const successMsg = '✅ Ayarlar kaydedildi!';
-    $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
+    $("status").innerHTML = '<div class="status success">' + successMsg + '</div>';
     storeReferralDiscount(payload.referral_discount_percent || null);
     
     // Update the local clinicPlan variable to reflect the saved plan
