@@ -494,6 +494,26 @@
     }
   }
 
+  function formatOralHealthAverage(value) {
+    if (value === null || value === undefined) {
+      return '<span style="color: #6b7280;">—</span>';
+    }
+    const num = parseFloat(value);
+    if (isNaN(num)) {
+      return '<span style="color: #6b7280;">—</span>';
+    }
+    
+    // Color coding based on score
+    let color = '#10b981'; // green for good scores (80+)
+    if (num < 60) {
+      color = '#ef4444'; // red for poor scores (< 60)
+    } else if (num < 80) {
+      color = '#f59e0b'; // yellow for moderate scores (60-79)
+    }
+    
+    return '<span style="color: ' + color + ';">' + num.toFixed(1) + '</span>';
+  }
+
   function getStatusBadge(status) {
     const statusUpper = (status || "").toUpperCase();
     if (statusUpper === "ACTIVE" || statusUpper === "APPROVED") {
@@ -539,6 +559,7 @@
     html += '<th>👤 Hasta</th>';
     html += '<th>💬 Mesaj</th>';
     html += '<th>📎 Referral</th>';
+    html += '<th>🦷 Oral Health</th>';
     html += '<th>Created At</th>';
     html += '<th>Actions</th>';
     html += '</tr></thead>';
@@ -572,6 +593,7 @@
       html += '<td class="text-center"><strong>' + (stats.patientCount || 0) + '</strong></td>';
       html += '<td class="text-center"><strong>' + (stats.messageCount || 0) + '</strong></td>';
       html += '<td class="text-center"><strong>' + (stats.activeReferralCount || 0) + '/' + (stats.referralCount || 0) + '</strong></td>';
+      html += '<td class="text-center"><strong>' + formatOralHealthAverage(stats.oralHealthAverage) + '</strong></td>';
       html += '<td class="muted">' + formatDate(clinic.createdAt) + '</td>';
       html += '<td>';
       html += '<div class="action-buttons">';

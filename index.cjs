@@ -287,7 +287,92 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
 
-// ================== STATIC ADMIN FILES ==================
+// ================== CLINIC ORAL HEALTH AVERAGE ==================
+async function calculateClinicOralHealthAverage(clinicId) {
+  try {
+    if (!isSupabaseEnabled()) {
+      console.log("[ORAL_HEALTH_AVG] Supabase not enabled, returning null");
+      return null;
+    }
+
+    console.log("[ORAL_HEALTH_AVG] Calculating weighted average for clinic:", clinicId);
+    
+    // Get patients with oral health scores from the last 6 months
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    
+    const { data: patients, error } = await supabase
+      .from('patients')
+      .select('id, created_at, health')
+      .eq('clinic_id', clinicId)
+      .gte('created_at', sixMonthsAgo.toISOString());
+
+    if (error) {
+      console.error("[ORAL_HEALTH_AVG] Error fetching patients:", error);
+      return null;
+    }
+
+    if (!patients || patients.length === 0) {
+      console.log("[ORAL_HEALTH_AVG] No patients found for clinic:", clinicId);
+      return null;
+    }
+
+    console.log("[ORAL_HEALTH_AVG] Found", patients.length, "patients in last 6 months");
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+    let validCount = 0;
+
+    const now = new Date();
+    
+    patients.forEach(patient => {
+      // Extract oral health score from health JSON
+      const health = patient.health || {};
+      const oralHealthScore = health.oralHealthScore || health.oral_health_score;
+      
+      if (oralHealthScore !== null && oralHealthScore !== undefined) {
+        const patientCreatedAt = new Date(patient.created_at);
+        const daysDiff = Math.floor((now - patientCreatedAt) / (1000 * 60 * 60 * 24));
+        
+        let weight = 0;
+        
+        // Apply weights based on age
+        if (daysDiff <= 30) {
+          weight = 1.5; // Last 30 days
+        } else if (daysDiff <= 90) {
+          weight = 1.2; // 31-90 days
+        } else if (daysDiff <= 180) {
+          weight = 1.0; // 91-180 days
+        } else {
+          return; // Skip if older than 180 days
+        }
+        
+        weightedSum += oralHealthScore * weight;
+        totalWeight += weight;
+        validCount++;
+      }
+    });
+
+    console.log("[ORAL_HEALTH_AVG] Valid assessments:", validCount, "Total weight:", totalWeight);
+
+    // Minimum 5 assessments required
+    if (validCount < 5) {
+      console.log("[ORAL_HEALTH_AVG] Insufficient assessments (< 5), returning null");
+      return null;
+    }
+
+    const weightedAverage = weightedSum / totalWeight;
+    console.log("[ORAL_HEALTH_AVG] Weighted average calculated:", weightedAverage.toFixed(1));
+    
+    return parseFloat(weightedAverage.toFixed(1));
+    
+  } catch (error) {
+    console.error("[ORAL_HEALTH_AVG] Error calculating oral health average:", error);
+    return null;
+  }
+}
+
+// ================== SUPER ADMIN GUARD ==================
 const publicDir = path.join(__dirname, "public");
 console.log("📂 Serving static files from:", publicDir);
 
@@ -10126,9 +10211,32 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
           patientCount: clinicPatients.length,
           messageCount: messageCount,
           referralCount: clinicReferrals.length,
-          activeReferralCount: clinicReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE").length
+          activeReferralCount: clinicReferrals.filter(r => (r.status || "").toUpperCase() === "APPROVED" || (r.status || "").toUpperCase() === "ACTIVE").length,
+          oralHealthAverage: null // Will be calculated below
         }
       });
+    }
+    
+    // Calculate oral health averages for all clinics
+    for (const clinic of clinicsList) {
+      if (clinic.id && clinic.id !== "single") {
+        clinic.stats.oralHealthAverage = await calculateClinicOralHealthAverage(clinic.id);
+      } else if (clinic.clinicId === "single") {
+        // For single clinic mode, we need to get the clinic UUID from clinics table
+        try {
+          const { data: clinicData } = await supabase
+            .from('clinics')
+            .select('id')
+            .eq('clinic_code', (singleClinic.clinicCode || "").toUpperCase())
+            .single();
+          
+          if (clinicData) {
+            clinic.stats.oralHealthAverage = await calculateClinicOralHealthAverage(clinicData.id);
+          }
+        } catch (error) {
+          console.log("[SUPER_ADMIN] Could not find clinic UUID for single clinic:", error);
+        }
+      }
     }
     
     // Sort by createdAt (newest first)
