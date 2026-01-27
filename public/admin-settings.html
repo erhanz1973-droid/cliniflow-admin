@@ -776,14 +776,17 @@
   let defaultCurrency = "EUR";
 
   async function loadPrices() {
+    console.log("🔄 loadPrices() started");
     try {
       const token = localStorage.getItem('admin_token') || '';
       if (!token) {
+        console.log("❌ No token found");
         const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı.';
         $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
         return;
       }
 
+      console.log("📡 Fetching treatment prices...");
       const res = await fetch(`${API_BASE}/api/admin/treatment-prices`, {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -791,12 +794,15 @@
         }
       });
 
+      console.log("📡 Response status:", res.status);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
 
       const data = await res.json();
+      console.log("📊 Received data:", data);
       const priceList = data.prices || [];
+      console.log("📊 Price list length:", priceList.length);
       
       // Convert array to object keyed by treatment_name
       prices = {};
@@ -805,13 +811,18 @@
         if (price.currency) defaultCurrency = price.currency;
       });
 
+      console.log("💰 Prices object:", prices);
+      console.log("💰 Default currency:", defaultCurrency);
+
       if ($("defaultCurrency")) {
         $("defaultCurrency").value = defaultCurrency;
       }
 
+      console.log("🎨 Calling renderPrices()...");
       renderPrices();
+      console.log("✅ loadPrices() completed");
     } catch (error) {
-      console.error("Load prices error:", error);
+      console.error("❌ Load prices error:", error);
       const msg = window.i18n ? window.i18n.t('settings.errors.pricesLoadFailed', { error: error.message }) : `Fiyatlar yüklenemedi: ${error.message}`;
       $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
     }
