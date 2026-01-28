@@ -35,13 +35,13 @@ const {
   countPatientsByClinic,
   getChatMessagesByPatient,
   createChatMessage,
-  // OTP fonksiyonları DEVRE DIŞI - Sadece file-based OTP kullanılıyor
-  // createOTP: createOTPInDB,
-  // getOTPByEmail: getOTPByEmailFromDB,
-  // incrementOTPAttempts: incrementOTPAttemptsInDB,
-  // markOTPUsed: markOTPUsedInDB,
-  // deleteOTP: deleteOTPFromDB,
-  // cleanupExpiredOTPs: cleanupExpiredOTPsInDB,
+  // OTP fonksiyonları AKTİF - Supabase kullanılıyor
+  createOTP: createOTP,
+  getOTPByEmail: getOTPByEmail,
+  incrementOTPAttempts: incrementOTPAttempts,
+  markOTPUsed: markOTPUsed,
+  deleteOTP: deleteOTP,
+  cleanupExpiredOTPs: cleanupExpiredOTPs,
   createAdminToken: createAdminTokenInDB,
   getAdminToken: getAdminTokenFromDB,
   deleteAdminToken: deleteAdminTokenFromDB,
@@ -807,24 +807,51 @@ async function verifyOTP(plainOTP, hashedOTP) {
 }
 
 /**
- * Get OTPs for an email (FILE-BASED ONLY)
- * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
+ * Get OTPs for an email (Supabase or File-based)
  */
-function getOTPsForEmail(email) {
+async function getOTPsForEmail(email) {
+  const emailKey = email.toLowerCase().trim();
+  
+  // Try Supabase first if available
+  if (isSupabaseEnabled()) {
+    try {
+      const result = await getOTPByEmail(emailKey);
+      if (result) {
+        console.log("[OTP] Retrieved OTP from Supabase for:", emailKey);
+        return result;
+      }
+    } catch (error) {
+      console.error("[OTP] Failed to get OTP from Supabase, falling back to file:", error);
+      // Fall back to file-based
+    }
+  }
+  
+  // FILE-BASED FALLBACK
   const otps = readJson(OTP_FILE, {});
-  return otps[email.toLowerCase().trim()] || null;
+  return otps[emailKey] || null;
 }
 
 /**
- * Save OTP for an email (FILE-BASED ONLY)
- * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
+ * Save OTP for an email (Supabase or File-based)
  */
 async function saveOTP(email, otpCode, attempts = 0) {
   const emailKey = email.toLowerCase().trim();
   const hashedOTP = await hashOTP(otpCode);
   const expiresAt = now() + OTP_EXPIRY_MS;
   
-  // FILE-BASED ONLY - Supabase OTP devre dışı
+  // Try Supabase first if available
+  if (isSupabaseEnabled()) {
+    try {
+      const result = await createOTP(emailKey, hashedOTP, new Date(expiresAt), attempts);
+      console.log("[OTP] Saved OTP to Supabase for:", emailKey);
+      return result;
+    } catch (error) {
+      console.error("[OTP] Failed to save OTP to Supabase, falling back to file:", error);
+      // Fall back to file-based
+    }
+  }
+  
+  // FILE-BASED FALLBACK
   const otps = readJson(OTP_FILE, {});
   otps[emailKey] = {
     hashedOTP,
@@ -839,54 +866,57 @@ async function saveOTP(email, otpCode, attempts = 0) {
 }
 
 /**
- * Increment OTP attempt count (FILE-BASED ONLY)
- * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
+ * Increment OTP attempt count (Supabase or File-based)
  */
-function incrementOTPAttempt(email) {
-  const otps = readJson(OTP_FILE, {});
+async function incrementOTPAttempt(email) {
   const emailKey = email.toLowerCase().trim();
+  
+  // Try Supabase first if available
+  if (isSupabaseEnabled()) {
+    try {
+      const result = await incrementOTPAttempts(emailKey);
+      console.log("[OTP] Incremented attempt in Supabase for:", emailKey);
+      return result;
+    } catch (error) {
+      console.error("[OTP] Failed to increment OTP in Supabase, falling back to file:", error);
+      // Fall back to file-based
+    }
+  }
+  
+  // FILE-BASED FALLBACK
+  const otps = readJson(OTP_FILE, {});
   if (otps[emailKey]) {
     otps[emailKey].attempts = (otps[emailKey].attempts || 0) + 1;
     writeJson(OTP_FILE, otps);
-    console.log("[OTP] Incremented attempt for:", emailKey, "attempts:", otps[emailKey].attempts);
+    console.log("[OTP] Incremented attempt in file for:", emailKey, "attempts:", otps[emailKey].attempts);
   }
 }
 
 /**
- * Mark OTP as verified and invalidate it (FILE-BASED ONLY)
- * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
+ * Mark OTP as verified and invalidate it (Supabase or File-based)
  */
-function markOTPVerified(email) {
-  const otps = readJson(OTP_FILE, {});
+async function markOTPVerified(email) {
   const emailKey = email.toLowerCase().trim();
+  
+  // Try Supabase first if available
+  if (isSupabaseEnabled()) {
+    try {
+      const result = await markOTPUsed(emailKey);
+      console.log("[OTP] Marked OTP as verified in Supabase for:", emailKey);
+      return result;
+    } catch (error) {
+      console.error("[OTP] Failed to mark OTP in Supabase, falling back to file:", error);
+      // Fall back to file-based
+    }
+  }
+  
+  // FILE-BASED FALLBACK
+  const otps = readJson(OTP_FILE, {});
   if (otps[emailKey]) {
     otps[emailKey].verified = true;
     otps[emailKey].expiresAt = now(); // Immediately expire
     writeJson(OTP_FILE, otps);
-    console.log("[OTP] Marked OTP as verified for:", emailKey);
-  }
-}
-
-/**
- * Clean up expired OTPs (FILE-BASED ONLY)
- * Supabase OTP devre dışı - sadece OTP_FILE kullanılıyor
- */
-function cleanupExpiredOTPs() {
-  const otps = readJson(OTP_FILE, {});
-  const nowTime = now();
-  let cleaned = false;
-  
-  for (const emailAddr in otps) {
-    const otpData = otps[emailAddr];
-    if (otpData.expiresAt < nowTime || otpData.verified) {
-      delete otps[emailAddr];
-      cleaned = true;
-    }
-  }
-  
-  if (cleaned) {
-    writeJson(OTP_FILE, otps);
-    console.log("[OTP] Cleaned up expired OTPs");
+    console.log("[OTP] Marked OTP as verified in file for:", emailKey);
   }
 }
 
@@ -9830,8 +9860,18 @@ app.post("/api/admin/login", async (req, res) => {
         }
         
         // Check if OTP is required
-        const isNewClinic = (now() - (clinic.created_at ? new Date(clinic.created_at).getTime() : 0)) < (24 * 60 * 60 * 1000); // Less than 24h old
+        const createdAt = clinic.created_at || clinic.createdAt || clinic.created;
+        const isNewClinic = createdAt && (now() - new Date(createdAt).getTime()) < (24 * 60 * 60 * 1000); // Less than 24h old
         const otpRequired = OTP_ENABLED_FOR_ADMINS && (OTP_REQUIRED_FOR_NEW_ADMINS && isNewClinic);
+        
+        console.log("[ADMIN LOGIN] OTP Check:", {
+          clinicCode: code,
+          createdAt,
+          isNewClinic,
+          otpRequired,
+          OTP_ENABLED_FOR_ADMINS,
+          OTP_REQUIRED_FOR_NEW_ADMINS
+        });
         
         if (otpRequired && !email) {
           return res.json({
@@ -9957,6 +9997,55 @@ app.post("/api/admin/login", async (req, res) => {
       const passwordMatch = await bcrypt.compare(String(password).trim(), foundClinic.password);
       if (!passwordMatch) {
         return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+      }
+    }
+    
+    // Check if OTP is required for file-based clinics
+    const createdAt = foundClinic.created_at || foundClinic.createdAt || foundClinic.created;
+    const isNewClinic = createdAt && (now() - new Date(createdAt).getTime()) < (24 * 60 * 60 * 1000); // Less than 24h old
+    const otpRequired = OTP_ENABLED_FOR_ADMINS && (OTP_REQUIRED_FOR_NEW_ADMINS && isNewClinic);
+    
+    console.log("[ADMIN LOGIN] File-based OTP Check:", {
+      clinicCode: code,
+      createdAt,
+      isNewClinic,
+      otpRequired,
+      OTP_ENABLED_FOR_ADMINS,
+      OTP_REQUIRED_FOR_NEW_ADMINS
+    });
+    
+    if (otpRequired && !email) {
+      return res.json({
+        ok: true,
+        requiresOTP: true,
+        message: "OTP doğrulaması gereklidir. Lütfen email adresinizi girin.",
+        clinicCode: code
+      });
+    }
+    
+    if (otpRequired && email) {
+      // Request OTP and don't return token yet
+      try {
+        const otpCode = generateOTP();
+        const emailNormalized = String(email).trim().toLowerCase();
+        await saveOTP(emailNormalized, otpCode);
+        await sendOTPEmail(emailNormalized, otpCode, foundClinic.language || "en");
+        
+        return res.json({
+          ok: true,
+          requiresOTP: true,
+          otpSent: true,
+          message: "OTP kodu email adresinize gönderildi.",
+          clinicCode: code,
+          email: emailNormalized
+        });
+      } catch (emailError) {
+        console.error("[ADMIN LOGIN] OTP send failed:", emailError);
+        return res.status(500).json({ 
+          ok: false, 
+          error: "otp_send_failed", 
+          message: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin." 
+        });
       }
     }
     
