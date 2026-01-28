@@ -3044,7 +3044,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
     }
 
     // Verify OTP
-    const otpData = getOTPsForEmail(emailNormalized);
+    const otpData = await getOTPsForEmail(emailNormalized);
     if (!otpData) {
       return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP bulunamadı veya süresi dolmuş." });
     }
@@ -3057,9 +3057,9 @@ app.post("/api/admin/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "otp_max_attempts", message: "Maksimum deneme sayısına ulaşıldı." });
     }
 
-    const isValidOTP = await verifyOTP(otpCode, otpData.hashedOTP);
+    const isValidOTP = await verifyOTP(otpCode, otpData.otp_hash || otpData.hashedOTP);
     if (!isValidOTP) {
-      incrementOTPAttempt(emailNormalized);
+      await incrementOTPAttempt(emailNormalized);
       const remainingAttempts = OTP_MAX_ATTEMPTS - (otpData.attempts + 1);
       return res.status(400).json({ 
         ok: false, 
@@ -3069,7 +3069,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
     }
 
     // Mark OTP as verified
-    markOTPVerified(emailNormalized);
+    await markOTPVerified(emailNormalized);
 
     // Generate JWT token
     const token = jwt.sign(
