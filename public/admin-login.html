@@ -395,7 +395,7 @@
     `;
     
     // Update i18n for new elements
-    if (typeof i18n !== 'undefined') {
+    if (typeof i18n !== 'undefined' && i18n.updateUI) {
       i18n.updateUI();
     }
     
@@ -473,8 +473,13 @@
       }
     });
     
-    // Auto-focus on OTP code input
-    document.getElementById('otp-code').focus();
+    // Auto-focus on OTP code input with delay
+    setTimeout(() => {
+      const otpInput = document.getElementById('otp-code');
+      if (otpInput) {
+        otpInput.focus();
+      }
+    }, 100);
   }
   
   function setOTPMsg(message, type) {
