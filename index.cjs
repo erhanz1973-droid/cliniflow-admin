@@ -773,6 +773,13 @@ const OTP_MAX_ATTEMPTS = 3;
 const OTP_LENGTH = 6;
 const TOKEN_EXPIRY_DAYS = 14; // 7-14 days as requested
 
+// OTP Feature Flags
+const OTP_ENABLED_FOR_ADMINS = process.env.OTP_ENABLED_FOR_ADMINS === "true";
+const OTP_REQUIRED_FOR_NEW_ADMINS = process.env.OTP_REQUIRED_FOR_NEW_ADMINS !== "false"; // Default true
+
+console.log("[OTP CONFIG] Enabled for admins:", OTP_ENABLED_FOR_ADMINS);
+console.log("[OTP CONFIG] Required for new admins:", OTP_REQUIRED_FOR_NEW_ADMINS);
+
 /**
  * Generate a 6-digit numeric OTP
  */
@@ -2887,6 +2894,178 @@ app.post("/auth/request-otp", async (req, res) => {
   } catch (error) {
     console.error("[OTP] Request OTP error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// POST /api/admin/request-otp
+// Request OTP for admin login: takes clinic code + email, sends OTP
+app.post("/api/admin/request-otp", async (req, res) => {
+  try {
+    const { clinicCode, email } = req.body || {};
+    
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required", message: "Klinik kodu gereklidir." });
+    }
+    
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required", message: "Email adresi gereklidir." });
+    }
+
+    const code = String(clinicCode).trim().toUpperCase();
+    const emailNormalized = String(email).trim().toLowerCase();
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailNormalized)) {
+      return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
+    }
+    
+    // Check rate limit
+    if (!checkRateLimit(emailNormalized)) {
+      return res.status(429).json({ 
+        ok: false, 
+        error: "rate_limit_exceeded", 
+        message: "Çok fazla istek. Lütfen bir süre sonra tekrar deneyin." 
+      });
+    }
+
+    // Find clinic
+    let clinic = null;
+    if (isSupabaseEnabled()) {
+      clinic = await getClinicByCode(code);
+    } else {
+      // Fallback to file-based
+      const clinics = readJson(CLINICS_FILE, {});
+      clinic = Object.values(clinics).find(c => 
+        String(c.clinicCode || "").toUpperCase() === code
+      );
+    }
+
+    if (!clinic) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
+    }
+
+    // Generate and save OTP
+    const otpCode = generateOTP();
+    await saveOTP(emailNormalized, otpCode);
+    
+    // Send OTP email
+    try {
+      await sendOTPEmail(emailNormalized, otpCode, clinic.language || "en");
+      console.log(`[ADMIN OTP] OTP sent to ${emailNormalized} for clinic ${code}`);
+    } catch (emailError) {
+      console.error("[ADMIN OTP] Failed to send email:", emailError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "email_send_failed", 
+        message: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin." 
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: "OTP kodu email adresinize gönderildi.",
+      clinicCode: code,
+      email: emailNormalized
+    });
+
+  } catch (error) {
+    console.error("[ADMIN OTP] Request error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
+  }
+});
+
+// POST /api/admin/verify-otp
+// Verify OTP for admin login: takes clinic code + email + OTP, generates JWT token
+app.post("/api/admin/verify-otp", async (req, res) => {
+  try {
+    const { clinicCode, email, otp } = req.body || {};
+
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required", message: "Klinik kodu gereklidir." });
+    }
+    
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required", message: "Email adresi gereklidir." });
+    }
+    
+    if (!otp || !String(otp).trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
+
+    const code = String(clinicCode).trim().toUpperCase();
+    const emailNormalized = String(email).trim().toLowerCase();
+    const otpCode = String(otp).trim();
+
+    // Find clinic
+    let clinic = null;
+    if (isSupabaseEnabled()) {
+      clinic = await getClinicByCode(code);
+    } else {
+      // Fallback to file-based
+      const clinics = readJson(CLINICS_FILE, {});
+      clinic = Object.values(clinics).find(c => 
+        String(c.clinicCode || "").toUpperCase() === code
+      );
+    }
+
+    if (!clinic) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
+    }
+
+    // Verify OTP
+    const otpData = getOTPsForEmail(emailNormalized);
+    if (!otpData) {
+      return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP bulunamadı veya süresi dolmuş." });
+    }
+
+    if (otpData.verified || otpData.expiresAt < now()) {
+      return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP süresi dolmuş." });
+    }
+
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ ok: false, error: "otp_max_attempts", message: "Maksimum deneme sayısına ulaşıldı." });
+    }
+
+    const isValidOTP = await verifyOTP(otpCode, otpData.hashedOTP);
+    if (!isValidOTP) {
+      incrementOTPAttempt(emailNormalized);
+      const remainingAttempts = OTP_MAX_ATTEMPTS - (otpData.attempts + 1);
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_otp", 
+        message: `Geçersiz OTP kodu. Kalan deneme: ${remainingAttempts}` 
+      });
+    }
+
+    // Mark OTP as verified
+    markOTPVerified(emailNormalized);
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { 
+        clinicCode: clinic.clinic_code,
+        email: emailNormalized,
+        role: "admin",
+        otpVerified: true
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    console.log(`[ADMIN OTP] ✅ OTP verification successful for ${clinic.clinic_code}`);
+
+    res.json({
+      ok: true,
+      token,
+      clinicCode: clinic.clinic_code,
+      email: emailNormalized,
+      message: "Giriş başarılı."
+    });
+
+  } catch (error) {
+    console.error("[ADMIN OTP] Verify error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
   }
 });
 
@@ -9621,11 +9800,11 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 // POST /api/admin/login
-// Clinic login (clinic code + password) - Supabase supported
+// Clinic login (clinic code + password) - OTP supported when enabled
 // Supports both Supabase, CLINIC_FILE (single clinic) and CLINICS_FILE (multiple clinics)
 app.post("/api/admin/login", async (req, res) => {
   try {
-    const { clinicCode, password } = req.body || {};
+    const { clinicCode, password, email } = req.body || {};
     
     if (!clinicCode || !String(clinicCode).trim()) {
       return res.status(400).json({ ok: false, error: "clinic_code_required" });
@@ -9650,12 +9829,52 @@ app.post("/api/admin/login", async (req, res) => {
           return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
         }
         
+        // Check if OTP is required
+        const isNewClinic = (now() - (clinic.created_at ? new Date(clinic.created_at).getTime() : 0)) < (24 * 60 * 60 * 1000); // Less than 24h old
+        const otpRequired = OTP_ENABLED_FOR_ADMINS && (OTP_REQUIRED_FOR_NEW_ADMINS && isNewClinic);
+        
+        if (otpRequired && !email) {
+          return res.json({
+            ok: true,
+            requiresOTP: true,
+            message: "OTP doğrulaması gereklidir. Lütfen email adresinizi girin.",
+            clinicCode: code
+          });
+        }
+        
+        if (otpRequired && email) {
+          // Request OTP and don't return token yet
+          try {
+            const otpCode = generateOTP();
+            const emailNormalized = String(email).trim().toLowerCase();
+            await saveOTP(emailNormalized, otpCode);
+            await sendOTPEmail(emailNormalized, otpCode, clinic.language || "en");
+            
+            return res.json({
+              ok: true,
+              requiresOTP: true,
+              otpSent: true,
+              message: "OTP kodu email adresinize gönderildi.",
+              clinicCode: code,
+              email: emailNormalized
+            });
+          } catch (emailError) {
+            console.error("[ADMIN LOGIN] OTP send failed:", emailError);
+            return res.status(500).json({ 
+              ok: false, 
+              error: "otp_send_failed", 
+              message: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin." 
+            });
+          }
+        }
+        
         // Generate JWT token - ONLY clinicCode, NO clinicId
         // UUID will be fetched from Supabase at runtime
         const token = jwt.sign(
           { 
             clinicCode: clinic.clinic_code,
-            role: "admin" 
+            role: "admin",
+            otpVerified: !otpRequired
           },
           JWT_SECRET,
           { expiresIn: JWT_EXPIRES_IN }
