@@ -3219,8 +3219,18 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
     }
 
-    let otpData = getOTPsForEmail(resolvedEmail);
+    console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
     console.log(`[OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+    
+    if (otpData) {
+      console.log(`[OTP] OTP data structure:`, {
+        hasHashedOTP: !!otpData.hashedOTP,
+        hasOtpHash: !!otpData.otp_hash,
+        attempts: otpData.attempts,
+        expiresAt: otpData.expiresAt,
+        verified: otpData.verified
+      });
+    }
     
     if (!otpData) {
       console.log(`[OTP] OTP not found for email: ${resolvedEmail}`);
@@ -3270,7 +3280,20 @@ app.post("/auth/verify-otp", async (req, res) => {
     // Verify OTP with additional safety checks
     let isValid = false;
     try {
-      isValid = await verifyOTP(otpCode, otpData.hashedOTP);
+      const hashToUse = otpData.hashedOTP || otpData.otp_hash;
+      console.log(`[OTP] Using hash field:`, hashToUse ? "found" : "missing");
+      
+      if (!hashToUse) {
+        console.error(`[OTP] No hash found in OTP data`);
+        return res.status(500).json({ 
+          ok: false, 
+          error: "hash_missing", 
+          message: "OTP hash bulunamadı. Lütfen yeni bir OTP isteyin." 
+        });
+      }
+      
+      isValid = await verifyOTP(otpCode, hashToUse);
+      console.log(`[OTP] Verification result: ${isValid}`);
     } catch (verifyError) {
       console.error("[OTP] Verification error:", verifyError);
       return res.status(500).json({ 
