@@ -2749,6 +2749,8 @@ async function resolvePatientForOtp({ email, phone }) {
   const phoneTrimmed = phone ? String(phone).trim() : "";
   const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
 
+  console.log(`[OTP] resolvePatientForOtp input: email="${emailNormalized}", phone="${phoneTrimmed}"`);
+
   let foundPatient = null;
   let foundPatientId = null;
   let foundPhone = phoneNormalized || null;
@@ -2819,9 +2821,10 @@ async function resolvePatientForOtp({ email, phone }) {
     foundPhone = foundPatient.phone || foundPhone;
     foundLanguage = normalizePatientLanguage(foundPatient.language);
     resolvedEmail = String(foundPatient.email || resolvedEmail || "").trim().toLowerCase();
+    console.log(`[OTP] Found patient with email: "${foundPatient.email}", resolvedEmail: "${resolvedEmail}"`);
   }
 
-  return {
+  const result = {
     patient: foundPatient,
     patientId: foundPatientId,
     email: resolvedEmail,
@@ -2829,6 +2832,9 @@ async function resolvePatientForOtp({ email, phone }) {
     language: foundLanguage,
     phoneNormalized,
   };
+  
+  console.log(`[OTP] resolvePatientForOtp result:`, result);
+  return result;
 }
 
 // POST /auth/request-otp
