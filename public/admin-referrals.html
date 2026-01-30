@@ -694,6 +694,10 @@
 
   async function approveReferral(id) {
     const adminToken = getAdminToken();
+    console.log("[APPROVE] Admin token found:", !!adminToken);
+    console.log("[APPROVE] Token length:", adminToken?.length);
+    console.log("[APPROVE] Token starts with Bearer:", adminToken?.startsWith("Bearer "));
+    
     if (!adminToken) {
       const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "❌ Admin token bulunamadı.";
       setMsg(msg, "err");
@@ -726,6 +730,11 @@
         inviterDiscountPercent: defaultInviterPercent,
         invitedDiscountPercent: defaultInvitedPercent,
       };
+      
+      console.log("[APPROVE] Sending request to:", `${API}/api/admin/referrals/${id}/approve`);
+      console.log("[APPROVE] Request headers:", headers);
+      console.log("[APPROVE] Request body:", body);
+      
       const r = await fetch(`${API}/api/admin/referrals/${id}/approve`, {
         method: "PATCH",
         headers,
