@@ -8668,7 +8668,6 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
           invited_discount_percent: null,
           discount_percent: null,
           approved_at: null,
-          rejected_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         };
         
