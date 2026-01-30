@@ -12051,3 +12051,18 @@ app.listen(PORT, "0.0.0.0", () => {
   // Run heavy init AFTER server is listening
   postBootInit();
 });
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  console.error('[UNCAUGHT EXCEPTION] =====================================');
+  console.error('[UNCAUGHT EXCEPTION] Error:', error);
+  console.error('[UNCAUGHT EXCEPTION] Stack:', error.stack);
+  console.error('[UNCAUGHT EXCEPTION] =====================================');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNHANDLED REJECTION] =====================================');
+  console.error('[UNHANDLED REJECTION] Reason:', reason);
+  console.error('[UNHANDLED REJECTION] Promise:', promise);
+  console.error('[UNHANDLED REJECTION] =====================================');
+});
