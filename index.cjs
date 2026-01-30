@@ -3310,10 +3310,12 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
       
+      console.log(`[OTP] About to call verifyOTP with otp="${otpCode}" and hash="${hashToUse.substring(0, 10)}..."`);
       isValid = await verifyOTP(otpCode, hashToUse);
       console.log(`[OTP] Verification result: ${isValid}`);
     } catch (verifyError) {
       console.error("[OTP] Verification error:", verifyError);
+      console.error("[OTP] Verification error stack:", verifyError.stack);
       return res.status(500).json({ 
         ok: false, 
         error: "verification_failed", 
