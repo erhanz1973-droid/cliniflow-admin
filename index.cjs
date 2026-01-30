@@ -777,8 +777,12 @@ const TOKEN_EXPIRY_DAYS = 14; // 7-14 days as requested
 const OTP_ENABLED_FOR_ADMINS = process.env.OTP_ENABLED_FOR_ADMINS === "true";
 const OTP_REQUIRED_FOR_NEW_ADMINS = process.env.OTP_REQUIRED_FOR_NEW_ADMINS !== "false"; // Default true
 
+// Review Mode for Google Play
+const REVIEW_MODE = process.env.REVIEW_MODE === "true";
+
 console.log("[OTP CONFIG] Enabled for admins:", OTP_ENABLED_FOR_ADMINS);
 console.log("[OTP CONFIG] Required for new admins:", OTP_REQUIRED_FOR_NEW_ADMINS);
+console.log("[REVIEW MODE] Enabled:", REVIEW_MODE);
 
 /**
  * Generate a 6-digit numeric OTP
@@ -930,6 +934,13 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
   console.log(`[sendOTPEmail] otpCode: ${otpCode}`);
   console.log(`[sendOTPEmail] lang: ${lang}`);
   console.log(`[sendOTPEmail] ========================================`);
+  
+  // Review Mode Bypass: Skip email sending for test@clinifly.net
+  if (REVIEW_MODE && email.toLowerCase() === "test@clinifly.net") {
+    console.log(`[sendOTPEmail] 🚫 REVIEW MODE: Skipping email for test@clinifly.net`);
+    console.log(`[sendOTPEmail] 📝 Static OTP 123456 will work for this account`);
+    return { messageId: "review-mode-bypass", accepted: [email] };
+  }
   
   const apiKey = process.env.BREVO_API_KEY;
   const fromEmail = process.env.SMTP_FROM || SMTP_FROM; // prefer explicit env, fallback to default
@@ -2026,6 +2037,22 @@ app.post("/api/register", async (req, res) => {
 
   // Send OTP for email verification instead of returning token immediately
   try {
+    // Review Mode Bypass: Skip OTP generation and saving for test@clinifly.net
+    if (REVIEW_MODE && emailNormalized === "test@clinifly.net") {
+      console.log(`[REGISTER] 🚫 REVIEW MODE: Skipping OTP generation for test@clinifly.net`);
+      console.log(`[REGISTER] 📝 Static OTP 123456 will work for this account`);
+      
+      // Still return success response but without actually sending OTP
+      return res.status(201).json({
+        ok: true,
+        clinicId: clinicData.id,
+        clinicCode: clinicData.clinic_code,
+        message: "Clinic registered successfully (Review Mode). Use OTP 123456 to verify.",
+        reviewMode: true,
+        requiresOTP: true
+      });
+    }
+    
     // Clean up expired OTPs
     cleanupExpiredOTPs();
     
@@ -2975,6 +3002,21 @@ app.post("/api/admin/request-otp", async (req, res) => {
       return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
     }
 
+    // Review Mode Bypass: Skip OTP generation and email for test@clinifly.net
+    if (REVIEW_MODE && emailNormalized === "test@clinifly.net") {
+      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Skipping OTP generation for test@clinifly.net`);
+      console.log(`[ADMIN OTP] 📝 Static OTP 123456 will work for this account`);
+      
+      return res.json({
+        ok: true,
+        message: "OTP kodu hazırlandı (Review Mode). OTP 123456 kullanabilirsiniz.",
+        clinicCode: code,
+        email: emailNormalized,
+        reviewMode: true,
+        staticOTP: "123456"
+      });
+    }
+
     // Generate and save OTP
     const otpCode = generateOTP();
     await saveOTP(emailNormalized, otpCode);
@@ -3041,6 +3083,35 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 
     if (!clinic) {
       return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
+    }
+
+    // Review Mode Bypass: Accept static OTP for test@clinifly.net
+    if (REVIEW_MODE && emailNormalized === "test@clinifly.net" && otp === "123456") {
+      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Static OTP bypass for test@clinifly.net`);
+      
+      // Generate JWT token
+      const token = jwt.sign(
+        { 
+          clinicCode: clinic.clinic_code,
+          email: emailNormalized,
+          role: "admin",
+          otpVerified: true,
+          reviewMode: true
+        },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      console.log(`[ADMIN OTP] ✅ REVIEW MODE: Login successful for ${clinic.clinic_code}`);
+
+      return res.json({
+        ok: true,
+        token,
+        clinicCode: clinic.clinic_code,
+        email: emailNormalized,
+        message: "Giriş başarılı (Review Mode).",
+        reviewMode: true
+      });
     }
 
     // Verify OTP
