@@ -8646,17 +8646,25 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
         }
         
         // Update in Supabase
+        console.log("[REFERRAL REJECT] Attempting to update referral with ID:", id);
+        console.log("[REFERRAL REJECT] Clinic ID for update:", req.clinicId);
+        console.log("[REFERRAL REJECT] Current referral status:", referral.status);
+        
+        const updateData = {
+          status: 'REJECTED',
+          inviter_discount_percent: null,
+          invited_discount_percent: null,
+          discount_percent: null,
+          approved_at: null,
+          rejected_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        console.log("[REFERRAL REJECT] Update data:", updateData);
+        
         const { data: updated, error: updateError } = await supabase
           .from('referrals')
-          .update({
-            status: 'REJECTED',
-            inviter_discount_percent: null,
-            invited_discount_percent: null,
-            discount_percent: null,
-            approved_at: null,
-            rejected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
+          .update(updateData)
           .eq('id', id)
           .eq('clinic_id', req.clinicId) // CRITICAL: Clinic isolation
           .select()
