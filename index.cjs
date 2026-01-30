@@ -3234,7 +3234,8 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
     }
 
-    console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
+    // Get OTP data for this email
+    const otpData = await getOTPsForEmail(resolvedEmail);
     console.log(`[OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
     
     if (otpData) {
