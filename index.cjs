@@ -3258,7 +3258,9 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     
     // Check if already verified
+    console.log(`[OTP] Checking if already verified: ${otpData.verified}`);
     if (otpData.verified) {
+      console.log(`[OTP] OTP already used, returning error`);
       return res.status(400).json({ 
         ok: false, 
         error: "otp_already_used", 
@@ -3268,6 +3270,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     
     // Check if expired
     const expiresAt = otpData.expiresAt || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    console.log(`[OTP] Checking expiration: expiresAt=${expiresAt}, now=${now()}`);
     if (expiresAt < now()) {
       console.log(`[OTP] OTP expired: expiresAt=${expiresAt}, now=${now()}`);
       return res.status(400).json({ 
@@ -3278,13 +3281,17 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     
     // Check attempts
+    console.log(`[OTP] Checking attempts: ${otpData.attempts} >= ${OTP_MAX_ATTEMPTS}`);
     if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      console.log(`[OTP] Max attempts reached`);
       return res.status(400).json({ 
         ok: false, 
         error: "otp_max_attempts", 
         message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
       });
     }
+    
+    console.log(`[OTP] All checks passed, proceeding to verification`);
     
     // Final validation before OTP verification
     if (!otpData || !otpData.hashedOTP) {
