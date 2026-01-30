@@ -8618,6 +8618,13 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
 // PATCH /api/admin/referrals/:id/reject
 app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) => {
   try {
+    console.log("[REFERRAL REJECT] ========================================");
+    console.log("[REFERRAL REJECT] Request received");
+    console.log("[REFERRAL REJECT] Params:", req.params);
+    console.log("[REFERRAL REJECT] Headers:", req.headers);
+    console.log("[REFERRAL REJECT] Body:", req.body);
+    console.log("[REFERRAL REJECT] ========================================");
+    
     const { id } = req.params;
     
     // PRODUCTION: Clinic isolation - use req.clinic.id
@@ -8730,8 +8737,18 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
     writeJson(REF_FILE, list);
     res.json({ ok: true, item: list[idx] });
   } catch (error) {
-    console.error("Referral reject error:", error);
-    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+    console.error("[REFERRAL REJECT] ========================================");
+    console.error("[REFERRAL REJECT] ERROR CAUGHT:");
+    console.error("[REFERRAL REJECT] Error:", error);
+    console.error("[REFERRAL REJECT] Error message:", error?.message);
+    console.error("[REFERRAL REJECT] Error stack:", error?.stack);
+    console.error("[REFERRAL REJECT] ========================================");
+    
+    res.status(500).json({ 
+      ok: false, 
+      error: error?.message || "internal_error",
+      details: error?.stack
+    });
   }
 });
 
