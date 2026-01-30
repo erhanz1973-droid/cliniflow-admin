@@ -12070,3 +12070,11 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[UNHANDLED REJECTION] Promise:', promise);
   console.error('[UNHANDLED REJECTION] =====================================');
 });
+
+// DEBUG: Test endpoint for PATCH requests
+app.patch("/debug/test-patch", (req, res) => {
+  console.log("[DEBUG] PATCH test endpoint hit!");
+  console.log("[DEBUG] Headers:", req.headers);
+  console.log("[DEBUG] Body:", req.body);
+  res.json({ ok: true, message: "PATCH test successful" });
+});
