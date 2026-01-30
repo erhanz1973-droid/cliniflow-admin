@@ -3294,13 +3294,18 @@ app.post("/auth/verify-otp", async (req, res) => {
     console.log(`[OTP] All checks passed, proceeding to verification`);
     
     // Final validation before OTP verification
-    if (!otpData || !otpData.hashedOTP) {
+    console.log(`[OTP] Final validation check: otpData=${!!otpData}, hashedOTP=${!!otpData.hashedOTP}, otp_hash=${!!otpData.otp_hash}`);
+    
+    if (!otpData || (!otpData.hashedOTP && !otpData.otp_hash)) {
+      console.log(`[OTP] Final validation failed - no hash found`);
       return res.status(400).json({ 
         ok: false, 
         error: "otp_data_missing", 
         message: "OTP verisi bulunamadı. Lütfen yeni bir OTP isteyin." 
       });
     }
+    
+    console.log(`[OTP] Final validation passed`);
 
     // Verify OTP with additional safety checks
     let isValid = false;
