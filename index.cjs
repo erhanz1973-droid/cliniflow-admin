@@ -9740,6 +9740,10 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
 // Middleware: Validate admin JWT token
 async function requireAdminAuth(req, res, next) {
   try {
+    console.log("[requireAdminAuth] ========================================");
+    console.log("[requireAdminAuth] Request received for:", req.method, req.path);
+    console.log("[requireAdminAuth] Auth header:", req.headers.authorization ? "present" : "missing");
+    
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       console.log("[requireAdminAuth] Missing or invalid auth header");
