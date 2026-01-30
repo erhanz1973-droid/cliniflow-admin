@@ -758,6 +758,10 @@
 
   async function rejectReferral(id) {
     const adminToken = getAdminToken();
+    console.log("[REJECT] Admin token found:", !!adminToken);
+    console.log("[REJECT] Token length:", adminToken?.length);
+    console.log("[REJECT] Token starts with Bearer:", adminToken?.startsWith("Bearer "));
+    
     if (!adminToken) {
       const msg = window.i18n ? window.i18n.t('referrals.errors.noToken') : "❌ Admin token bulunamadı.";
       setMsg(msg, "err");
@@ -780,6 +784,9 @@
         headers["Authorization"] = `Bearer ${adminToken}`;
       }
 
+      console.log("[REJECT] Sending request to:", `${API}/api/admin/referrals/${id}/reject`);
+      console.log("[REJECT] Request headers:", headers);
+      
       const r = await fetch(`${API}/api/admin/referrals/${id}/reject`, {
         method: "PATCH",
         headers
