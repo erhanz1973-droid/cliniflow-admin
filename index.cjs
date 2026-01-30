@@ -3267,7 +3267,9 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     
     // Check if expired
-    if (otpData.expiresAt < now()) {
+    const expiresAt = otpData.expiresAt || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    if (expiresAt < now()) {
+      console.log(`[OTP] OTP expired: expiresAt=${expiresAt}, now=${now()}`);
       return res.status(400).json({ 
         ok: false, 
         error: "otp_expired", 
