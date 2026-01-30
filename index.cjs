@@ -278,10 +278,10 @@ const SUPER_ADMIN_JWT_SECRET =
 
 // ================== MIDDLEWARE ==================
 const corsOptions = {
-  origin: true,
+  origin: ["https://clinic.clinifly.net", "https://cliniflow-admin.onrender.com", "http://localhost:3000", "http://localhost:5050"],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept", "x-actor"],
 };
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
