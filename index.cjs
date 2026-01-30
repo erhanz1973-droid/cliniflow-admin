@@ -3174,17 +3174,33 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 // Verify OTP: takes email + OTP, generates JWT token
 app.post("/auth/verify-otp", async (req, res) => {
   try {
-    const { email, phone, otp } = req.body || {};
+    const { email, phone, otp, sessionId } = req.body || {};
+
+    // Strict parameter validation
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
 
     if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
       return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
     }
-    if (!otp || !String(otp).trim()) {
-      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+
+    // Additional validation to prevent undefined parameters
+    if (otp === undefined || (email === undefined && phone === undefined)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_parameters", 
+        message: "Missing required parameters for OTP verification" 
+      });
     }
 
     const emailNormalized = email ? String(email).trim().toLowerCase() : "";
     const otpCode = String(otp).trim();
+
+    // Validate OTP format (should be 6 digits)
+    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
+      return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
+    }
 
     const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
     const resolvedEmail = resolved.email || emailNormalized;
@@ -3242,8 +3258,27 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
     
-    // Verify OTP
-    const isValid = await verifyOTP(otpCode, otpData.hashedOTP);
+    // Final validation before OTP verification
+    if (!otpData || !otpData.hashedOTP) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_data_missing", 
+        message: "OTP verisi bulunamadı. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+
+    // Verify OTP with additional safety checks
+    let isValid = false;
+    try {
+      isValid = await verifyOTP(otpCode, otpData.hashedOTP);
+    } catch (verifyError) {
+      console.error("[OTP] Verification error:", verifyError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "verification_failed", 
+        message: "OTP doğrulanamadı. Lütfen tekrar deneyin." 
+      });
+    }
     
     if (!isValid) {
       // Increment attempt count (email-based)
