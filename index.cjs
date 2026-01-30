@@ -3202,8 +3202,13 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
     }
 
+    console.log(`[OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+    
     const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
+    console.log(`[OTP] Resolved patient data:`, resolved);
     const resolvedEmail = resolved.email || emailNormalized;
+    console.log(`[OTP] Using resolved email: "${resolvedEmail}" (from resolved: ${!!resolved.email})`);
+    
     if (!resolvedEmail) {
       return res.status(400).json({
         ok: false,
@@ -3215,7 +3220,11 @@ app.post("/auth/verify-otp", async (req, res) => {
     console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    console.log(`[OTP] Email validation check: "${resolvedEmail}"`);
+    console.log(`[OTP] Regex test result: ${emailRegex.test(resolvedEmail)}`);
+    
     if (!emailRegex.test(resolvedEmail)) {
+      console.log(`[OTP] Email validation failed for: "${resolvedEmail}"`);
       return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
     }
 
