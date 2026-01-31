@@ -228,12 +228,12 @@
       
       // Register (admin-register.html)
       register: {
-        title: "Yeni Klinik Kaydı",
-        subtitle: "Yeni bir klinik hesabı oluşturun",
+        title: "Create Your Clinic",
+        subtitle: "Get started in minutes — it's free.",
         clinicCode: "Clinic Code",
         clinicCodeRequired: "*",
-        clinicCodePlaceholder: "MOON",
-        clinicCodeHelp: "Benzersiz klinik kodunuz (örn: MOON, CLINIC01, İSTANBUL)",
+        clinicCodePlaceholder: "e.g. MOON, CLINIC01, ISTANBUL",
+        clinicCodeHelp: "Share this clinic code with your patients. They will enter it during registration to connect with your clinic.",
         name: "Clinic Name",
         nameRequired: "*",
         namePlaceholder: "Moon Clinic",
@@ -663,12 +663,12 @@
       
       // Register (admin-register.html)
       register: {
-        title: "New Clinic Registration",
-        subtitle: "Create a new clinic account",
+        title: "Create Your Clinic",
+        subtitle: "Get started in minutes — it's free.",
         clinicCode: "Clinic Code",
         clinicCodeRequired: "*",
-        clinicCodePlaceholder: "MOON",
-        clinicCodeHelp: "Your unique clinic code (e.g., MOON, CLINIC01, ISTANBUL)",
+        clinicCodePlaceholder: "e.g. MOON, CLINIC01, ISTANBUL",
+        clinicCodeHelp: "Share this clinic code with your patients. They will enter it during registration to connect with your clinic.",
         name: "Clinic Name",
         nameRequired: "*",
         namePlaceholder: "Moon Clinic",
