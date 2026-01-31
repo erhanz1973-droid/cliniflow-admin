@@ -622,7 +622,10 @@
       
       // Use the stored discount if available, otherwise use calculated discount
       const finalDiscount = currentStoredDiscount !== null ? parseInt(currentStoredDiscount) : (discount !== null ? discount : 10);
+      
+      // Apply to UI and store to localStorage
       applyReferralDiscount(finalDiscount);
+      storeReferralDiscount(finalDiscount);
 
       console.log("Applied final discount:", finalDiscount);
       console.log("Stored discount to localStorage:", finalDiscount);
