@@ -7303,6 +7303,10 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         referralLevel1Percent: body.referralLevel1Percent,
         referralLevel2Percent: body.referralLevel2Percent,
         referralLevel3Percent: body.referralLevel3Percent,
+        // Also check settings.referralLevels from frontend
+        level1: body.settings?.referralLevels?.level1,
+        level2: body.settings?.referralLevels?.level2,
+        level3: body.settings?.referralLevels?.level3,
       },
       existing.settings?.referralLevels || {}
     );
@@ -7390,6 +7394,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
             defaultInviterDiscountPercent: inviterPercent,
             defaultInvitedDiscountPercent: invitedPercent,
             referralLevels,
+            referralLevel1Percent: referralLevels.level1, // Add this for compatibility
             googleReviews: updated.googleReviews,
             trustpilotReviews: updated.trustpilotReviews,
             logoUrl: updated.logoUrl,
