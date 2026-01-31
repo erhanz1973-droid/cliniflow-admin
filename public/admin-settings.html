@@ -584,7 +584,7 @@
       if ($("welcomeMessage")) $("welcomeMessage").value = branding.welcomeMessage || "";
       
       // Set referral discount value (prioritize current user setting over backend)
-      const currentStoredDiscount = localStorage.getItem('referralDiscount');
+      const currentStoredDiscount = getStoredReferralDiscount();
       console.log("Current stored discount from localStorage:", currentStoredDiscount);
       
       const discount = 
