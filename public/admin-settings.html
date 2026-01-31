@@ -587,8 +587,8 @@
       const currentStoredDiscount = getStoredReferralDiscount();
       console.log("Current stored discount from localStorage:", currentStoredDiscount);
       
-      const discount = 
-        currentStoredDiscount ??
+      // If backend has updated values, prioritize backend over stale localStorage
+      const backendDiscount = 
         clinic.referral_discount_percent ??
         clinic.settings?.referral_discount_percent ??
         clinic.inviter_discount_percent ??
@@ -602,35 +602,22 @@
         clinic.referralLevel1Percent ??
         null;
       
-      console.log("=== DISCOUNT FIELD DEBUG ===");
-      console.log("Complete clinic object:", JSON.stringify(clinic, null, 2));
-      console.log("All discount fields checked:", {
-        'referral_discount_percent': clinic.referral_discount_percent,
-        'settings.referral_discount_percent': clinic.settings?.referral_discount_percent,
-        'inviter_discount_percent': clinic.inviter_discount_percent,
-        'settings.inviter_discount_percent': clinic.settings?.inviter_discount_percent,
-        'discount_percent': clinic.discount_percent,
-        'settings.discount_percent': clinic.settings?.discount_percent,
-        'settings.referralLevel1Percent': clinic.settings?.referralLevel1Percent,
-        'settings.referralLevels.level1': clinic.settings?.referralLevels?.level1,
-        'referralLevels.level1': clinic.referralLevels?.level1,
-        'default_inviter_discount_percent': clinic.default_inviter_discount_percent,
-        'referralLevel1Percent': clinic.referralLevel1Percent
-      });
-      console.log("=== END DEBUG ===");
-      console.log("Final calculated discount:", discount);
+      console.log("Backend discount value:", backendDiscount);
+      
+      // Use backend discount if it's different from localStorage (backend was updated)
+      const discount = (backendDiscount !== null && backendDiscount !== currentStoredDiscount) ? backendDiscount : currentStoredDiscount;
       
       // Use the stored discount if available, otherwise use calculated discount
-      const finalDiscount = currentStoredDiscount !== null ? parseInt(currentStoredDiscount) : (discount !== null ? discount : 10);
+      const finalDiscount = discount !== null ? discount : (backendDiscount !== null ? backendDiscount : 10);
       
       // Apply to UI and store to localStorage
       applyReferralDiscount(finalDiscount);
       storeReferralDiscount(finalDiscount);
 
-      console.log("Applied final discount:", finalDiscount);
+      console.log("Final calculated discount:", finalDiscount);
       console.log("Stored discount to localStorage:", finalDiscount);
 
-      // 🎯 Yeni referral sistem field'larını yükle
+      // Yeni referral sistem field'larını yükle
       if ($("referralPerInvitePercent")) {
         $("referralPerInvitePercent").value = clinic.referral_per_invite_percent || 10;
       }
