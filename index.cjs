@@ -9895,6 +9895,63 @@ app.post("/api/admin/register", async (req, res) => {
       }
       console.log("[ADMIN REGISTER] Email is available");
       
+      // OTP Verification Required for New Admins
+      if (OTP_REQUIRED_FOR_NEW_ADMINS) {
+        console.log("[ADMIN REGISTER] OTP verification required for new admin registration");
+        
+        // Generate and send OTP
+        const otpCode = generateOTP();
+        const otpHash = await bcrypt.hash(otpCode, 10);
+        
+        console.log("[ADMIN REGISTER] Generated OTP for email verification");
+        
+        try {
+          // Send OTP email
+          await sendOTPEmail(emailLower, otpCode, "en");
+          console.log("[ADMIN REGISTER] OTP email sent to:", emailLower);
+          
+          // Store OTP in Supabase for verification
+          await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
+            name: String(name).trim(),
+            phone: String(phone || "").trim(),
+            address: String(address || "").trim(),
+            password_hash: hashedPassword,
+            registration_data: {
+              clinic_code: clinicCodeTrimmed,
+              email: emailLower,
+              name: String(name).trim(),
+              phone: String(phone || "").trim(),
+              address: String(address || "").trim(),
+              plan: "FREE",
+              max_patients: 3,
+              settings: {
+                status: "ACTIVE",
+                subscriptionStatus: "TRIAL",
+                subscriptionPlan: null,
+                verificationStatus: "pending",
+                trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000),
+              }
+            }
+          });
+          
+          return res.json({
+            ok: true,
+            requiresOTP: true,
+            message: "Please check your email for verification code",
+            email: emailLower,
+            clinicCode: clinicCodeTrimmed
+          });
+          
+        } catch (emailError) {
+          console.error("[ADMIN REGISTER] Failed to send OTP email:", emailError);
+          return res.status(500).json({
+            ok: false,
+            error: "email_send_failed",
+            message: "Failed to send verification email. Please try again."
+          });
+        }
+      }
+      
       // Check if clinicCode already exists
       console.log("[ADMIN REGISTER] Checking if clinic code exists...");
       const existingByCode = await getClinicByCode(clinicCodeTrimmed);
@@ -12024,7 +12081,124 @@ async function postBootInit() {
   }
   
   console.log("🧠 Post-boot init done\n");
-}
+});
+
+// POST /api/admin/verify-registration-otp
+// Verify OTP and complete clinic registration
+app.post("/api/admin/verify-registration-otp", async (req, res) => {
+  try {
+    const { email, otp, clinicCode } = req.body || {};
+    
+    if (!email || !otp || !clinicCode) {
+      return res.status(400).json({ ok: false, error: "missing_fields", message: "Email, OTP, and clinic code are required" });
+    }
+    
+    const emailLower = String(email).trim().toLowerCase();
+    const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
+    
+    console.log("[ADMIN VERIFY REG OTP] ========================================");
+    console.log("[ADMIN VERIFY REG OTP] Verifying OTP for clinic registration");
+    console.log("[ADMIN VERIFY REG OTP] Email:", emailLower);
+    console.log("[ADMIN VERIFY REG OTP] Clinic Code:", clinicCodeTrimmed);
+    console.log("[ADMIN VERIFY REG OTP] ========================================");
+    
+    // Get OTP data
+    const otpData = await getOTPsForEmail(emailLower);
+    if (!otpData || otpData.length === 0) {
+      console.log("[ADMIN VERIFY REG OTP] No OTP found for email");
+      return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found or expired" });
+    }
+    
+    const latestOTP = otpData[0]; // Get most recent OTP
+    
+    // Check if already verified
+    if (latestOTP.verified) {
+      console.log("[ADMIN VERIFY REG OTP] OTP already verified");
+      return res.status(400).json({ ok: false, error: "otp_already_verified", message: "OTP already verified" });
+    }
+    
+    // Check expiration
+    const now = Date.now();
+    const createdAt = new Date(latestOTP.created_at).getTime();
+    const expiresAt = latestOTP.expires_at ? new Date(latestOTP.expires_at).getTime() : createdAt + (5 * 60 * 1000); // 5 minutes default
+    
+    if (now > expiresAt) {
+      console.log("[ADMIN VERIFY REG OTP] OTP expired");
+      return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP has expired" });
+    }
+    
+    // Verify OTP
+    const isValidOTP = await bcrypt.compare(String(otp), latestOTP.hashedOTP || latestOTP.otp_hash);
+    if (!isValidOTP) {
+      console.log("[ADMIN VERIFY REG OTP] Invalid OTP");
+      return res.status(400).json({ ok: false, error: "invalid_otp", message: "Invalid OTP" });
+    }
+    
+    console.log("[ADMIN VERIFY REG OTP] OTP verified successfully");
+    
+    // Get registration data
+    const registrationData = latestOTP.registration_data;
+    if (!registrationData) {
+      console.log("[ADMIN VERIFY REG OTP] No registration data found");
+      return res.status(400).json({ ok: false, error: "registration_data_missing", message: "Registration data not found" });
+    }
+    
+    // Check if clinic code already exists (double check)
+    const existingByCode = await getClinicByCode(clinicCodeTrimmed);
+    if (existingByCode) {
+      console.log("[ADMIN VERIFY REG OTP] Clinic code already exists during verification");
+      return res.status(400).json({ ok: false, error: "clinic_code_exists", message: "Clinic code already exists" });
+    }
+    
+    // Create clinic in Supabase
+    console.log("[ADMIN VERIFY REG OTP] Creating clinic in Supabase...");
+    const newClinic = await createClinic(registrationData);
+    
+    if (!newClinic) {
+      console.log("[ADMIN VERIFY REG OTP] Failed to create clinic");
+      return res.status(500).json({ ok: false, error: "clinic_creation_failed", message: "Failed to create clinic" });
+    }
+    
+    console.log("[ADMIN VERIFY REG OTP] Clinic created successfully:", newClinic.id);
+    
+    // Mark OTP as verified
+    await markOTPAsVerified(latestOTP.id);
+    
+    // Generate admin token
+    const token = jwt.sign(
+      { 
+        clinicCode: clinicCodeTrimmed,
+        clinicId: newClinic.id,
+        role: "admin",
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30 days
+      },
+      JWT_SECRET
+    );
+    
+    console.log("[ADMIN VERIFY REG OTP] Registration completed successfully");
+    
+    res.json({
+      ok: true,
+      message: "Clinic registered successfully",
+      token,
+      clinic: {
+        id: newClinic.id,
+        clinic_code: newClinic.clinic_code,
+        email: newClinic.email,
+        name: newClinic.name
+      }
+    });
+    
+  } catch (error) {
+    console.error("[ADMIN VERIFY REG OTP] Error:", error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error", 
+      message: "Registration verification failed" 
+    });
+  }
+});
 
 // ================== START ==================
 // Render uyumlu: Server HEMEN başlar, ağır işler sonra
