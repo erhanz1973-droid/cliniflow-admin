@@ -12049,40 +12049,6 @@ app.post("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req
   }
 });
 
-
-// ================== POST-BOOT INIT ==================
-// Heavy async operations run AFTER server starts
-async function postBootInit() {
-  console.log("\n🧠 Post-boot init starting...");
-  
-  try {
-    // Test Supabase connection
-    if (isSupabaseEnabled()) {
-      await testSupabaseConnection();
-    } else {
-      console.log("[POST-BOOT] Supabase not configured - using file storage");
-    }
-    
-    // Verify SMTP
-    if (emailTransporter) {
-      emailTransporter.verify((error, success) => {
-        if (error) {
-          console.error("[POST-BOOT] ❌ SMTP verify failed:", error.message);
-        } else {
-          console.log("[POST-BOOT] ✅ SMTP ready to send emails");
-        }
-      });
-    } else {
-      console.log("[POST-BOOT] ⚠️  SMTP not configured - emails disabled");
-    }
-    
-  } catch (e) {
-    console.error("[POST-BOOT] Init error:", e.message);
-  }
-  
-  console.log("🧠 Post-boot init done\n");
-});
-
 // POST /api/admin/verify-registration-otp
 // Verify OTP and complete clinic registration
 app.post("/api/admin/verify-registration-otp", async (req, res) => {
@@ -12200,6 +12166,47 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
   }
 });
 
+// ================== POST-BOOT INIT ==================
+// Heavy async operations run AFTER server starts
+async function postBootInit() {
+  console.log("\n🧠 Post-boot init starting...");
+  
+  try {
+    // Test Supabase connection
+    if (isSupabaseEnabled()) {
+      await testSupabaseConnection();
+    } else {
+      console.log("[POST-BOOT] Supabase not configured - using file storage");
+    }
+    
+    // Verify SMTP
+    if (emailTransporter) {
+      emailTransporter.verify((error, success) => {
+        if (error) {
+          console.error("[POST-BOOT] ❌ SMTP verify failed:", error.message);
+        } else {
+          console.log("[POST-BOOT] ✅ SMTP ready to send emails");
+        }
+      });
+    } else {
+      console.log("[POST-BOOT] ⚠️  SMTP not configured - emails disabled");
+    }
+    
+  } catch (e) {
+    console.error("[POST-BOOT] Init error:", e.message);
+  }
+  
+  console.log("🧠 Post-boot init done\n");
+}
+
+// DEBUG: Test endpoint for PATCH requests
+app.patch("/debug/test-patch", (req, res) => {
+  console.log("[DEBUG] PATCH test endpoint hit!");
+  console.log("[DEBUG] Headers:", req.headers);
+  console.log("[DEBUG] Body:", req.body);
+  res.json({ ok: true, message: "PATCH test successful" });
+});
+
 // ================== START ==================
 // Render uyumlu: Server HEMEN başlar, ağır işler sonra
 app.listen(PORT, "0.0.0.0", () => {
@@ -12242,12 +12249,4 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[UNHANDLED REJECTION] Reason:', reason);
   console.error('[UNHANDLED REJECTION] Promise:', promise);
   console.error('[UNHANDLED REJECTION] =====================================');
-});
-
-// DEBUG: Test endpoint for PATCH requests
-app.patch("/debug/test-patch", (req, res) => {
-  console.log("[DEBUG] PATCH test endpoint hit!");
-  console.log("[DEBUG] Headers:", req.headers);
-  console.log("[DEBUG] Body:", req.body);
-  res.json({ ok: true, message: "PATCH test successful" });
 });
