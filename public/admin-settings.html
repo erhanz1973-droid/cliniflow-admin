@@ -583,8 +583,12 @@
       if ($("secondaryColor")) $("secondaryColor").value = branding.secondaryColor || "#10B981";
       if ($("welcomeMessage")) $("welcomeMessage").value = branding.welcomeMessage || "";
       
-      // Set referral discount value (handle null/undefined)
+      // Set referral discount value (prioritize current user setting over backend)
+      const currentStoredDiscount = localStorage.getItem('referralDiscount');
+      console.log("Current stored discount from localStorage:", currentStoredDiscount);
+      
       const discount = 
+        currentStoredDiscount ??
         clinic.referral_discount_percent ??
         clinic.settings?.referral_discount_percent ??
         clinic.inviter_discount_percent ??
@@ -615,11 +619,13 @@
       });
       console.log("=== END DEBUG ===");
       console.log("Final calculated discount:", discount);
-      const useDiscount = discount !== null ? discount : currentStoredDiscount;
-      applyReferralDiscount(useDiscount);
+      
+      // Use the stored discount if available, otherwise use calculated discount
+      const finalDiscount = currentStoredDiscount !== null ? parseInt(currentStoredDiscount) : (discount !== null ? discount : 10);
+      applyReferralDiscount(finalDiscount);
 
-      console.log("Loaded referral discount:", discount);
-      console.log("Stored discount to localStorage:", discount);
+      console.log("Applied final discount:", finalDiscount);
+      console.log("Stored discount to localStorage:", finalDiscount);
 
       // 🎯 Yeni referral sistem field'larını yükle
       if ($("referralPerInvitePercent")) {
