@@ -12165,6 +12165,12 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     const createdAt = new Date(latestOTP.created_at).getTime();
     const expiresAt = latestOTP.expires_at ? new Date(latestOTP.expires_at).getTime() : createdAt + (5 * 60 * 1000); // 5 minutes default
     
+    console.log("[ADMIN VERIFY REG OTP] Time debug:");
+    console.log("[ADMIN VERIFY REG OTP] Current time:", new Date(now).toISOString());
+    console.log("[ADMIN VERIFY REG OTP] Created at:", new Date(createdAt).toISOString());
+    console.log("[ADMIN VERIFY REG OTP] Expires at:", new Date(expiresAt).toISOString());
+    console.log("[ADMIN VERIFY REG OTP] Time elapsed (minutes):", (now - createdAt) / (1000 * 60));
+    
     if (now > expiresAt) {
       console.log("[ADMIN VERIFY REG OTP] OTP expired");
       return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP has expired" });
