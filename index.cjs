@@ -12158,6 +12158,10 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     console.log("[ADMIN VERIFY REG OTP] OTP verified successfully");
     
+    // Debug: Log the OTP object structure
+    console.log("[ADMIN VERIFY REG OTP] OTP object keys:", Object.keys(latestOTP));
+    console.log("[ADMIN VERIFY REG OTP] Full OTP object:", JSON.stringify(latestOTP, null, 2));
+    
     // Get registration data
     const registrationData = latestOTP.registration_data;
     if (!registrationData) {
