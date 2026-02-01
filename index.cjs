@@ -3404,6 +3404,13 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
       
       console.log(`[OTP] About to call verifyOTP with otp="${String(otpCode).trim()}" and hash="${hashToUse.substring(0, 10)}..."`);
+      
+      // Debug: Test hash generation with current OTP
+      const testHash = await bcrypt.hash(String(otpCode).trim(), 10);
+      console.log(`[OTP] Test hash generated: ${testHash.substring(0, 10)}...`);
+      const testResult = await bcrypt.compare(String(otpCode).trim(), testHash);
+      console.log(`[OTP] Test verification result: ${testResult}`);
+      
       isValid = await verifyOTP(String(otpCode).trim(), hashToUse);  // Standardize: String + trim
       console.log(`[OTP] Verification result: ${isValid}`);
     } catch (verifyError) {
