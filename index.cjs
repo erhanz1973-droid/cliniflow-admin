@@ -890,12 +890,12 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
-      // Direct insert instead of createOTP function
+      // Direct insert with correct column names
       const { data, error } = await supabase
         .from('otps')
         .insert({
           email: emailKey,
-          otp_hash: otpHash,
+          otp_hash: otpHash,  // Use otp_hash instead of hashedOTP
           expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
           attempts: 0,
           verified: false,
@@ -907,6 +907,7 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
       
       if (error) {
         console.error("[OTP] Direct insert error:", error);
+        console.error("[OTP] Error details:", JSON.stringify(error, null, 2));
         throw error;
       }
       
