@@ -607,10 +607,10 @@
             console.error('Headers:', Object.fromEntries(res.headers.entries()));
           }
           
-          // Debug: Show 500 error details
+          // Debug: Show 500 error details (no clone needed)
           if (res.status === 500) {
             console.error('500 Error Response:', data);
-            console.error('Full response text:', await res.clone().text());
+            console.error('Status:', res.status);
           }
           
           // Handle clinic_code_exists - redirect to login
