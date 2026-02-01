@@ -887,9 +887,14 @@ async function saveOTP(email, otpCode, attempts = 0) {
 async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   const emailKey = email.toLowerCase().trim();
   
+  console.log("[OTP] storeOTPForEmail called for:", emailKey);
+  console.log("[OTP] Supabase enabled:", isSupabaseEnabled());
+  
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
+      console.log("[OTP] Attempting to insert OTP into Supabase...");
+      
       // Direct insert with correct column names
       const { data, error } = await supabase
         .from('otps')
@@ -10189,6 +10194,22 @@ app.post("/api/admin/register", async (req, res) => {
           console.log("[ADMIN REGISTER] OTP email sent to:", emailLower);
           
           // Store OTP in Supabase for verification
+          console.log("[ADMIN REGISTER] About to store OTP for:", emailLower);
+          console.log("[ADMIN REGISTER] Registration data:", JSON.stringify({
+            name: String(name).trim(),
+            phone: String(phone || "").trim(),
+            address: String(address || "").trim(),
+            password_hash: hashedPassword,
+            registration_data: {
+              clinic_code: clinicCodeTrimmed,
+              email: emailLower,
+              phone: String(phone || "").trim(),
+              address: String(address || "").trim(),
+              plan: "FREE",
+              max_patients: 3
+            }
+          }, null, 2));
+          
           await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
             name: String(name).trim(),
             phone: String(phone || "").trim(),
@@ -10197,6 +10218,14 @@ app.post("/api/admin/register", async (req, res) => {
             registration_data: {
               clinic_code: clinicCodeTrimmed,
               email: emailLower,
+              phone: String(phone || "").trim(),
+              address: String(address || "").trim(),
+              plan: "FREE",
+              max_patients: 3
+            }
+          });
+          
+          console.log("[ADMIN REGISTER] OTP stored successfully for:", emailLower);
               name: String(name).trim(),
               phone: String(phone || "").trim(),
               address: String(address || "").trim(),
