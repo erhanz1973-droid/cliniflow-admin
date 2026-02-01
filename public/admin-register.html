@@ -639,18 +639,15 @@
       resendBtn.textContent = 'Sending...';
       
       try {
-        const res = await fetch(`${API_BASE}/api/admin/register`, {
+        const res = await fetch(`${API_BASE}/api/admin/resend-otp`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            clinicName,
-            name: clinicName,
-            clinicCode,
             email,
-            phone: '',
-            address: '',
+            clinicCode,
+            clinicName,
           }),
         });
         

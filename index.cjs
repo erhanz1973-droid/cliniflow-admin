@@ -12222,6 +12222,59 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
   }
 });
 
+// POST /api/admin/resend-otp
+// Resend OTP for clinic registration
+app.post("/api/admin/resend-otp", async (req, res) => {
+  try {
+    const { email, clinicCode, clinicName } = req.body || {};
+    
+    if (!email || !clinicCode || !clinicName) {
+      return res.status(400).json({ ok: false, error: "missing_fields", message: "Email, clinic code, and clinic name are required" });
+    }
+    
+    const emailLower = String(email).trim().toLowerCase();
+    const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
+    
+    console.log("[ADMIN RESEND OTP] ========================================");
+    console.log("[ADMIN RESEND OTP] Resending OTP for clinic registration");
+    console.log("[ADMIN RESEND OTP] Email:", emailLower);
+    console.log("[ADMIN RESEND OTP] Clinic Code:", clinicCodeTrimmed);
+    console.log("[ADMIN RESEND OTP] ========================================");
+    
+    // Generate new OTP
+    const otp = generateOTP();
+    const otpHash = await hashOTP(otp);
+    
+    // Store OTP with registration data
+    await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
+      name: String(clinicName).trim(),
+      phone: '',
+      address: '',
+      website: '',
+      email: emailLower,
+      clinicCode: clinicCodeTrimmed
+    });
+    
+    // Send OTP email
+    await sendOTPEmail(emailLower, otp, "tr");
+    
+    console.log("[ADMIN RESEND OTP] OTP resent successfully");
+    
+    res.json({
+      ok: true,
+      message: "OTP resent successfully"
+    });
+    
+  } catch (error) {
+    console.error("[ADMIN RESEND OTP] Error:", error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error", 
+      message: "Failed to resend OTP" 
+    });
+  }
+});
+
 // ================== POST-BOOT INIT ==================
 // Heavy async operations run AFTER server starts
 async function postBootInit() {
