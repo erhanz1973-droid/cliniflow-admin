@@ -890,9 +890,29 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
-      const result = await createOTP(emailKey, otpHash, new Date(Date.now() + OTP_EXPIRY_MS), 0, registrationData);
+      // Direct insert instead of createOTP function
+      const { data, error } = await supabase
+        .from('otps')
+        .insert({
+          email: emailKey,
+          otp_hash: otpHash,
+          expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
+          attempts: 0,
+          verified: false,
+          used: false,
+          registration_data: registrationData
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        console.error("[OTP] Direct insert error:", error);
+        throw error;
+      }
+      
       console.log("[OTP] Stored registration OTP to Supabase for:", emailKey);
-      return result;
+      console.log("[OTP] Registration data stored:", JSON.stringify(registrationData));
+      return data;
     } catch (error) {
       console.error("[OTP] Failed to store registration OTP to Supabase, falling back to file:", error);
       // Fall back to file-based
