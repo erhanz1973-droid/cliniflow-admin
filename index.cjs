@@ -859,14 +859,47 @@ async function saveOTP(email, otpCode, attempts = 0) {
   const otps = readJson(OTP_FILE, {});
   otps[emailKey] = {
     hashedOTP,
-    createdAt: now(),
-    expiresAt,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(expiresAt).toISOString(),
     attempts,
-    verified: false,
+    verified: false
   };
   writeJson(OTP_FILE, otps);
   console.log("[OTP] Saved OTP to file for:", emailKey);
-  return otps[emailKey];
+  return true;
+}
+
+/**
+ * Store OTP for email with registration data for clinic registration
+ */
+async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
+  const emailKey = email.toLowerCase().trim();
+  
+  // Try Supabase first if available
+  if (isSupabaseEnabled()) {
+    try {
+      const result = await createOTP(emailKey, otpHash, new Date(Date.now() + OTP_EXPIRY_MS), 0, registrationData);
+      console.log("[OTP] Stored registration OTP to Supabase for:", emailKey);
+      return result;
+    } catch (error) {
+      console.error("[OTP] Failed to store registration OTP to Supabase, falling back to file:", error);
+      // Fall back to file-based
+    }
+  }
+  
+  // FILE-BASED FALLBACK
+  const otps = readJson(OTP_FILE, {});
+  otps[emailKey] = {
+    hashedOTP: otpHash,
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + OTP_EXPIRY_MS).toISOString(),
+    attempts: 0,
+    verified: false,
+    registration_data: registrationData
+  };
+  writeJson(OTP_FILE, otps);
+  console.log("[OTP] Stored registration OTP to file for:", emailKey);
+  return true;
 }
 
 /**
