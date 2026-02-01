@@ -12209,9 +12209,8 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       website: registrationData.website || '',
       clinic_code: registrationData.clinicCode, // Map clinicCode to clinic_code
       plan: 'FREE',
-      max_patients: 50,
-      defaultInviterDiscountPercent: null,
-      defaultInvitedDiscountPercent: null
+      max_patients: 50
+      // Remove fields that don't exist in schema
     };
     
     console.log("[ADMIN VERIFY REG OTP] Mapped clinic data:", clinicData);
