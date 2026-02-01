@@ -895,7 +895,14 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
     try {
       console.log("[OTP] Attempting to insert OTP into Supabase...");
       
-      // Direct insert with correct column names
+      // First, invalidate any existing OTPs for this email
+      await supabase
+        .from('otps')
+        .update({ used: true, verified: false })
+        .eq('email', emailKey)
+        .eq('used', false);
+      
+      // Then insert new OTP
       const { data, error } = await supabase
         .from('otps')
         .insert({
@@ -3393,8 +3400,8 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
       
-      console.log(`[OTP] About to call verifyOTP with otp="${otpCode}" and hash="${hashToUse.substring(0, 10)}..."`);
-      isValid = await verifyOTP(otpCode, hashToUse);
+      console.log(`[OTP] About to call verifyOTP with otp="${String(otpCode).trim()}" and hash="${hashToUse.substring(0, 10)}..."`);
+      isValid = await verifyOTP(String(otpCode).trim(), hashToUse);  // Standardize: String + trim
       console.log(`[OTP] Verification result: ${isValid}`);
     } catch (verifyError) {
       console.error("[OTP] Verification error:", verifyError);
@@ -10183,10 +10190,10 @@ app.post("/api/admin/register", async (req, res) => {
         console.log("[ADMIN REGISTER] OTP verification required for new admin registration");
         
         // Generate and send OTP
-        const otpCode = generateOTP();
+        const otpCode = String(generateOTP()).trim();  // Standardize: String + trim
         const otpHash = await bcrypt.hash(otpCode, 10);
         
-        console.log("[ADMIN REGISTER] Generated OTP for email verification");
+        console.log("[ADMIN REGISTER] Generated OTP for email verification:", otpCode);
         
         try {
           // Send OTP email
