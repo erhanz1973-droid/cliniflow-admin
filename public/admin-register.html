@@ -622,6 +622,15 @@
             return;
           }
           
+          // Handle email already in use - redirect to login
+          if (data.message && data.message.includes('email address is already in use')) {
+            showAlert(`Email ${email} is already registered. Redirecting to login...`, 'info');
+            setTimeout(() => {
+              window.location.href = '/admin-login.html';
+            }, 2000);
+            return;
+          }
+          
           const errorMsg = data.error || data.message || 'Verification failed';
           throw new Error(errorMsg);
         }
