@@ -12199,7 +12199,23 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     // Create clinic in Supabase
     console.log("[ADMIN VERIFY REG OTP] Creating clinic in Supabase...");
-    const newClinic = await createClinic(registrationData);
+    
+    // Map registration data to clinic format
+    const clinicData = {
+      name: registrationData.name,
+      email: registrationData.email,
+      phone: registrationData.phone || '',
+      address: registrationData.address || '',
+      website: registrationData.website || '',
+      clinic_code: registrationData.clinicCode, // Map clinicCode to clinic_code
+      plan: 'FREE',
+      max_patients: 50,
+      defaultInviterDiscountPercent: null,
+      defaultInvitedDiscountPercent: null
+    };
+    
+    console.log("[ADMIN VERIFY REG OTP] Mapped clinic data:", clinicData);
+    const newClinic = await createClinic(clinicData);
     
     if (!newClinic) {
       console.log("[ADMIN VERIFY REG OTP] Failed to create clinic");
