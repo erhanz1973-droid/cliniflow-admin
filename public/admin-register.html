@@ -600,6 +600,12 @@
         const data = await res.json();
         
         if (!res.ok || !data.ok) {
+          // Debug: Show full response for registration_data_missing
+          if (data.error === 'registration_data_missing') {
+            console.error('Full error response:', data);
+            console.error('Status:', res.status);
+            console.error('Headers:', Object.fromEntries(res.headers.entries()));
+          }
           const errorMsg = data.error || data.message || 'Verification failed';
           throw new Error(errorMsg);
         }
@@ -654,6 +660,12 @@
         const data = await res.json();
         
         if (!res.ok || !data.ok) {
+          // Debug: Show full response for registration_data_missing
+          if (data.error === 'registration_data_missing') {
+            console.error('Full error response:', data);
+            console.error('Status:', res.status);
+            console.error('Headers:', Object.fromEntries(res.headers.entries()));
+          }
           throw new Error(data.message || 'Failed to resend code');
         }
         
