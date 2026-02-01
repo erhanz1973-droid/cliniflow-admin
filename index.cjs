@@ -3311,10 +3311,10 @@ app.post("/auth/verify-otp", async (req, res) => {
     
     if (otpData) {
       console.log(`[OTP] OTP data structure:`, {
-        hasHashedOTP: !!otpData.hashedOTP,
+        hasHashedOTP: !!otpData.otp_hash,  // Fixed: use otp_hash instead of hashedOTP
         hasOtpHash: !!otpData.otp_hash,
         attempts: otpData.attempts,
-        expiresAt: otpData.expiresAt,
+        expiresAt: otpData.expires_at,  // Fixed: use expires_at instead of expiresAt
         verified: otpData.verified
       });
     }
@@ -3340,7 +3340,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
     
     // Check if expired
-    const expiresAt = otpData.expiresAt || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);  // Fixed: use expires_at
     console.log(`[OTP] Checking expiration: expiresAt=${expiresAt}, now=${now()}`);
     if (expiresAt < now()) {
       console.log(`[OTP] OTP expired: expiresAt=${expiresAt}, now=${now()}`);
@@ -3365,9 +3365,9 @@ app.post("/auth/verify-otp", async (req, res) => {
     console.log(`[OTP] All checks passed, proceeding to verification`);
     
     // Final validation before OTP verification
-    console.log(`[OTP] Final validation check: otpData=${!!otpData}, hashedOTP=${!!otpData.hashedOTP}, otp_hash=${!!otpData.otp_hash}`);
+    console.log(`[OTP] Final validation check: otpData=${!!otpData}, hashedOTP=${!!otpData.otp_hash}, otp_hash=${!!otpData.otp_hash}`);
     
-    if (!otpData || (!otpData.hashedOTP && !otpData.otp_hash)) {
+    if (!otpData || !otpData.otp_hash) {  // Fixed: only check otp_hash
       console.log(`[OTP] Final validation failed - no hash found`);
       return res.status(400).json({ 
         ok: false, 
@@ -3381,7 +3381,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     // Verify OTP with additional safety checks
     let isValid = false;
     try {
-      const hashToUse = otpData.hashedOTP || otpData.otp_hash;
+      const hashToUse = otpData.otp_hash;  // Fixed: only use otp_hash
       console.log(`[OTP] Using hash field:`, hashToUse ? "found" : "missing");
       
       if (!hashToUse) {
