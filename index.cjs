@@ -3248,7 +3248,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 });
 
 // POST /auth/verify-otp
-// Verify OTP: takes email + OTP, generates JWT token
+// OTP verification endpoint - FIXED VERSION v2.0
 app.post("/auth/verify-otp", async (req, res) => {
   try {
     const { email, phone, otp, sessionId } = req.body || {};
