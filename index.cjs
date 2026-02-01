@@ -12207,7 +12207,7 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       phone: registrationData.phone || '',
       address: registrationData.address || '',
       website: registrationData.website || '',
-      clinic_code: registrationData.clinicCode, // Map clinicCode to clinic_code
+      clinic_code: registrationData.clinic_code || registrationData.clinicCode, // Handle both formats
       plan: 'FREE',
       max_patients: 50,
       password_hash: '$2b$10$placeholder.hash.for.registration' // Required field
