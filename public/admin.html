@@ -447,20 +447,23 @@
     <div id="overdueBanner" style="display:none;"></div>
 
     <div class="card" style="margin-bottom:16px;">
-      <h2 style="margin:0 0 20px; font-size:18px;">📊 Clinic Oral Health Average</h2>
-      <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center; justify-content:center;">
-        <div style="text-align:center; min-width:120px;">
-          <div style="color:var(--muted); font-size:12px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">Before</div>
-          <div id="clinicBeforeAvg" style="font-size:32px; font-weight:700; color:#e6eaf2; line-height:1.2;">—</div>
+      <h2 style="margin:0 0 20px; font-size:18px;">📊 Monthly Active Patients</h2>
+      
+      <!-- Growth Badge -->
+      <div style="text-align:center; margin-bottom:16px;">
+        <div id="activePatientsGrowth" style="display:inline-block; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+          Loading...
         </div>
-        <div style="display:flex; flex-direction:column; align-items:center; gap:8px; min-width:100px;">
-          <div style="font-size:24px; color:var(--g);">→</div>
-          <div id="clinicImprovement" style="font-size:16px; font-weight:700; color:var(--g); padding:4px 12px; background:rgba(22, 163, 74, 0.15); border-radius:8px;">—</div>
-        </div>
-        <div style="text-align:center; min-width:120px;">
-          <div style="color:var(--muted); font-size:12px; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">After</div>
-          <div id="clinicAfterAvg" style="font-size:32px; font-weight:700; color:#e6eaf2; line-height:1.2;">—</div>
-        </div>
+      </div>
+      
+      <!-- Chart Container -->
+      <div style="position:relative; height:300px; margin-bottom:16px;">
+        <canvas id="activePatientsChart"></canvas>
+      </div>
+      
+      <!-- Summary -->
+      <div style="text-align:center; color:var(--muted); font-size:12px;">
+        <div id="activePatientsSummary">Loading trend data...</div>
       </div>
     </div>
 
@@ -500,7 +503,8 @@
     </div>
   </div>
 
-  <script src="/suspended-clinic.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
   // If a patient is selected, make top-nav Travel link carry patientId.
   (function bindNavTravelLink() {
@@ -1142,82 +1146,176 @@
     });
   }
 
-  // Load clinic oral health averages
-  async function loadClinicOralHealthAverages() {
+  // Load monthly active patients metrics
+  async function loadMonthlyActivePatients() {
     try {
       const token = getAdminToken();
       if (!token) return;
       
-      const res = await fetch(`${API}/api/admin/patients`, {
+      const res = await fetch(`${API}/api/admin/metrics/monthly-active-patients?months=6`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
       
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       
-      if (!data.ok || !Array.isArray(data.patients)) return;
+      if (!data.ok || !Array.isArray(data.data)) {
+        console.warn('[METRICS] No data available');
+        updateActivePatientsUI(null);
+        return;
+      }
       
-      const patients = data.patients;
+      console.log('[METRICS] Monthly active patients data:', data);
+      updateActivePatientsUI(data);
       
-      // Calculate averages
-      let totalBefore = 0;
-      let beforeCount = 0;
-      let totalAfter = 0;
-      let afterCount = 0;
-      
-      patients.forEach(p => {
-        if (p.beforeScore !== null && p.beforeScore !== undefined) {
-          totalBefore += p.beforeScore;
-          beforeCount++;
-        }
-        if (p.afterScore !== null && p.afterScore !== undefined) {
-          totalAfter += p.afterScore;
-          afterCount++;
-        }
-      });
-      
-      const beforeAvg = beforeCount > 0 ? Math.round((totalBefore / beforeCount) * 10) / 10 : null;
-      const afterAvg = afterCount > 0 ? Math.round((totalAfter / afterCount) * 10) / 10 : null;
-      const improvement = (beforeAvg !== null && afterAvg !== null) ? Math.round((afterAvg - beforeAvg) * 10) / 10 : null;
-      
-      // Update UI with animation
-      const beforeEl = document.getElementById("clinicBeforeAvg");
-      const afterEl = document.getElementById("clinicAfterAvg");
-      const improvementEl = document.getElementById("clinicImprovement");
-      
-      if (beforeEl) beforeEl.textContent = beforeAvg !== null ? `${beforeAvg}%` : "—";
-      if (afterEl) afterEl.textContent = afterAvg !== null ? `${afterAvg}%` : "—";
-      
-      if (improvementEl) {
-        if (improvement !== null) {
-          const sign = improvement >= 0 ? '+' : '';
-          const color = improvement >= 0 ? 'var(--g)' : 'var(--r)';
-          improvementEl.textContent = `${sign}${improvement}%`;
-          improvementEl.style.color = color;
-          improvementEl.style.background = improvement >= 0 
-            ? 'rgba(22, 163, 74, 0.15)' 
-            : 'rgba(220, 38, 38, 0.15)';
-        } else {
-          improvementEl.textContent = "—";
+    } catch (error) {
+      console.error('[METRICS] Error loading monthly active patients:', error);
+      updateActivePatientsUI(null);
+    }
+  }
+  
+  // Update UI with chart and growth data
+  function updateActivePatientsUI(data) {
+    const growthEl = document.getElementById('activePatientsGrowth');
+    const summaryEl = document.getElementById('activePatientsSummary');
+    
+    if (!data || data.data.length === 0) {
+      if (growthEl) {
+        growthEl.textContent = 'No data';
+        growthEl.style.background = '#f3f4f6';
+        growthEl.style.color = '#6b7280';
+      }
+      if (summaryEl) {
+        summaryEl.textContent = 'Trend will improve as more data is collected';
+      }
+      return;
+    }
+    
+    const monthlyData = data.data;
+    const latestMonth = monthlyData[monthlyData.length - 1];
+    const previousMonth = monthlyData[monthlyData.length - 2];
+    
+    // Update growth badge
+    if (growthEl && latestMonth.growthPercent !== null) {
+      const growth = latestMonth.growthPercent;
+      const sign = growth >= 0 ? '+' : '';
+      growthEl.textContent = `${sign}${growth}% vs previous month`;
+      growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
+      growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+    } else if (growthEl) {
+      growthEl.textContent = 'No previous data';
+      growthEl.style.background = '#f3f4f6';
+      growthEl.style.color = '#6b7280';
+    }
+    
+    // Update summary
+    if (summaryEl) {
+      const totalPatients = latestMonth.activePatients;
+      summaryEl.textContent = `${totalPatients} active patients in ${latestMonth.monthLabel}`;
+    }
+    
+    // Create or update chart
+    createActivePatientsChart(monthlyData);
+  }
+  
+  // Create Chart.js line chart
+  function createActivePatientsChart(data) {
+    const ctx = document.getElementById('activePatientsChart');
+    if (!ctx) return;
+    
+    // Destroy existing chart if it exists
+    if (window.activePatientsChartInstance) {
+      window.activePatientsChartInstance.destroy();
+    }
+    
+    // Prepare data for Chart.js
+    const labels = data.map(d => d.monthLabel);
+    const values = data.map(d => d.activePatients);
+    
+    window.activePatientsChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Active Patients',
+          data: values,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 4,
+          pointBackgroundColor: '#3b82f6',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointHoverRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            padding: 12,
+            displayColors: false,
+            callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
+              label: function(context) {
+                return `Active Patients: ${context.parsed.y}`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 1,
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            ticks: {
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              display: false
+            }
+          }
         }
       }
-    } catch (error) {
-      console.error("Load clinic averages error:", error);
-    }
+    });
   }
 
   // Auto-refresh every 30 seconds
   setInterval(loadEvents, 30000);
   
-  // Load clinic averages on page load and refresh periodically
+  // Load monthly active patients on page load and refresh periodically
   if (typeof i18n !== 'undefined') {
-    loadClinicOralHealthAverages();
+    loadMonthlyActivePatients();
   } else {
     window.addEventListener('load', () => {
-      setTimeout(loadClinicOralHealthAverages, 100);
+      setTimeout(loadMonthlyActivePatients, 100);
     });
   }
-  setInterval(loadClinicOralHealthAverages, 60000); // Refresh every minute
+  setInterval(loadMonthlyActivePatients, 60000); // Refresh every minute
 
   // Store previous counts to detect new messages
   let previousUnreadCount = 0;

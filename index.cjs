@@ -3677,6 +3677,102 @@ app.get("/api/admin/registrations", (req, res) => {
   res.json({ ok: true, list });
 });
 
+// Get monthly active patients metrics
+app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (req, res) => {
+  try {
+    const { months = 6 } = req.query;
+    const monthsCount = Math.min(Math.max(parseInt(months), 1), 24); // 1-24 months range
+    
+    console.log(`[METRICS] Getting monthly active patients for last ${monthsCount} months`);
+    
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "Database not available" });
+    }
+    
+    if (!req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+    
+    // Calculate date range (last N months)
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - monthsCount + 1);
+    startDate.setDate(1); // Start of first month
+    endDate.setMonth(endDate.getMonth() + 1);
+    endDate.setDate(0); // End of last month
+    
+    console.log(`[METRICS] Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    
+    // Get all patients with their activity in the date range for this clinic
+    const { data: patients, error } = await supabase
+      .from('patients')
+      .select('id, created_at, updated_at')
+      .eq('clinic_id', req.clinicId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString());
+    
+    if (error) {
+      console.error('[METRICS] Error fetching patients:', error);
+      return res.status(500).json({ ok: false, error: "Failed to fetch patients" });
+    }
+    
+    // Group patients by month and count unique active patients
+    const monthlyData = {};
+    
+    // Initialize months
+    for (let i = 0; i < monthsCount; i++) {
+      const monthDate = new Date();
+      monthDate.setMonth(monthDate.getMonth() - i);
+      const monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+      monthlyData[monthKey] = new Set();
+    }
+    
+    // Count patients by creation month (simplified - treating creation as activity)
+    patients.forEach(patient => {
+      const createdDate = new Date(patient.created_at);
+      const monthKey = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, '0')}`;
+      
+      if (monthlyData[monthKey]) {
+        monthlyData[monthKey].add(patient.id);
+      }
+    });
+    
+    // Convert to array and sort by month
+    const result = Object.entries(monthlyData)
+      .map(([month, patientSet]) => ({
+        month,
+        monthLabel: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        activePatients: patientSet.size
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+    
+    // Calculate growth percentage
+    const resultWithGrowth = result.map((item, index) => {
+      if (index === 0) {
+        return { ...item, growthPercent: null };
+      }
+      const previousValue = result[index - 1].activePatients;
+      const growthPercent = previousValue > 0 
+        ? Math.round(((item.activePatients - previousValue) / previousValue) * 100)
+        : null;
+      return { ...item, growthPercent };
+    });
+    
+    console.log(`[METRICS] Monthly active patients result:`, resultWithGrowth);
+    
+    res.json({ 
+      ok: true, 
+      data: resultWithGrowth,
+      period: `${monthsCount} months`,
+      totalPatients: patients.length
+    });
+    
+  } catch (error) {
+    console.error('[METRICS] Error in monthly active patients:', error);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   try {
     // PRODUCTION: Supabase only, file-based disabled
@@ -7697,17 +7793,17 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
     const clinicCode = req.clinicCode;
     
     console.log(`[REFERRALS] Fetching referrals for clinic: code=${clinicCode}, id=${clinicId}`);
-    
     const respondFromFile = () => {
       const raw = readJson(REF_FILE, []);
       const list = Array.isArray(raw) ? raw : Object.values(raw);
-      
-      // Get all patients to filter by clinic
+
+      // Get patients to filter by clinic
       const patients = readJson(PAT_FILE, {});
       
       // Get list of patient IDs that belong to this clinic
       const clinicPatientIds = new Set();
       for (const pid in patients) {
+        // ... (rest of the code remains the same)
         const patient = patients[pid];
         if (patient) {
           const patientClinicCode = (patient.clinicCode || patient.clinic_code || "").toUpperCase();
