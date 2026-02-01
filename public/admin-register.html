@@ -613,6 +613,15 @@
             console.error('Full response text:', await res.clone().text());
           }
           
+          // Handle clinic_code_exists - redirect to login
+          if (data.error === 'clinic_code_exists') {
+            showAlert(`Clinic code ${clinicCode} already exists. Redirecting to login...`, 'info');
+            setTimeout(() => {
+              window.location.href = '/admin-login.html';
+            }, 2000);
+            return;
+          }
+          
           const errorMsg = data.error || data.message || 'Verification failed';
           throw new Error(errorMsg);
         }
