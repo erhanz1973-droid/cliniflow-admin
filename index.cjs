@@ -2709,13 +2709,20 @@ app.post("/api/patient/register", async (req, res) => {
     // Clean up expired OTPs
     cleanupExpiredOTPs();
     
-    // Generate OTP
-    const otpCode = generateOTP();
-    console.log(`[REGISTER /api/patient/register] Generated OTP for ${emailNormalized}`);
+    // Generate OTP with standardization
+    const otpCode = String(generateOTP()).trim();
+    const otpHash = await bcrypt.hash(otpCode, 10);
+    console.log(`[REGISTER /api/patient/register] Generated OTP for ${emailNormalized}: ${otpCode}`);
+    console.log(`[REGISTER /api/patient/register] OTP hash generated: ${otpHash.substring(0, 10)}...`);
     
-    // Save OTP (hashed) - this is fast, keep it sync
-    await saveOTP(emailNormalized, otpCode, 0);
-    console.log(`[REGISTER /api/patient/register] OTP saved to file`);
+    // Store OTP in Supabase (not file-based)
+    await storeOTPForEmail(emailNormalized, otpHash, null, {
+      type: 'patient_registration',
+      phone: phone || '',
+      name: name || '',
+      language: language || 'en'
+    });
+    console.log(`[REGISTER /api/patient/register] OTP stored in Supabase for: ${emailNormalized}`);
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
     // This prevents API timeout from blocking the response
