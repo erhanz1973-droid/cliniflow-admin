@@ -3773,6 +3773,117 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
   }
 });
 
+// Get monthly procedures metrics
+app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, res) => {
+  try {
+    const { months = 6 } = req.query;
+    const monthsCount = Math.min(Math.max(parseInt(months), 1), 24); // 1-24 months range
+    
+    console.log(`[METRICS] Getting monthly procedures for last ${monthsCount} months`);
+    
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "Database not available" });
+    }
+    
+    if (!req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+    
+    // Calculate date range (last N months)
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - monthsCount + 1);
+    startDate.setDate(1); // Start of first month
+    endDate.setMonth(endDate.getMonth() + 1);
+    endDate.setDate(0); // End of last month
+    
+    console.log(`[METRICS] Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    
+    // Get all patients with treatments in the date range for this clinic
+    const { data: patients, error } = await supabase
+      .from('patients')
+      .select('id, created_at, updated_at, treatments')
+      .eq('clinic_id', req.clinicId)
+      .gte('created_at', startDate.toISOString())
+      .lte('created_at', endDate.toISOString());
+    
+    if (error) {
+      console.error('[METRICS] Error fetching patients:', error);
+      return res.status(500).json({ ok: false, error: "Failed to fetch patients" });
+    }
+    
+    // Group procedures by month and count them
+    const monthlyData = {};
+    
+    // Initialize months
+    for (let i = 0; i < monthsCount; i++) {
+      const monthDate = new Date();
+      monthDate.setMonth(monthDate.getMonth() - i);
+      const monthKey = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+      monthlyData[monthKey] = 0;
+    }
+    
+    // Count procedures by month from treatments data
+    patients.forEach(patient => {
+      const createdDate = new Date(patient.created_at);
+      const monthKey = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, '0')}`;
+      
+      if (monthlyData[monthKey] !== undefined && patient.treatments) {
+        try {
+          const treatments = typeof patient.treatments === 'string' 
+            ? JSON.parse(patient.treatments) 
+            : patient.treatments;
+          
+          // Count procedures from treatments data
+          if (treatments && treatments.teeth) {
+            Object.values(treatments.teeth).forEach(tooth => {
+              if (tooth.procedures && Array.isArray(tooth.procedures)) {
+                monthlyData[monthKey] += tooth.procedures.length;
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('[METRICS] Error parsing treatments data:', e);
+        }
+      }
+    });
+    
+    // Convert to array and sort by month
+    const result = Object.entries(monthlyData)
+      .map(([month, procedureCount]) => ({
+        month,
+        monthLabel: new Date(month + '-01').toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        procedures: procedureCount
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+    
+    // Calculate growth percentage
+    const resultWithGrowth = result.map((item, index) => {
+      if (index === 0) {
+        return { ...item, growthPercent: null };
+      }
+      const previousValue = result[index - 1].procedures;
+      const growthPercent = previousValue > 0 
+        ? Math.round(((item.procedures - previousValue) / previousValue) * 100)
+        : null;
+      return { ...item, growthPercent };
+    });
+    
+    console.log(`[METRICS] Monthly procedures result:`, resultWithGrowth);
+    
+    res.json({ 
+      ok: true, 
+      data: resultWithGrowth,
+      period: `${monthsCount} months`,
+      totalProcedures: resultWithGrowth.reduce((sum, item) => sum + item.procedures, 0)
+    });
+    
+  } catch (error) {
+    console.error('[METRICS] Error in monthly procedures:', error);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   try {
     // PRODUCTION: Supabase only, file-based disabled
