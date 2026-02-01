@@ -12115,6 +12115,12 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     const latestOTP = otpData[0]; // Get most recent OTP
     
+    // Check if OTP exists
+    if (!latestOTP) {
+      console.log("[ADMIN VERIFY REG OTP] No OTP data found");
+      return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found" });
+    }
+    
     // Check if already verified
     if (latestOTP.verified) {
       console.log("[ADMIN VERIFY REG OTP] OTP already verified");
