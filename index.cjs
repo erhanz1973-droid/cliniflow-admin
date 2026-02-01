@@ -834,7 +834,7 @@ async function getOTPsForEmail(email) {
       
       if (data && data.length > 0) {
         console.log("[OTP] Retrieved OTP from Supabase for:", emailKey);
-        return data;
+        return data[0];  // Return first element, not the array
       }
     } catch (error) {
       console.error("[OTP] Failed to get OTP from Supabase, falling back to file:", error);
