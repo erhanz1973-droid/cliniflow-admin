@@ -819,10 +819,22 @@ async function getOTPsForEmail(email) {
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
-      const result = await getOTPByEmail(emailKey);
-      if (result) {
+      // Direct Supabase query instead of missing function
+      const { data, error } = await supabase
+        .from('otps')
+        .select('*')
+        .eq('email', emailKey)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (error) {
+        console.error("[OTP] Supabase query error:", error);
+        throw error;
+      }
+      
+      if (data && data.length > 0) {
         console.log("[OTP] Retrieved OTP from Supabase for:", emailKey);
-        return result;
+        return data;
       }
     } catch (error) {
       console.error("[OTP] Failed to get OTP from Supabase, falling back to file:", error);
