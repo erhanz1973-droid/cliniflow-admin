@@ -12223,8 +12223,8 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     console.log("[ADMIN VERIFY REG OTP] Clinic created successfully:", newClinic.id);
     
-    // Mark OTP as verified
-    await markOTPAsVerified(latestOTP.id);
+    // Mark OTP as verified/used
+    await markOTPUsed(latestOTP.id);
     
     // Generate admin token
     const token = jwt.sign(
