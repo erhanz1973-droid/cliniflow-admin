@@ -807,7 +807,10 @@ async function hashOTP(otp) {
  * Verify OTP against hashed version
  */
 async function verifyOTP(plainOTP, hashedOTP) {
-  return await bcrypt.compare(plainOTP, hashedOTP);
+  console.log(`[VERIFY-OTP] Input: plainOTP="${plainOTP}" (${typeof plainOTP}), hashedOTP="${hashedOTP.substring(0, 10)}..." (${typeof hashedOTP})`);
+  const result = await bcrypt.compare(plainOTP, hashedOTP);
+  console.log(`[VERIFY-OTP] bcrypt.compare result: ${result}`);
+  return result;
 }
 
 /**
