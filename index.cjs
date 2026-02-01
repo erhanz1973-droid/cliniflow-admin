@@ -10226,20 +10226,6 @@ app.post("/api/admin/register", async (req, res) => {
           });
           
           console.log("[ADMIN REGISTER] OTP stored successfully for:", emailLower);
-              name: String(name).trim(),
-              phone: String(phone || "").trim(),
-              address: String(address || "").trim(),
-              plan: "FREE",
-              max_patients: 3,
-              settings: {
-                status: "ACTIVE",
-                subscriptionStatus: "TRIAL",
-                subscriptionPlan: null,
-                verificationStatus: "pending",
-                trialEndsAt: now() + (14 * 24 * 60 * 60 * 1000),
-              }
-            }
-          });
           
           return res.json({
             ok: true,
