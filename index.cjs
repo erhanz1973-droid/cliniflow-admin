@@ -12714,8 +12714,8 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
     const patientId = `patient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     if (isSupabaseEnabled()) {
-      // Build insert object dynamically based on available columns
-      const insertData = {
+      // First, try basic insert without optional fields
+      const basicInsertData = {
         id: crypto.randomUUID(),
         patient_id: patientId,
         clinic_id: clinicId,
@@ -12725,58 +12725,48 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
         created_at: new Date().toISOString()
       };
       
-      // Add optional fields only if they have values
-      if (email) insertData.email = email;
-      if (phone) insertData.phone = phone;
-      if (dateOfBirth) insertData.date_of_birth = dateOfBirth;
-      if (address) insertData.address = address;
-      if (notes) insertData.notes = notes;
-      
-      console.log("[PATIENTS] Insert data:", insertData);
+      console.log("[PATIENTS] Basic insert data:", basicInsertData);
       
       const { data, error } = await supabase
         .from('patients')
-        .insert(insertData)
+        .insert(basicInsertData)
         .select()
         .single();
       
       if (error) {
-        console.error("[PATIENTS] Supabase insert error:", error);
-        
-        // If column doesn't exist, try without the problematic field
-        if (error.message && error.message.includes('column') && error.message.includes('address')) {
-          console.log("[PATIENTS] Retrying without address field...");
-          const { data: retryData, error: retryError } = await supabase
-            .from('patients')
-            .insert({
-              id: crypto.randomUUID(),
-              patient_id: patientId,
-              clinic_id: clinicId,
-              first_name: firstName,
-              last_name: lastName,
-              email: email || null,
-              phone: phone || null,
-              date_of_birth: dateOfBirth || null,
-              notes: notes || null,
-              patient_type: 'manual',
-              created_at: new Date().toISOString()
-            })
-            .select()
-            .single();
-          
-          if (retryError) {
-            console.error("[PATIENTS] Retry also failed:", retryError);
-            throw retryError;
-          }
-          
-          console.log("[PATIENTS] Manual patient created in Supabase (retry):", retryData.id);
-          return res.json({ ok: true, patient: retryData });
-        }
-        
+        console.error("[PATIENTS] Supabase basic insert error:", error);
         throw error;
       }
       
-      console.log("[PATIENTS] Manual patient created in Supabase:", data.id);
+      console.log("[PATIENTS] Manual patient created in Supabase (basic):", data.id);
+      
+      // If basic insert works, try to update with optional fields
+      const updateData = {};
+      if (email) updateData.email = email;
+      if (phone) updateData.phone = phone;
+      if (dateOfBirth) updateData.date_of_birth = dateOfBirth;
+      if (address) updateData.address = address;
+      if (notes) updateData.notes = notes;
+      
+      if (Object.keys(updateData).length > 0) {
+        console.log("[PATIENTS] Updating patient with optional fields:", updateData);
+        
+        const { data: updateResult, error: updateError } = await supabase
+          .from('patients')
+          .update(updateData)
+          .eq('patient_id', patientId)
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.warn("[PATIENTS] Update failed, but basic insert succeeded:", updateError);
+          // Continue with basic data
+        } else {
+          console.log("[PATIENTS] Patient updated successfully:", updateResult.id);
+          return res.json({ ok: true, patient: updateResult });
+        }
+      }
+      
       return res.json({ ok: true, patient: data });
     }
     
