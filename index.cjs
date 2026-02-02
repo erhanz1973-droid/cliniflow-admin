@@ -287,6 +287,13 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
 
+// Force file-based storage temporarily until Supabase schema is fixed
+const FORCE_FILE_STORAGE = true;
+
+function isSupabaseEnabled() {
+  return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY;
+}
+
 // ================== CLINIC ORAL HEALTH AVERAGE ==================
 async function calculateClinicOralHealthAverage(clinicId) {
   try {
@@ -12858,12 +12865,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
   console.log(`  SMTP_PORT: ${SMTP_PORT}`);
   console.log(`  SMTP_USER: ${SMTP_USER ? SMTP_USER.substring(0, 5) + '...' : 'NOT SET'}`);
-  console.log(`  SMTP_PASS: ${SMTP_PASS ? 'SET (length: ' + SMTP_PASS.length + ')' : 'NOT SET'}`);
-  console.log(`  SMTP_FROM: ${SMTP_FROM}`);
-  console.log(`  emailTransporter: ${emailTransporter ? 'CREATED' : 'NULL'}`);
-  console.log(`========================================\n`);
-  
-  // Run heavy init AFTER server is listening
   postBootInit();
 });
 
