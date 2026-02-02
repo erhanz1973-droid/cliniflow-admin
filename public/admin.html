@@ -1573,16 +1573,13 @@
       // Get last seen timestamp from localStorage
       let lastSeenTimestamp = 0;
       try {
-        const stored = localStorage.getItem('chat_last_seen_timestamp');
-        if (stored) {
-          lastSeenTimestamp = parseInt(stored, 10) || 0;
-        }
+        const saved = localStorage.getItem("adminLastSeenTimestamp");
+        if (saved) lastSeenTimestamp = parseInt(saved, 10) || 0;
       } catch (e) {
-        console.warn("Could not read last seen timestamp:", e);
+        console.warn("[DASHBOARD] Could not read last seen timestamp:", e);
       }
 
-      // Get all patients
-      const patientsRes = await fetch(`${API}/api/admin/patients`, {
+      const patientsRes = await safariFetch(`${API}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" }),
       });
       if (!patientsRes.ok) return;
@@ -1599,7 +1596,7 @@
         if (!patientId) continue;
 
         try {
-          const messagesRes = await fetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+          const messagesRes = await safariFetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
             headers: adminHeaders({ Accept: "application/json" }),
           });
           if (!messagesRes.ok) continue;
