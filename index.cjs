@@ -12677,6 +12677,100 @@ app.post("/api/admin/resend-otp", async (req, res) => {
 
 // ================== POST-BOOT INIT ==================
 // Heavy async operations run AFTER server starts
+
+// ================== PATIENT MANAGEMENT ==================
+
+// POST /api/admin/patients - Create manual patient
+app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      dateOfBirth,
+      notes,
+      address
+    } = req.body || {};
+    
+    console.log("[PATIENTS] Create manual patient request:", {
+      firstName,
+      lastName,
+      email,
+      phone,
+      clinicId: req.clinicId,
+      clinicCode: req.clinicCode
+    });
+    
+    if (!firstName || !lastName) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'missing_fields',
+        message: 'First name and last name are required' 
+      });
+    }
+    
+    const clinicId = req.clinicId;
+    const patientId = `patient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    if (isSupabaseEnabled()) {
+      const { data, error } = await supabase
+        .from('patients')
+        .insert({
+          id: crypto.randomUUID(),
+          patient_id: patientId,
+          clinic_id: clinicId,
+          first_name: firstName,
+          last_name: lastName,
+          email: email || null,
+          phone: phone || null,
+          date_of_birth: dateOfBirth || null,
+          address: address || null,
+          notes: notes || null,
+          patient_type: 'manual',
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        console.error("[PATIENTS] Supabase insert error:", error);
+        throw error;
+      }
+      
+      console.log("[PATIENTS] Manual patient created in Supabase:", data.id);
+      return res.json({ ok: true, patient: data });
+    }
+    
+    // Fallback to file-based
+    const patients = readJson(PAT_FILE, {});
+    const newPatient = {
+      patientId,
+      firstName,
+      lastName,
+      email: email || '',
+      phone: phone || '',
+      dateOfBirth: dateOfBirth || null,
+      address: address || '',
+      notes: notes || '',
+      clinicCode: req.clinicCode,
+      patient_type: 'manual',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    patients[patientId] = newPatient;
+    writeJson(PAT_FILE, patients);
+    
+    console.log("[PATIENTS] Manual patient created (file):", patientId);
+    res.json({ ok: true, patient: newPatient });
+    
+  } catch (error) {
+    console.error('[PATIENTS] Create error:', error);
+    res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
 async function postBootInit() {
   console.log("\n🧠 Post-boot init starting...");
   
