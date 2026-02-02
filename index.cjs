@@ -12454,8 +12454,22 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "registration_data_missing", message: "Registration data not found" });
     }
     
+    // Resolve clinic_code from multiple sources
+    const resolvedClinicCode = 
+      clinicCodeTrimmed ||  // From request body
+      registrationData?.clinic_code ||  // From registration data (snake_case)
+      registrationData?.clinicCode;    // From registration data (camelCase)
+    
+    console.log("[ADMIN VERIFY REG OTP] DEBUG: clinic_code resolved as:", resolvedClinicCode);
+    console.log("[ADMIN VERIFY REG OTP] DEBUG: sources - req.body:", clinicCodeTrimmed, "reg_data.snake:", registrationData?.clinic_code, "reg_data.camel:", registrationData?.clinicCode);
+    
+    if (!resolvedClinicCode) {
+      console.log("[ADMIN VERIFY REG OTP] ERROR: clinic_code is missing in verify step");
+      return res.status(400).json({ ok: false, error: "clinic_code_missing", message: "Clinic code is missing" });
+    }
+    
     // Check if clinic code already exists (double check)
-    const existingByCode = await getClinicByCode(clinicCodeTrimmed);
+    const existingByCode = await getClinicByCode(resolvedClinicCode);
     if (existingByCode) {
       console.log("[ADMIN VERIFY REG OTP] Clinic code already exists during verification");
       return res.status(400).json({ ok: false, error: "clinic_code_exists", message: "Clinic code already exists" });
@@ -12471,9 +12485,9 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       phone: registrationData.phone || '',
       address: registrationData.address || '',
       website: registrationData.website || '',
-      clinic_code: registrationData.clinic_code || registrationData.clinicCode, // Handle both formats
-      plan: 'FREE',
-      max_patients: 50,
+      clinic_code: resolvedClinicCode,  // Use resolved clinic code
+      plan: registrationData.plan || 'FREE',
+      max_patients: registrationData.max_patients || 50,
       password_hash: '$2b$10$placeholder.hash.for.registration' // Required field
     };
     
