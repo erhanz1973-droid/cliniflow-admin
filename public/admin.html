@@ -446,47 +446,59 @@
 
     <div id="overdueBanner" style="display:none;"></div>
 
-    <div class="card" style="margin-bottom:16px;">
-      <h2 style="margin:0 0 20px; font-size:18px;">📊 Monthly Active Patients</h2>
+    <!-- Compact Metrics Row -->
+    <div class="metrics-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
       
-      <!-- Growth Badge -->
-      <div style="text-align:center; margin-bottom:16px;">
-        <div id="activePatientsGrowth" style="display:inline-block; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600; background:#f3f4f6; color:#6b7280;">
-          Loading...
+      <!-- Monthly Active Patients - Compact -->
+      <div class="card" style="padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px; font-weight:600;">📊 Active Patients</h3>
+          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+            Loading...
+          </div>
+        </div>
+        
+        <!-- Mini Chart -->
+        <div style="position:relative; height:120px; margin-bottom:8px;">
+          <canvas id="activePatientsChart"></canvas>
+        </div>
+        
+        <!-- Summary -->
+        <div style="text-align:center; color:var(--muted); font-size:10px;">
+          <div id="activePatientsSummary">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Monthly Procedures - Compact -->
+      <div class="card" style="padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px; font-weight:600;">🦷 Procedures</h3>
+          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+            Loading...
+          </div>
+        </div>
+        
+        <!-- Mini Chart -->
+        <div style="position:relative; height:120px; margin-bottom:8px;">
+          <canvas id="monthlyProceduresChart"></canvas>
+        </div>
+        
+        <!-- Summary -->
+        <div style="text-align:center; color:var(--muted); font-size:10px;">
+          <div id="monthlyProceduresSummary">Loading...</div>
         </div>
       </div>
       
-      <!-- Chart Container -->
-      <div style="position:relative; height:300px; margin-bottom:16px;">
-        <canvas id="activePatientsChart"></canvas>
-      </div>
-      
-      <!-- Summary -->
-      <div style="text-align:center; color:var(--muted); font-size:12px;">
-        <div id="activePatientsSummary">Loading trend data...</div>
-      </div>
     </div>
 
-    <div class="card" style="margin-bottom:16px;">
-      <h2 style="margin:0 0 20px; font-size:18px;">🦷 Monthly Procedures</h2>
-      
-      <!-- Growth Badge -->
-      <div style="text-align:center; margin-bottom:16px;">
-        <div id="monthlyProceduresGrowth" style="display:inline-block; padding:4px 12px; border-radius:12px; font-size:12px; font-weight:600; background:#f3f4f6; color:#6b7280;">
-          Loading...
-        </div>
-      </div>
-      
-      <!-- Chart Container -->
-      <div style="position:relative; height:300px; margin-bottom:16px;">
-        <canvas id="monthlyProceduresChart"></canvas>
-      </div>
-      
-      <!-- Summary -->
-      <div style="text-align:center; color:var(--muted); font-size:12px;">
-        <div id="monthlyProceduresSummary">Loading trend data...</div>
-      </div>
-    </div>
+    <!-- Responsive CSS for mobile -->
+    <style>
+      @media (max-width: 768px) {
+        .metrics-grid {
+          grid-template-columns: 1fr !important;
+        }
+      }
+    </style>
 
     <div class="card">
       <h2 id="upcomingTitle" data-i18n="dashboard.upcoming.title">📅 Upcoming / Next Actions</h2>
