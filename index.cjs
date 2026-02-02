@@ -18,7 +18,7 @@ const procedures = require("./shared/procedures");
 // Supabase client
 const {
   supabase,
-  isSupabaseEnabled,
+  // isSupabaseEnabled,  // Remove from import to avoid duplicate declaration
   testSupabaseConnection,
   getClinicByCode,
   getClinicById,
