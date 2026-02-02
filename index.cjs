@@ -12714,27 +12714,65 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
     const patientId = `patient_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     if (isSupabaseEnabled()) {
+      // Build insert object dynamically based on available columns
+      const insertData = {
+        id: crypto.randomUUID(),
+        patient_id: patientId,
+        clinic_id: clinicId,
+        first_name: firstName,
+        last_name: lastName,
+        patient_type: 'manual',
+        created_at: new Date().toISOString()
+      };
+      
+      // Add optional fields only if they have values
+      if (email) insertData.email = email;
+      if (phone) insertData.phone = phone;
+      if (dateOfBirth) insertData.date_of_birth = dateOfBirth;
+      if (address) insertData.address = address;
+      if (notes) insertData.notes = notes;
+      
+      console.log("[PATIENTS] Insert data:", insertData);
+      
       const { data, error } = await supabase
         .from('patients')
-        .insert({
-          id: crypto.randomUUID(),
-          patient_id: patientId,
-          clinic_id: clinicId,
-          first_name: firstName,
-          last_name: lastName,
-          email: email || null,
-          phone: phone || null,
-          date_of_birth: dateOfBirth || null,
-          address: address || null,
-          notes: notes || null,
-          patient_type: 'manual',
-          created_at: new Date().toISOString()
-        })
+        .insert(insertData)
         .select()
         .single();
       
       if (error) {
         console.error("[PATIENTS] Supabase insert error:", error);
+        
+        // If column doesn't exist, try without the problematic field
+        if (error.message && error.message.includes('column') && error.message.includes('address')) {
+          console.log("[PATIENTS] Retrying without address field...");
+          const { data: retryData, error: retryError } = await supabase
+            .from('patients')
+            .insert({
+              id: crypto.randomUUID(),
+              patient_id: patientId,
+              clinic_id: clinicId,
+              first_name: firstName,
+              last_name: lastName,
+              email: email || null,
+              phone: phone || null,
+              date_of_birth: dateOfBirth || null,
+              notes: notes || null,
+              patient_type: 'manual',
+              created_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+          
+          if (retryError) {
+            console.error("[PATIENTS] Retry also failed:", retryError);
+            throw retryError;
+          }
+          
+          console.log("[PATIENTS] Manual patient created in Supabase (retry):", retryData.id);
+          return res.json({ ok: true, patient: retryData });
+        }
+        
         throw error;
       }
       
