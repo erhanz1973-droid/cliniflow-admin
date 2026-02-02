@@ -1345,9 +1345,48 @@
             bodyColor: '#fff',
             padding: 12,
             displayColors: false,
+            callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
+              label: function(context) {
+                return `Active Patients: ${context.parsed.y}`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 1,
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            ticks: {
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+  }
 
-// Update UI with chart and growth data
-function updateActivePatientsUI(data) {
+  // Update UI with chart and growth data
+  function updateActivePatientsUI(data) {
   const growthEl = document.getElementById('activePatientsGrowth');
   const summaryEl = document.getElementById('activePatientsSummary');
   
@@ -1471,6 +1510,14 @@ function createActivePatientsChart(data) {
             display: false
           }
         }
+      }
+    });
+  }
+
+  // Load monthly procedures metrics
+  async function loadMonthlyProcedures() {
+    try {
+      const token = getAdminToken();
       if (!token) return;
       
       const res = await fetch(`${API}/api/admin/metrics/monthly-procedures?months=6`, {
