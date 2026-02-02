@@ -12534,9 +12534,12 @@ app.post("/api/admin/resend-otp", async (req, res) => {
     console.log("[ADMIN RESEND OTP] Clinic Code:", clinicCodeTrimmed);
     console.log("[ADMIN RESEND OTP] ========================================");
     
-    // Generate new OTP
-    const otp = generateOTP();
-    const otpHash = await hashOTP(otp);
+    // Generate new OTP with standardization
+    const otp = String(generateOTP()).trim();  // Standardize: String + trim
+    const otpHash = await bcrypt.hash(otp, 10);  // Use same hash method
+    
+    console.log("[ADMIN RESEND OTP] Generated OTP:", otp);
+    console.log("[ADMIN RESEND OTP] OTP hash generated:", otpHash.substring(0, 10) + "...");
     
     // Store OTP with registration data
     await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
@@ -12547,6 +12550,8 @@ app.post("/api/admin/resend-otp", async (req, res) => {
       email: emailLower,
       clinicCode: clinicCodeTrimmed
     });
+    
+    console.log("[ADMIN RESEND OTP] OTP stored in Supabase for:", emailLower);
     
     // Send OTP email
     await sendOTPEmail(emailLower, otp, "tr");
