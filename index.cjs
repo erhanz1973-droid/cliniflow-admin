@@ -290,6 +290,7 @@ app.use(express.json({ limit: "2mb" }));
 // Force file-based storage temporarily until Supabase schema is fixed
 const FORCE_FILE_STORAGE = true;
 
+// Override isSupabaseEnabled to force file-based storage
 function isSupabaseEnabled() {
   return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY;
 }
