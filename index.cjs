@@ -7989,9 +7989,11 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
         items = items.filter((x) => x && String(x.status || "").toUpperCase() === status);
       }
       
-      if (items.length === 0 && list.length > 0) {
-        items = list.filter((x) => x && !x.deleted_at);
-      }
+      // SECURITY: Remove dangerous fallback that returns all referrals
+      // NEVER return referrals that don't belong to this clinic
+      // if (items.length === 0 && list.length > 0) {
+      //   items = list.filter((x) => x && !x.deleted_at);  // ❌ SECURITY RISK!
+      // }
 
       console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
       
