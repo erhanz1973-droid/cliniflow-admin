@@ -590,6 +590,54 @@
       ...extra,
     };
   }
+
+  // Safari-compatible fetch wrapper
+  async function safariFetch(url, options = {}) {
+    const token = getAdminToken();
+    
+    const defaultOptions = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers
+      },
+      credentials: 'include', // Safari için kritik
+      mode: 'cors',
+      cache: 'no-cache',
+      ...options
+    };
+
+    // Safari-specific timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+    
+    try {
+      console.log('[SAFARI FETCH] Request:', { url, method: defaultOptions.method, hasAuth: !!token });
+      
+      const response = await fetch(url, {
+        ...defaultOptions,
+        signal: controller.signal,
+        ...options
+      });
+      
+      clearTimeout(timeoutId);
+      console.log('[SAFARI FETCH] Response:', response.status, response.statusText);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      // Safari-specific error handling
+      if (error.name === 'AbortError') {
+        console.error('[SAFARI FETCH] Request timeout');
+        throw new Error('Request timeout - please try again');
+      }
+      
+      console.error('[SAFARI FETCH] Error:', error);
+      throw error;
+    }
+  }
   // Load clinic info
   async function loadClinicInfo() {
     const el = document.getElementById("clinicInfo");
@@ -1297,53 +1345,132 @@
             bodyColor: '#fff',
             padding: 12,
             displayColors: false,
-            callbacks: {
-              title: function(context) {
-                return context[0].label;
-              },
-              label: function(context) {
-                return `Active Patients: ${context.parsed.y}`;
-              }
-            }
-          }
+
+// Update UI with chart and growth data
+function updateActivePatientsUI(data) {
+  const growthEl = document.getElementById('activePatientsGrowth');
+  const summaryEl = document.getElementById('activePatientsSummary');
+  
+  if (!data || data.data.length === 0) {
+    if (growthEl) {
+      growthEl.textContent = 'No data';
+      growthEl.style.background = '#f3f4f6';
+      growthEl.style.color = '#6b7280';
+    }
+    if (summaryEl) {
+      summaryEl.textContent = 'Trend will improve as more data is collected';
+    }
+    return;
+  }
+  
+  const monthlyData = data.data;
+  const latestMonth = monthlyData[monthlyData.length - 1];
+  const previousMonth = monthlyData[monthlyData.length - 2];
+  
+  // Update growth badge
+  if (growthEl && latestMonth.growthPercent !== null) {
+    const growth = latestMonth.growthPercent;
+    const sign = growth >= 0 ? '+' : '';
+    growthEl.textContent = `${sign}${growth}% vs previous month`;
+    growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
+    growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+  } else if (growthEl) {
+    growthEl.textContent = 'No previous data';
+    growthEl.style.background = '#f3f4f6';
+    growthEl.style.color = '#6b7280';
+  }
+  
+  // Update summary
+  if (summaryEl) {
+    const totalPatients = latestMonth.activePatients;
+    summaryEl.textContent = `${totalPatients} active patients in ${latestMonth.monthLabel}`;
+  }
+  
+  // Create or update chart
+  createActivePatientsChart(monthlyData);
+}
+
+// Create Chart.js line chart
+function createActivePatientsChart(data) {
+  const ctx = document.getElementById('activePatientsChart');
+  if (!ctx) return;
+  
+  // Destroy existing chart if it exists
+  if (window.activePatientsChartInstance) {
+    window.activePatientsChartInstance.destroy();
+  }
+  
+  // Prepare data for Chart.js
+  const labels = data.map(d => d.monthLabel);
+  const values = data.map(d => d.activePatients);
+  
+  window.activePatientsChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Active Patients',
+        data: values,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointBackgroundColor: '#3b82f6',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
         },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              stepSize: 1,
-              color: '#6b7280',
-              font: {
-                size: 11
-              }
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          padding: 12,
+          displayColors: false,
+          callbacks: {
+            title: function(context) {
+              return context[0].label;
             },
-            grid: {
-              color: 'rgba(0, 0, 0, 0.05)'
-            }
-          },
-          x: {
-            ticks: {
-              color: '#6b7280',
-              font: {
-                size: 11
-              }
-            },
-            grid: {
-              display: false
+            label: function(context) {
+              return `Active Patients: ${context.parsed.y}`;
             }
           }
         }
-      }
-    });
-  }
-
-  // Auto-refresh every 30 seconds
-  setInterval(loadEvents, 30000);
-  
-  // Load monthly procedures metrics
-  async function loadMonthlyProcedures() {
-    try {
-      const token = getAdminToken();
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1,
+            color: '#6b7280',
+            font: {
+              size: 11
+            }
+          },
+          grid: {
+            color: 'rgba(0, 0, 0, 0.05)'
+          }
+        },
+        x: {
+          ticks: {
+            color: '#6b7280',
+            font: {
+              size: 11
+            }
+          },
+          grid: {
+            display: false
+          }
+        }
       if (!token) return;
       
       const res = await fetch(`${API}/api/admin/metrics/monthly-procedures?months=6`, {
