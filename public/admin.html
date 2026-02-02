@@ -1254,139 +1254,95 @@
       updateActivePatientsUI(null);
     }
   }
+
+// Create Chart.js line chart
+function createActivePatientsChart(data) {
+  const ctx = document.getElementById('activePatientsChart');
+  if (!ctx) return;
   
-  // Update UI with chart and growth data
-  function updateActivePatientsUI(data) {
-    const growthEl = document.getElementById('activePatientsGrowth');
-    const summaryEl = document.getElementById('activePatientsSummary');
-    
-    if (!data || data.data.length === 0) {
-      if (growthEl) {
-        growthEl.textContent = 'No data';
-        growthEl.style.background = '#f3f4f6';
-        growthEl.style.color = '#6b7280';
-      }
-      if (summaryEl) {
-        summaryEl.textContent = 'Trend will improve as more data is collected';
-      }
-      return;
-    }
-    
-    const monthlyData = data.data;
-    const latestMonth = monthlyData[monthlyData.length - 1];
-    const previousMonth = monthlyData[monthlyData.length - 2];
-    
-    // Update growth badge
-    if (growthEl && latestMonth.growthPercent !== null) {
-      const growth = latestMonth.growthPercent;
-      const sign = growth >= 0 ? '+' : '';
-      growthEl.textContent = `${sign}${growth}% vs previous month`;
-      growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
-      growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
-    } else if (growthEl) {
-      growthEl.textContent = 'No previous data';
-      growthEl.style.background = '#f3f4f6';
-      growthEl.style.color = '#6b7280';
-    }
-    
-    // Update summary
-    if (summaryEl) {
-      const totalPatients = latestMonth.activePatients;
-      summaryEl.textContent = `${totalPatients} active patients in ${latestMonth.monthLabel}`;
-    }
-    
-    // Create or update chart
-    createActivePatientsChart(monthlyData);
+  // Destroy existing chart if it exists
+  if (window.activePatientsChartInstance) {
+    window.activePatientsChartInstance.destroy();
   }
   
-  // Create Chart.js line chart
-  function createActivePatientsChart(data) {
-    const ctx = document.getElementById('activePatientsChart');
-    if (!ctx) return;
-    
-    // Destroy existing chart if it exists
-    if (window.activePatientsChartInstance) {
-      window.activePatientsChartInstance.destroy();
-    }
-    
-    // Prepare data for Chart.js
-    const labels = data.map(d => d.monthLabel);
-    const values = data.map(d => d.activePatients);
-    
-    window.activePatientsChartInstance = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Active Patients',
-          data: values,
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.1)',
-          borderWidth: 2,
-          fill: true,
-          tension: 0.4,
-          pointRadius: 4,
-          pointBackgroundColor: '#3b82f6',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          pointHoverRadius: 6
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            display: false
-          },
-          tooltip: {
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            titleColor: '#fff',
-            bodyColor: '#fff',
-            padding: 12,
-            displayColors: false,
-            callbacks: {
-              title: function(context) {
-                return context[0].label;
-              },
-              label: function(context) {
-                return `Active Patients: ${context.parsed.y}`;
-              }
-            }
-          }
+  // Prepare data for Chart.js
+  const labels = data.map(d => d.monthLabel);
+  const values = data.map(d => d.activePatients);
+  
+  window.activePatientsChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Active Patients',
+        data: values,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 4,
+        pointBackgroundColor: '#3b82f6',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointHoverRadius: 6
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
         },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              stepSize: 1,
-              color: '#6b7280',
-              font: {
-                size: 11
-              }
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          titleColor: '#fff',
+          bodyColor: '#fff',
+          padding: 12,
+          displayColors: false,
+          callbacks: {
+            title: function(context) {
+              return context[0].label;
             },
-            grid: {
-              color: 'rgba(0, 0, 0, 0.05)'
-            }
-          },
-          x: {
-            ticks: {
-              color: '#6b7280',
-              font: {
-                size: 11
-              }
-            },
-            grid: {
-              display: false
+            label: function(context) {
+              return `Active Patients: ${context.parsed.y}`;
             }
           }
         }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            stepSize: 1,
+            color: '#6b7280',
+            font: {
+              size: 11
+            }
+          },
+          grid: {
+            color: 'rgba(0, 0, 0, 0.05)'
+          }
+        },
+        x: {
+          ticks: {
+            color: '#6b7280',
+            font: {
+              size: 11
+            }
+          },
+          grid: {
+            display: false
+          }
+        }
       }
-    });
-  }
+    }
+  });
+}
 
-  // Update UI with chart and growth data
-  function updateActivePatientsUI(data) {
+// Update UI with chart and growth data
+function updateActivePatientsUI(data) {
   const growthEl = document.getElementById('activePatientsGrowth');
   const summaryEl = document.getElementById('activePatientsSummary');
   
