@@ -7421,6 +7421,33 @@ app.get("/api/clinic", (req, res) => {
   const codeParam = String(req.query.code || "").trim().toUpperCase();
   console.log(`[CLINIC GET] Request with codeParam: "${codeParam}"`);
   
+  // Helper function to validate and clean Google Maps URL
+  const validateGoogleMapsUrl = (url) => {
+    if (!url || typeof url !== 'string') return '';
+    
+    // Basic URL validation
+    try {
+      const urlObj = new URL(url);
+      
+      // Check if it's a Google Maps URL
+      if (!urlObj.hostname.includes('maps.google.com') && !urlObj.hostname.includes('google.com/maps')) {
+        console.log(`[CLINIC GET] Invalid Google Maps URL hostname: ${urlObj.hostname}`);
+        return '';
+      }
+      
+      // Check for basic Google Maps URL structure
+      if (!url.includes('/maps/') && !url.includes('/place/')) {
+        console.log(`[CLINIC GET] Invalid Google Maps URL structure: ${url}`);
+        return '';
+      }
+      
+      return url;
+    } catch (error) {
+      console.log(`[CLINIC GET] Invalid Google Maps URL format: ${url}`, error.message);
+      return '';
+    }
+  };
+  
   // If code parameter is provided, try to find clinic in CLINICS_FILE (multi-clinic mode)
   if (codeParam) {
     const clinics = readJson(CLINICS_FILE, {});
@@ -7428,6 +7455,15 @@ app.get("/api/clinic", (req, res) => {
       if (clinicData && (clinicData.clinicCode === codeParam || clinicData.code === codeParam)) {
         // Don't return password hash or sensitive data
         const { password, ...publicClinic } = clinicData;
+        
+        // Validate and clean Google Maps URL
+        if (publicClinic.googleMapsUrl) {
+          publicClinic.googleMapsUrl = validateGoogleMapsUrl(publicClinic.googleMapsUrl);
+        }
+        if (publicClinic.googleMapLink) {
+          publicClinic.googleMapLink = validateGoogleMapsUrl(publicClinic.googleMapLink);
+        }
+        
         if (!publicClinic.referralLevels && publicClinic.settings?.referralLevels) {
           publicClinic.referralLevels = publicClinic.settings.referralLevels;
         }
@@ -7439,6 +7475,15 @@ app.get("/api/clinic", (req, res) => {
     // If not found in CLINICS_FILE, try CLINIC_FILE as fallback
     const singleClinic = readJson(CLINIC_FILE, {});
     if (singleClinic && (singleClinic.clinicCode === codeParam || !codeParam)) {
+      
+      // Validate and clean Google Maps URL
+      if (singleClinic.googleMapsUrl) {
+        singleClinic.googleMapsUrl = validateGoogleMapsUrl(singleClinic.googleMapsUrl);
+      }
+      if (singleClinic.googleMapLink) {
+        singleClinic.googleMapLink = validateGoogleMapsUrl(singleClinic.googleMapLink);
+      }
+      
       if (!singleClinic.referralLevels && singleClinic.settings?.referralLevels) {
         singleClinic.referralLevels = singleClinic.settings.referralLevels;
       }
@@ -7485,12 +7530,42 @@ app.get("/api/clinic/:code", (req, res) => {
     return res.status(400).json({ ok: false, error: "clinic_code_required" });
   }
   
+  // Helper function to validate and clean Google Maps URL
+  const validateGoogleMapsUrl = (url) => {
+    if (!url || typeof url !== 'string') return '';
+    
+    try {
+      const urlObj = new URL(url);
+      
+      if (!urlObj.hostname.includes('maps.google.com') && !urlObj.hostname.includes('google.com/maps')) {
+        return '';
+      }
+      
+      if (!url.includes('/maps/') && !url.includes('/place/')) {
+        return '';
+      }
+      
+      return url;
+    } catch (error) {
+      return '';
+    }
+  };
+  
   const clinic = readJson(CLINIC_FILE, {});
   
   // Check if clinic code matches
   if (clinic.clinicCode && clinic.clinicCode.toUpperCase() === code) {
     // Don't return password hash to public endpoint
     const { password, ...publicClinic } = clinic;
+    
+    // Validate and clean Google Maps URL
+    if (publicClinic.googleMapsUrl) {
+      publicClinic.googleMapsUrl = validateGoogleMapsUrl(publicClinic.googleMapsUrl);
+    }
+    if (publicClinic.googleMapLink) {
+      publicClinic.googleMapLink = validateGoogleMapsUrl(publicClinic.googleMapLink);
+    }
+    
     if (!publicClinic.referralLevels && publicClinic.settings?.referralLevels) {
       publicClinic.referralLevels = publicClinic.settings.referralLevels;
     }
