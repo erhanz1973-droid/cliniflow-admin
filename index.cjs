@@ -12786,7 +12786,8 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
       email: email || '',
       phone: phone || '',
       dateOfBirth: dateOfBirth || null,
-      address: address || '',
+      // Skip address field for now until Supabase schema is fixed
+      // address: address || '',
       notes: notes || '',
       clinicCode: req.clinicCode,
       patient_type: 'manual',
