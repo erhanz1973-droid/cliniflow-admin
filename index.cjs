@@ -12783,6 +12783,8 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
       patientId,
       firstName,
       lastName,
+      fullName: `${firstName} ${lastName}`,  // Add fullName field
+      name: `${firstName} ${lastName}`,        // Add name field for compatibility
       email: email || '',
       phone: phone || '',
       dateOfBirth: dateOfBirth || null,
