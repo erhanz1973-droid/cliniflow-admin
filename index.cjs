@@ -292,7 +292,7 @@ const FORCE_FILE_STORAGE = false;  // Changed to false to use Supabase
 
 // Override isSupabaseEnabled to force file-based storage
 function isSupabaseEnabled() {
-  return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY;
+  return !FORCE_FILE_STORAGE && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;
 }
 
 // ================== CLINIC ORAL HEALTH AVERAGE ==================
