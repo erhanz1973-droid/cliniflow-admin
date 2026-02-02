@@ -823,12 +823,20 @@ async function getOTPsForEmail(email) {
   if (isSupabaseEnabled()) {
     try {
       // Direct Supabase query instead of missing function
+      console.log("[OTP] DEBUG: Querying 'otps' table for email:", emailKey);
       const { data, error } = await supabase
         .from('otps')
         .select('*')
         .eq('email', emailKey)
         .order('created_at', { ascending: false })
         .limit(1);
+      
+      console.log("[OTP] DEBUG: Supabase query result - data length:", data?.length || 0);
+      console.log("[OTP] DEBUG: Supabase query error:", error);
+      if (data && data.length > 0) {
+        console.log("[OTP] DEBUG: First OTP record keys:", Object.keys(data[0]));
+        console.log("[OTP] DEBUG: First OTP record email:", data[0].email);
+      }
       
       if (error) {
         console.error("[OTP] Supabase query error:", error);
@@ -12385,9 +12393,17 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     console.log("[ADMIN VERIFY REG OTP] Email:", emailLower);
     console.log("[ADMIN VERIFY REG OTP] Clinic Code:", clinicCodeTrimmed);
     console.log("[ADMIN VERIFY REG OTP] ========================================");
+    console.log("[ADMIN VERIFY REG OTP] DEBUG: Querying 'otps' table for email:", emailLower);
     
     // Get OTP data
     const otpData = await getOTPsForEmail(emailLower);
+    console.log("[ADMIN VERIFY REG OTP] DEBUG: getOTPsForEmail returned:", otpData ? "object" : "null");
+    if (otpData) {
+      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP data keys:", Object.keys(otpData));
+      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP email:", otpData.email);
+      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP has otp_hash:", !!otpData.otp_hash);
+      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP created_at:", otpData.created_at);
+    }
     if (!otpData) {  // Fixed: otpData is now object, not array
       console.log("[ADMIN VERIFY REG OTP] No OTP found for email");
       return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found or expired" });
