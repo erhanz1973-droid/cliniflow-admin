@@ -293,6 +293,144 @@
     }
     .selected-title{ font-weight:900; }
     .selected-meta{ color:var(--muted); font-size:13px; margin-top:2px; }
+    
+    /* Modal Styles */
+    .modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    
+    .modal-content {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 12px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3);
+    }
+    
+    .modal-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--b);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .modal-header h3 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #e6eaf2;
+    }
+    
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    
+    .modal-close:hover {
+      background: var(--b);
+      color: #e6eaf2;
+    }
+    
+    .modal-body {
+      padding: 20px;
+    }
+    
+    .modal-footer {
+      padding: 20px;
+      border-top: 1px solid var(--b);
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+    
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    
+    .form-group {
+      margin-bottom: 16px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      color: #e6eaf2;
+      font-size: 14px;
+    }
+    
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--b);
+      border-radius: 6px;
+      background: var(--bg);
+      color: #e6eaf2;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+    
+    .form-group input:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--p);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    
+    .btn-primary {
+      background: var(--g);
+      color: #fff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary:hover {
+      background: #15803d;
+      transform: translateY(-1px);
+    }
+    
+    @media (max-width: 768px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+      
+      .modal-content {
+        width: 95%;
+        margin: 20px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -366,6 +504,7 @@
           </select>
         </div>
         <div class="toolbar-right">
+          <button class="btn-primary" onclick="showAddPatientModal()" style="background:var(--g); color:#fff; margin-right:8px;" data-i18n="patients.addPatient">➕ Add Patient</button>
           <button class="btn-ghost" onclick="clearFilters()" data-i18n="patients.clearFilters"></button>
           <button onclick="loadPatients()" style="background:var(--p); color:#fff;" data-i18n="patients.refresh"></button>
         </div>
@@ -373,6 +512,60 @@
 
       <div id="loading" class="loading" data-i18n="patients.loading"></div>
       <div id="patientsGrid" class="patients-grid" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Add Patient Modal -->
+  <div id="addPatientModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 data-i18n="patients.addPatientTitle">Add New Patient</h3>
+        <button class="modal-close" onclick="hideAddPatientModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <form id="addPatientForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="patientFirstName" data-i18n="patients.firstName">First Name *</label>
+              <input type="text" id="patientFirstName" required>
+            </div>
+            <div class="form-group">
+              <label for="patientLastName" data-i18n="patients.lastName">Last Name *</label>
+              <input type="text" id="patientLastName" required>
+            </div>
+          </div>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label for="patientEmail" data-i18n="patients.email">Email</label>
+              <input type="email" id="patientEmail">
+            </div>
+            <div class="form-group">
+              <label for="patientPhone" data-i18n="patients.phone">Phone</label>
+              <input type="tel" id="patientPhone">
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="patientDateOfBirth" data-i18n="patients.dateOfBirth">Date of Birth</label>
+            <input type="date" id="patientDateOfBirth">
+          </div>
+          
+          <div class="form-group">
+            <label for="patientAddress" data-i18n="patients.address">Address</label>
+            <textarea id="patientAddress" rows="3"></textarea>
+          </div>
+          
+          <div class="form-group">
+            <label for="patientNotes" data-i18n="patients.notes">Notes</label>
+            <textarea id="patientNotes" rows="3"></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn-ghost" onclick="hideAddPatientModal()" data-i18n="patients.cancel">Cancel</button>
+        <button type="button" class="btn-primary" onclick="addPatient()" data-i18n="patients.add">Add Patient</button>
+      </div>
     </div>
   </div>
 
@@ -941,6 +1134,76 @@
     function openHealth(patientId) {
       setSelectedPatient(patientId, getPatientNameById(patientId));
       window.location.href = `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+
+    // Add Patient Modal Functions
+    function showAddPatientModal() {
+      document.getElementById('addPatientModal').style.display = 'flex';
+      document.getElementById('addPatientForm').reset();
+    }
+
+    function hideAddPatientModal() {
+      document.getElementById('addPatientModal').style.display = 'none';
+    }
+
+    async function addPatient() {
+      try {
+        const formData = {
+          firstName: document.getElementById('patientFirstName').value.trim(),
+          lastName: document.getElementById('patientLastName').value.trim(),
+          email: document.getElementById('patientEmail').value.trim(),
+          phone: document.getElementById('patientPhone').value.trim(),
+          dateOfBirth: document.getElementById('patientDateOfBirth').value,
+          address: document.getElementById('patientAddress').value.trim(),
+          notes: document.getElementById('patientNotes').value.trim()
+        };
+
+        if (!formData.firstName || !formData.lastName) {
+          alert('First name and last name are required');
+          return;
+        }
+
+        const token = getAdminToken();
+        if (!token) {
+          alert('Authentication required');
+          return;
+        }
+
+        const response = await fetch(`${API_BASE}/api/admin/patients`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(formData)
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.message || 'Failed to add patient');
+        }
+
+        const data = await response.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'Failed to add patient');
+        }
+
+        hideAddPatientModal();
+        loadPatients(); // Refresh patient list
+        
+        // Show success message
+        const successMsg = window.i18n ? 
+          window.i18n.t('patients.addSuccess') : 
+          'Patient added successfully!';
+        alert(successMsg);
+
+      } catch (error) {
+        console.error('[PATIENTS] Add error:', error);
+        const errorMsg = window.i18n ? 
+          window.i18n.t('patients.addError') : 
+          'Failed to add patient: ' + error.message;
+        alert(errorMsg);
+      }
     }
 
     // Badge loading functions
