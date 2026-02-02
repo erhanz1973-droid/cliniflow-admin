@@ -12388,18 +12388,13 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     // Get OTP data
     const otpData = await getOTPsForEmail(emailLower);
-    if (!otpData || otpData.length === 0) {
+    if (!otpData) {  // Fixed: otpData is now object, not array
       console.log("[ADMIN VERIFY REG OTP] No OTP found for email");
       return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found or expired" });
     }
     
-    const latestOTP = otpData[0]; // Get most recent OTP
-    
-    // Check if OTP exists
-    if (!latestOTP) {
-      console.log("[ADMIN VERIFY REG OTP] No OTP data found");
-      return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found" });
-    }
+    // otpData is now the OTP object directly (not array)
+    const latestOTP = otpData;
     
     // Check if already verified
     if (latestOTP.verified) {
