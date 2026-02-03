@@ -1026,27 +1026,27 @@
         }
       
         console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
-      const r = await fetch(`${API}/api/admin/events`, {
-        headers: adminHeaders({ Accept: "application/json" })
-      });
-      
-      console.log("[loadEvents] Response status:", r.status, r.statusText);
-      
-      if (!r.ok) {
-        const errorText = await r.text().catch(() => `HTTP ${r.status}`);
-        console.error("[loadEvents] HTTP error:", errorText);
-        throw new Error(`HTTP ${r.status}: ${errorText.substring(0, 100)}`);
-      }
-      
-      const contentType = r.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const text = await r.text();
-        console.error("[loadEvents] Non-JSON response:", text.substring(0, 200));
-        throw new Error(`Server returned non-JSON response: ${contentType}`);
-      }
-      
-      const data = await r.json();
-      console.log("[loadEvents] Response data:", data);
+        const r = await fetch(`${API}/api/admin/events`, {
+          headers: adminHeaders({ Accept: "application/json" })
+        });
+        
+        console.log("[loadEvents] Response status:", r.status, r.statusText);
+        
+        if (!r.ok) {
+          const errorText = await r.text().catch(() => `HTTP ${r.status}`);
+          console.error("[loadEvents] HTTP error:", errorText);
+          throw new Error(`HTTP ${r.status}: ${errorText.substring(0, 100)}`);
+        }
+        
+        const contentType = r.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          const text = await r.text();
+          console.error("[loadEvents] Non-JSON response:", text.substring(0, 200));
+          throw new Error(`Server returned non-JSON response: ${contentType}`);
+        }
+        
+        const data = await r.json();
+        console.log("[loadEvents] Response data:", data);
       
       if (!data.ok) {
         throw new Error(data.error || data.message || "Unknown error");
