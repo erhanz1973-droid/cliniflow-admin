@@ -1163,6 +1163,10 @@
     
     // Load clinic info and events
     loadClinicInfo();
+    // Load events after clinic info to ensure proper initialization
+    setTimeout(() => {
+      loadEvents();
+    }, 100);
   }
   
   // Check authentication after page loads (wait for DOM and localStorage to be ready)
@@ -1174,49 +1178,6 @@
     initializeDashboard();
   }
   
-  async function loadClinicInfo() {
-    const el = document.getElementById("clinicInfo");
-    if (!el) return;
-    const token = getAdminToken();
-    if (!token) {
-      el.style.display = "none";
-      return;
-    }
-    try {
-      const res = await fetch(`${API}/api/admin/clinic`, {
-        headers: adminHeaders({ Accept: "application/json" }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const code = (data.clinicCode || data.code || "-").toString();
-      const name = (data.name || "-").toString();
-      const status = (data.status || "-").toString();
-      
-      // Update clinic name
-      const clinicNameEl = document.getElementById("clinicName");
-      if (clinicNameEl) clinicNameEl.textContent = name || "—";
-      
-      // Update clinic code
-      const clinicCodeEl = document.getElementById("clinicCode");
-      if (clinicCodeEl) clinicCodeEl.textContent = code || "—";
-      
-      // Update clinic status
-      const clinicStatusEl = document.getElementById("clinicStatus");
-      if (clinicStatusEl && status) {
-        clinicStatusEl.textContent = status;
-        clinicStatusEl.style.display = "inline-block";
-      }
-      
-      // Update navbar clinic name
-      const navbarClinicName = document.getElementById("navbarClinicName");
-      if (navbarClinicName) {
-        navbarClinicName.textContent = name || "Clinic";
-      }
-    } catch (e) {
-      console.error("Load clinic info error:", e);
-    }
-  }
-  
   // Wait for i18n to be ready and DOM to be fully loaded
   function initializeDashboardBadges() {
     // Wait a bit for i18n to finish updating DOM (badges might be removed during translation)
@@ -1224,22 +1185,29 @@
       loadClinicInfo();
       // Load badges after i18n update
       loadAllBadges();
-      // Load events after a short delay to avoid token/API conflicts
-      setTimeout(() => {
-    loadEvents();
-      }, 500);
+      // Note: loadEvents() is already called in initializeDashboard()
     }, 200);
   }
 
-  if (typeof i18n !== 'undefined') {
-    initializeDashboardBadges();
-  } else {
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        initializeDashboardBadges();
-      }, 100);
-    });
+  // Single initialization entry point
+  function initializeApp() {
+    // First, initialize dashboard (auth + clinic info + events)
+    initializeDashboard();
+    
+    // Then initialize badges after i18n is ready
+    if (typeof i18n !== 'undefined') {
+      initializeDashboardBadges();
+    } else {
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          initializeDashboardBadges();
+        }, 100);
+      });
+    }
   }
+
+  // Start initialization
+  initializeApp();
 
   // Load monthly active patients metrics
   async function loadMonthlyActivePatients() {
