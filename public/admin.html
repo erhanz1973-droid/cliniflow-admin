@@ -1025,7 +1025,7 @@
           throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
         }
       
-      console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
+        console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
       const r = await fetch(`${API}/api/admin/events`, {
         headers: adminHeaders({ Accept: "application/json" })
       });
