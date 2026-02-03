@@ -12756,6 +12756,10 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
       if (address) updateData.address = address;
       if (notes) updateData.notes = notes;
       
+      // Add fullName and name fields for display
+      updateData.full_name = `${firstName} ${lastName}`;
+      updateData.name = `${firstName} ${lastName}`;
+      
       if (Object.keys(updateData).length > 0) {
         console.log("[PATIENTS] Updating patient with optional fields:", updateData);
         
