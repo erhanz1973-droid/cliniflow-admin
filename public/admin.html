@@ -1631,12 +1631,8 @@ function updateActivePatientsUI(data) {
     try {
       // Get last seen timestamp from localStorage
       let lastSeenTimestamp = 0;
-      try {
-        const saved = localStorage.getItem("adminLastSeenTimestamp");
-        if (saved) lastSeenTimestamp = parseInt(saved, 10) || 0;
-      } catch (e) {
-        console.warn("[DASHBOARD] Could not read last seen timestamp:", e);
-      }
+      const saved = localStorage.getItem("adminLastSeenTimestamp");
+      if (saved) lastSeenTimestamp = parseInt(saved, 10) || 0;
 
       const patientsRes = await safariFetch(`${API}/api/admin/patients`, {
         headers: adminHeaders({ Accept: "application/json" }),
@@ -1668,13 +1664,9 @@ function updateActivePatientsUI(data) {
             if (!m || m.from !== "PATIENT") return false;
             // If message has createdAt, check if it's after last seen time
             if (m.createdAt) {
-              try {
               const msgTimestamp = new Date(m.createdAt).getTime();
-                if (isNaN(msgTimestamp)) return true; // If invalid date, count as unread
+              if (isNaN(msgTimestamp)) return true; // If invalid date, count as unread
               return msgTimestamp > lastSeenTimestamp;
-              } catch (e) {
-                return true; // If error parsing date, count as unread
-              }
             }
             // If no createdAt, count it as unread (backward compatibility)
             return true;
