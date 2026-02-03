@@ -945,8 +945,9 @@
         }
       }
       
-      const relativeDate = formatRelativeDate(evt.date);
-      const fullDate = formatDate(evt.date, evt.time);
+      const baseDate = evt.timelineAt || evt.timestamp || evt.date;
+      const relativeDate = formatRelativeDate(baseDate);
+      const fullDate = formatDate(baseDate, evt.time);
       const targetUrl = getEventTargetUrl(evt);
       const isClickable = targetUrl !== null;
       // Escape single quotes in URL for onclick attribute
@@ -997,21 +998,32 @@
     }).join("");
   }
 
+  // Add loading flag to prevent race conditions
+  let eventsLoading = false;
+
   async function loadEvents() {
-    const upcomingEl = document.getElementById("upcomingList");
-    if (!upcomingEl) {
-      console.error("upcomingList element not found");
+    if (eventsLoading) {
+      console.log("[loadEvents] Already loading, skipping...");
       return;
     }
     
-    upcomingEl.className = "loading";
-    upcomingEl.textContent = i18n.t("common.loading");
-
+    eventsLoading = true;
+    
     try {
-      const token = getAdminToken();
-      if (!token) {
-        throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
+      const upcomingEl = document.getElementById("upcomingList");
+      if (!upcomingEl) {
+        console.error("upcomingList element not found");
+        return;
       }
+      
+      upcomingEl.className = "loading";
+      upcomingEl.textContent = i18n.t("common.loading");
+
+      try {
+        const token = getAdminToken();
+        if (!token) {
+          throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
+        }
       
       console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
       const r = await fetch(`${API}/api/admin/events`, {
@@ -1112,6 +1124,8 @@
           Check browser console (F12) for details
         </div>
       `;
+    } finally {
+      eventsLoading = false;
     }
   }
   
@@ -1384,91 +1398,6 @@ function updateActivePatientsUI(data) {
   // Create or update chart
   createActivePatientsChart(monthlyData);
 }
-
-// Create Chart.js line chart
-function createActivePatientsChart(data) {
-  const ctx = document.getElementById('activePatientsChart');
-  if (!ctx) return;
-  
-  // Destroy existing chart if it exists
-  if (window.activePatientsChartInstance) {
-    window.activePatientsChartInstance.destroy();
-  }
-  
-  // Prepare data for Chart.js
-  const labels = data.map(d => d.monthLabel);
-  const values = data.map(d => d.activePatients);
-  
-  window.activePatientsChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'Active Patients',
-        data: values,
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.4,
-        pointRadius: 4,
-        pointBackgroundColor: '#3b82f6',
-        pointBorderColor: '#fff',
-        pointBorderWidth: 2,
-        pointHoverRadius: 6
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          display: false
-        },
-        tooltip: {
-          backgroundColor: 'rgba(0, 0, 0, 0.8)',
-          titleColor: '#fff',
-          bodyColor: '#fff',
-          padding: 12,
-          displayColors: false,
-          callbacks: {
-            title: function(context) {
-              return context[0].label;
-            },
-            label: function(context) {
-              return `Active Patients: ${context.parsed.y}`;
-            }
-          }
-        }
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          ticks: {
-            stepSize: 1,
-            color: '#6b7280',
-            font: {
-              size: 11
-            }
-          },
-          grid: {
-            color: 'rgba(0, 0, 0, 0.05)'
-          }
-        },
-        x: {
-          ticks: {
-            color: '#6b7280',
-            font: {
-              size: 11
-            }
-          },
-          grid: {
-            display: false
-          }
-        }
-      }
-    });
-  }
 
   // Load monthly procedures metrics
   async function loadMonthlyProcedures() {
