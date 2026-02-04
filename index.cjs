@@ -6771,10 +6771,7 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
     
     console.log(`[GET /api/patient/:patientId/messages] Request received - patientId: ${patientId}, origin: ${origin}, userAgent: ${userAgent?.substring(0, 50)}`);
     
-    // Add CORS headers for this endpoint
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, x-actor");
+    // CORS headers are handled by global middleware - no need to override
     
     if (!patientId) {
       console.warn("[GET /api/patient/:patientId/messages] patientId missing");
