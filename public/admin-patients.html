@@ -806,6 +806,7 @@
         }
 
         const patients = Array.isArray(json.patients) ? json.patients : (Array.isArray(json.list) ? json.list : []);
+        console.log('[PATIENTS] API Response:', patients.slice(0, 3)); // Debug first 3 patients
         ALL_PATIENTS = patients;
         applyFilters();
         renderUsageBadge();
@@ -863,7 +864,21 @@
       grid.innerHTML = patients.map(p => {
         const status = p.status || 'PENDING';
         const patientId = (p.patientId || p.patient_id || '').toString();
-        const displayName = (p.fullName || p.name || '-').toString();
+        
+        // Enhanced name resolution with multiple fallbacks
+        let displayName = (p.fullName || p.name || '').toString();
+        if (!displayName || displayName === '-' || displayName === 'null' || displayName === 'undefined') {
+          // Try to construct from first_name + last_name
+          if (p.first_name && p.last_name) {
+            displayName = `${p.first_name} ${p.last_name}`;
+          } else if (p.firstName && p.lastName) {
+            displayName = `${p.firstName} ${p.lastName}`;
+          } else {
+            // Final fallback to patient ID but make it more readable
+            displayName = `Patient ${patientId.slice(-8)}`; // Show last 8 chars only
+          }
+        }
+        
         const isSelected = getSelectedPatientId() && getSelectedPatientId() === patientId;
         const createdAt = p.createdAt || p.created_at || '-';
         const currentLang = window.i18n ? window.i18n.getLang() : 'tr';
