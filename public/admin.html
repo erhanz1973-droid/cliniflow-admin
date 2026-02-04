@@ -452,7 +452,7 @@
       <!-- Monthly Active Patients - Compact -->
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h3 style="margin:0; font-size:14px; font-weight:600;">📊 Active Patients</h3>
+          <h3 style="margin:0; font-size:14px; font-weight:600;">📊 <span id="activePatientsTitle"></span>Active Patients</span></h3>
           <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
             Loading...
           </div>
@@ -472,7 +472,7 @@
       <!-- Monthly Procedures - Compact -->
       <div class="card" style="padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-          <h3 style="margin:0; font-size:14px; font-weight:600;">🦷 Procedures</h3>
+          <h3 style="margin:0; font-size:14px; font-weight:600;">🦷 <span id="proceduresTitle"></span>Procedures</span></h3>
           <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
             Loading...
           </div>
@@ -1136,10 +1136,15 @@
     const headingEl = document.getElementById("pageHeading");
     const upcomingTitleEl = document.getElementById("upcomingTitle");
     const upcomingSubtitleEl = document.getElementById("upcomingSubtitle");
+    const activePatientsTitleEl = document.getElementById("activePatientsTitle");
+    const proceduresTitleEl = document.getElementById("proceduresTitle");
+    
     if (titleEl) titleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
     if (headingEl) headingEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
     if (upcomingTitleEl) upcomingTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.title") : "Upcoming Events";
     if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.subtitle") : "Timeline of upcoming events";
+    if (activePatientsTitleEl) activePatientsTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : "Active Patients";
+    if (proceduresTitleEl) proceduresTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : "Procedures";
     
     // Reload clinic info and events (this will re-render timeline with new language)
     loadClinicInfo();
@@ -1148,6 +1153,12 @@
     setTimeout(() => {
       loadAllBadges();
     }, 100);
+    
+    // Reload charts with new language
+    setTimeout(() => {
+      loadMonthlyActivePatients();
+      loadMonthlyProcedures();
+    }, 200);
   };
 
   // Apply token from URL if provided (helps switching clinics)
@@ -1256,7 +1267,7 @@
       data: {
         labels: labels,
         datasets: [{
-          label: 'Active Patients',
+          label: (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'Active Patients',
           data: values,
           borderColor: '#3b82f6',
           backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -1288,7 +1299,7 @@
                 return context[0].label;
               },
               label: function(context) {
-                return `Active Patients: ${context.parsed.y}`;
+                return `${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'Active Patients'}: ${context.parsed.y}`;
               }
             }
           }
@@ -1348,7 +1359,7 @@ function updateActivePatientsUI(data) {
   if (growthEl && latestMonth.growthPercent !== null) {
     const growth = latestMonth.growthPercent;
     const sign = growth >= 0 ? '+' : '';
-    growthEl.textContent = `${sign}${growth}% vs previous month`;
+    growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
     growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
     growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
   } else if (growthEl) {
@@ -1360,7 +1371,7 @@ function updateActivePatientsUI(data) {
   // Update summary
   if (summaryEl) {
     const totalPatients = latestMonth.activePatients;
-    summaryEl.textContent = `${totalPatients} active patients in ${latestMonth.monthLabel}`;
+    summaryEl.textContent = `${totalPatients} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'active patients'} in ${latestMonth.monthLabel}`;
   }
   
   // Create or update chart
@@ -1419,7 +1430,7 @@ function updateActivePatientsUI(data) {
     if (growthEl && latestMonth.growthPercent !== null) {
       const growth = latestMonth.growthPercent;
       const sign = growth >= 0 ? '+' : '';
-      growthEl.textContent = `${sign}${growth}% vs previous month`;
+      growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
       growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
       growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
     } else if (growthEl) {
@@ -1431,7 +1442,7 @@ function updateActivePatientsUI(data) {
     // Update summary
     if (summaryEl) {
       const totalProcedures = latestMonth.procedures;
-      summaryEl.textContent = `${totalProcedures} procedures in ${latestMonth.monthLabel}`;
+      summaryEl.textContent = `${totalProcedures} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'procedures'} in ${latestMonth.monthLabel}`;
     }
     
     // Create or update chart
@@ -1457,7 +1468,7 @@ function updateActivePatientsUI(data) {
       data: {
         labels: labels,
         datasets: [{
-          label: 'Procedures',
+          label: (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'Procedures',
           data: values,
           backgroundColor: 'rgba(34, 197, 94, 0.8)',
           borderColor: 'rgba(34, 197, 94, 1)',
@@ -1484,7 +1495,7 @@ function updateActivePatientsUI(data) {
                 return context[0].label;
               },
               label: function(context) {
-                return `Procedures: ${context.parsed.y}`;
+                return `${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'Procedures'}: ${context.parsed.y}`;
               }
             }
           }
