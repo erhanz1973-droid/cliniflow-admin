@@ -712,11 +712,11 @@
     const diffTime = eventDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
-    if (diffDays === 0) return i18n.t("dashboard.upcoming.today");
-    if (diffDays === 1) return i18n.t("dashboard.upcoming.tomorrow");
-    if (diffDays === 2) return i18n.t("dashboard.upcoming.dayAfterTomorrow");
-    if (diffDays > 0 && diffDays <= 7) return i18n.t("dashboard.upcoming.daysLater", { count: diffDays });
-    if (diffDays > 7) return i18n.t("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) });
+    if (diffDays === 0) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.today") : "Today";
+    if (diffDays === 1) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.tomorrow") : "Tomorrow";
+    if (diffDays === 2) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.dayAfterTomorrow") : "Day after tomorrow";
+    if (diffDays > 0 && diffDays <= 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.daysLater", { count: diffDays }) : `${diffDays} days later`;
+    if (diffDays > 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) }) : `${Math.ceil(diffDays / 7)} weeks later`;
     return formatDate(dateStr);
   }
 
@@ -806,9 +806,9 @@
 
     bannerEl.className = "banner";
     bannerEl.innerHTML = `
-      <h3>${i18n.t("dashboard.upcoming.overdue", { count: activeOverdue.length })}</h3>
+      <h3>${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.overdue", { count: activeOverdue.length }) : `${activeOverdue.length} Overdue`}</h3>
       <div style="font-size:14px; color:#7f1d1d;">
-        ${i18n.t("dashboard.upcoming.overdueDesc", { count: activeOverdue.length })}
+        ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.overdueDesc", { count: activeOverdue.length }) : `You have ${activeOverdue.length} overdue item(s) that need attention.`}
       </div>
     `;
     bannerEl.style.display = "block";
@@ -904,7 +904,7 @@
       listEl.className = "empty-state";
       listEl.innerHTML = `
         <div class="empty-state-icon">📭</div>
-        <div>${i18n.t("dashboard.upcoming.empty")}</div>
+        <div>${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.empty") : "No upcoming events"}</div>
       `;
       return;
     }
@@ -920,8 +920,8 @@
       const isCompleted = evt.status === "DONE" || evt.status === "COMPLETED";
       const statusClass = isCompleted ? "done" : "planned";
       const statusText = isCompleted 
-        ? i18n.t("dashboard.upcoming.status.done") 
-        : i18n.t("dashboard.upcoming.status.planned");
+        ? ((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.status.done") : "Done")
+        : ((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.status.planned") : "Planned");
       
       // Check if overdue (date is in the past and not completed)
       let isOverdue = false;
@@ -1017,12 +1017,12 @@
       }
       
       upcomingEl.className = "loading";
-      upcomingEl.textContent = i18n.t("common.loading");
+      upcomingEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("common.loading") : "Loading...";
 
       try {
         const token = getAdminToken();
         if (!token) {
-          throw new Error(i18n.t("dashboard.clinicBadge.noToken"));
+          throw new Error((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.clinicBadge.noToken") : "No authentication token");
         }
       
         console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
@@ -1118,7 +1118,7 @@
       upcomingEl.innerHTML = `
         <div class="empty-state-icon">⚠️</div>
         <div style="color:var(--r);">
-          <strong>${i18n.t("common.error")}:</strong> ${error.message || i18n.t("common.loading")}
+          <strong>${(window.i18n && window.i18n.t) ? window.i18n.t("common.error") : "Error"}:</strong> ${error.message || ((window.i18n && window.i18n.t) ? window.i18n.t("common.loading") : "Loading...")}
         </div>
         <div style="margin-top: 8px; font-size: 12px; color: var(--muted);">
           Check browser console (F12) for details
@@ -1136,10 +1136,10 @@
     const headingEl = document.getElementById("pageHeading");
     const upcomingTitleEl = document.getElementById("upcomingTitle");
     const upcomingSubtitleEl = document.getElementById("upcomingSubtitle");
-    if (titleEl) titleEl.textContent = i18n.t("dashboard.title");
-    if (headingEl) headingEl.textContent = i18n.t("dashboard.title");
-    if (upcomingTitleEl) upcomingTitleEl.textContent = i18n.t("dashboard.upcoming.title");
-    if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = i18n.t("dashboard.upcoming.subtitle");
+    if (titleEl) titleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
+    if (headingEl) headingEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
+    if (upcomingTitleEl) upcomingTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.title") : "Upcoming Events";
+    if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.subtitle") : "Timeline of upcoming events";
     
     // Reload clinic info and events (this will re-render timeline with new language)
     loadClinicInfo();
