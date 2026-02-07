@@ -183,6 +183,22 @@
       <form id="login-form">
         <div class="form-group">
           <label>
+            <span data-i18n="login.email">Email</span> <span class="required" data-i18n="login.emailRequired">*</span>
+          </label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            data-i18n-placeholder="login.emailPlaceholder"
+            placeholder="admin@clinifly.net"
+            required
+            autofocus
+          />
+          <div class="help-text" data-i18n="login.emailHelp">Admin email adresinizi giriniz</div>
+        </div>
+
+        <div class="form-group">
+          <label>
             <span data-i18n="login.clinicCode">Clinic Code</span> <span class="required" data-i18n="login.clinicCodeRequired">*</span>
           </label>
           <input
@@ -190,12 +206,11 @@
             id="clinicCode"
             name="clinicCode"
             data-i18n-placeholder="login.clinicCodePlaceholder"
-            placeholder="SAAT"
+            placeholder="ERHANCAN"
             style="text-transform: uppercase;"
             required
-            autofocus
           />
-          <div class="help-text" data-i18n="login.clinicCodeHelp">Klinik kodunuzu giriniz (örn: SAAT, MOON, CLINIC01)</div>
+          <div class="help-text" data-i18n="login.clinicCodeHelp">Klinik kodunuzu giriniz (örn: ERHANCAN, TEST)</div>
         </div>
 
         <div class="form-group">
@@ -277,8 +292,14 @@
     }
     
     const submitBtn = document.getElementById("submit-btn");
+    const email = document.getElementById("email").value.trim().toLowerCase();
     const clinicCode = document.getElementById("clinicCode").value.trim().toUpperCase();
     const password = document.getElementById("password").value;
+    
+    if (!email) {
+      setMsg(i18n.t("login.errors.emailRequired"), "err");
+      return;
+    }
     
     if (!clinicCode) {
       setMsg(i18n.t("login.errors.clinicCodeRequired"), "err");
@@ -297,15 +318,17 @@
       const res = await fetch(`${API}/api/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clinicCode, password }),
+        body: JSON.stringify({ email, clinicCode, password }),
       });
       
       const json = await res.json();
       
       if (!res.ok) {
         let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
-        if (json.error === "invalid_clinic_code_or_password") {
+        if (json.error === "invalid_admin_credentials") {
           errorMsg = i18n.t("login.errors.invalidCredentials");
+        } else if (json.error === "email_required") {
+          errorMsg = i18n.t("login.errors.emailRequired");
         } else if (json.error === "clinic_code_required") {
           errorMsg = i18n.t("login.errors.clinicCodeRequired");
         } else if (json.error === "password_required") {
