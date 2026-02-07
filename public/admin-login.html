@@ -234,7 +234,7 @@
         <button
           type="button"
           class="btn btn-secondary"
-          onclick="window.location.href='/admin-register.html'"
+          onclick="window.location.href='http://localhost:5050/admin-register.html'"
           data-i18n="login.registerLink"
         >
           Yeni Klinik Kaydı
@@ -243,12 +243,12 @@
     </div>
 
     <div class="nav">
-      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+      <a href="http://localhost:5050/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
     </div>
   </div>
 
 <script>
-  const API = "https://cliniflow-admin.onrender.com";
+  const API = "http://localhost:5050"; // Geçici olarak local
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
@@ -314,7 +314,13 @@
     submitBtn.disabled = true;
     submitBtn.textContent = i18n.t("login.submitLoading");
     
+    console.log("[LOGIN] Sending login request:", { email, clinicCode, password: "***" });
+    
     try {
+      // Try production API first, fallback to localhost
+      const apiToUse = API;
+      console.log("[LOGIN] Using API:", apiToUse);
+      
       const res = await fetch(`${API}/api/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -349,15 +355,15 @@
       if (json.ok && json.token) {
         // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
         localStorage.setItem("admin_token", json.token);
-        localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
-        localStorage.setItem("clinic_name", json.clinicName || "");
+        localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
+        localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
         
-        setMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
+        setMsg(i18n.t("login.success", { name: json.admin?.clinicCode || clinicCode }), "ok");
         
-        // Redirect to dashboard after a short delay
-        setTimeout(() => {
-          window.location.href = "/admin.html";
-        }, 1000);
+        console.log("[LOGIN] Login successful, redirecting to dashboard...");
+        
+        // Redirect immediately to correct port
+        window.location.href = "http://localhost:5050/admin.html";
       } else {
         setMsg(i18n.t("login.errors.loginFailed"), "err");
         submitBtn.disabled = false;
@@ -498,7 +504,7 @@
           
           // Redirect to dashboard
           setTimeout(() => {
-            window.location.href = "/admin.html";
+            window.location.href = "http://localhost:5050/admin.html";
           }, 1000);
         } else {
           setOTPMsg(i18n.t("login.errors.otpFailed"), "err");
