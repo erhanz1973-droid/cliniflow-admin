@@ -234,7 +234,7 @@
         <button
           type="button"
           class="btn btn-secondary"
-          onclick="window.location.href='http://localhost:5050/admin-register.html'"
+          onclick="window.location.href='/admin-register.html'"
           data-i18n="login.registerLink"
         >
           Yeni Klinik Kaydı
@@ -243,12 +243,12 @@
     </div>
 
     <div class="nav">
-      <a href="http://localhost:5050/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
     </div>
   </div>
 
 <script>
-  const API = "http://localhost:5050"; // Geçici olarak local
+  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
@@ -358,12 +358,15 @@
         localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
         localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
         
+        console.log("[LOGIN] Token saved to localStorage:", json.token.substring(0, 20) + "...");
+        console.log("[LOGIN] Admin data:", json.admin);
+        
         setMsg(i18n.t("login.success", { name: json.admin?.clinicCode || clinicCode }), "ok");
         
         console.log("[LOGIN] Login successful, redirecting to dashboard...");
         
         // Redirect immediately to correct port
-        window.location.href = "http://localhost:5050/admin.html";
+        window.location.href = "http://localhost:5050/admin-dashboard.html";
       } else {
         setMsg(i18n.t("login.errors.loginFailed"), "err");
         submitBtn.disabled = false;
