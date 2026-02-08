@@ -3546,6 +3546,213 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
   }
 });
 
+// POST /api/register/doctor
+// Real doctor registration endpoint
+app.post("/api/register/doctor", async (req, res) => {
+  try {
+    const { 
+      name, 
+      email, 
+      phone, 
+      clinicCode, 
+      licenseNumber, 
+      department, 
+      specialties, 
+      title, 
+      experienceYears,
+      languages 
+    } = req.body || {};
+
+    console.log(`[DOCTOR REGISTER] Request received:`, { 
+      name: name ? "***" : "", 
+      email: email ? "***" : "",
+      phone: phone ? "***" : "",
+      clinicCode,
+      licenseNumber: licenseNumber ? "***" : "",
+      department,
+      specialties,
+      title,
+      experienceYears,
+      languages
+    });
+
+    // Validation
+    if (!name || !email || !phone || !clinicCode || !licenseNumber) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "missing_required_fields",
+        message: "Name, email, phone, clinic code, and license number are required" 
+      });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_email", 
+        message: "Geçerli bir e-posta adresi girin" 
+      });
+    }
+
+    // Phone validation
+    const phoneNormalized = normalizePhone(phone);
+    if (phoneNormalized.length < 10) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "invalid_phone", 
+        message: "Telefon numarası en az 10 haneli olmalıdır" 
+      });
+    }
+
+    const emailNormalized = String(email).trim().toLowerCase();
+
+    // Validate clinic code
+    const code = String(clinicCode).trim().toUpperCase();
+    let foundClinic = null;
+    let supabaseClinicId = null;
+
+    if (isSupabaseEnabled()) {
+      try {
+        const clinic = await getClinicByCode(code);
+        if (clinic) {
+          foundClinic = clinic;
+          supabaseClinicId = clinic.id;
+          console.log(`[DOCTOR REGISTER] Found clinic UUID: ${supabaseClinicId} for code: ${code}`);
+        } else {
+          console.warn(`[DOCTOR REGISTER] Clinic not found in Supabase for code: ${code}`);
+        }
+      } catch (err) {
+        console.error(`[DOCTOR REGISTER] Error finding clinic in Supabase:`, err.message);
+      }
+    }
+
+    if (!foundClinic) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "clinic_not_found", 
+        message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." 
+      });
+    }
+
+    if (isSupabaseEnabled() && !supabaseClinicId) {
+      console.error("[DOCTOR REGISTER] Missing clinic_id for Supabase insert. clinicCode:", code);
+      return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
+    }
+
+    // Check if doctor already exists
+    let existingDoctorId = null;
+    if (isSupabaseEnabled()) {
+      try {
+        const { data: existing, error: e } = await supabase
+          .from("patients")
+          .select("id, patient_id, email")
+          .eq("email", emailNormalized)
+          .eq("role", "DOCTOR")
+          .limit(1)
+          .maybeSingle();
+        
+        if (!e && existing) {
+          existingDoctorId = existing.patient_id || existing.id;
+          console.log("[DOCTOR REGISTER] Doctor already exists:", existingDoctorId);
+        }
+      } catch (err) {
+        console.error("[DOCTOR REGISTER] Error checking existing doctor:", err?.message || err);
+      }
+    }
+
+    if (existingDoctorId) {
+      return res.status(409).json({ 
+        ok: false, 
+        error: "doctor_already_exists", 
+        message: "Bu e-posta ile kayıtlı bir doktor zaten mevcut." 
+      });
+    }
+
+    // Generate doctor ID
+    const doctorId = 'd_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+    // Insert doctor into Supabase
+    if (isSupabaseEnabled()) {
+      try {
+        const doctorPayload = {
+          patient_id: doctorId,
+          email: emailNormalized,
+          name: String(name || ""),
+          clinic_id: supabaseClinicId,
+          clinic_code: code,
+          status: "PENDING",
+          role: "DOCTOR",
+          language: "tr",
+          phone: phoneNormalized,
+          license_number: licenseNumber,
+          department: department || null,
+          specialties: specialties || [],
+          title: title || null,
+          experience_years: experienceYears || null,
+          languages: languages || [],
+        };
+
+        console.log("[DOCTOR REGISTER] Inserting doctor into Supabase:", {
+          patient_id: doctorPayload.patient_id,
+          email: doctorPayload.email,
+          role: doctorPayload.role,
+          clinic_code: doctorPayload.clinic_code,
+          status: doctorPayload.status,
+        });
+
+        const { data, error } = await supabase
+          .from("patients")
+          .insert(doctorPayload)
+          .select()
+          .single();
+
+        if (error) {
+          console.error("[DOCTOR REGISTER] Supabase insert failed:", error);
+          return res.status(500).json({ 
+            ok: false, 
+            error: "registration_failed", 
+            message: "Doktor kaydı başarısız oldu." 
+          });
+        }
+
+        console.log("[DOCTOR REGISTER] Doctor registered successfully:", data);
+        
+        res.json({
+          ok: true,
+          message: "Doktor kaydı başarıyla oluşturuldu. Admin onayı bekleniyor.",
+          doctorId: doctorId,
+          email: emailNormalized,
+          status: "PENDING",
+          clinicCode: code,
+        });
+
+      } catch (error) {
+        console.error("[DOCTOR REGISTER] Registration error:", error);
+        return res.status(500).json({ 
+          ok: false, 
+          error: "registration_failed", 
+          message: "Doktor kaydı başarısız oldu." 
+        });
+      }
+    } else {
+      return res.status(500).json({ 
+        ok: false, 
+        error: "supabase_disabled", 
+        message: "Kayıt sistemi şu anda kullanılamıyor." 
+      });
+    }
+
+  } catch (error) {
+    console.error("[DOCTOR REGISTER] Unexpected error:", error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error", 
+      message: "Sunucu hatası." 
+    });
+  }
+});
+
 // POST /auth/verify-otp
 // OTP verification endpoint - FIXED VERSION v2.0
 app.post("/auth/verify-otp", async (req, res) => {
