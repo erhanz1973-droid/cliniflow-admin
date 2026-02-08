@@ -202,7 +202,7 @@
       emptyContainer.style.display = "none";
 
       try {
-        const response = await fetch("/api/admin/doctor-applications", {
+        const response = await fetch("/admin/doctor-applications", {
           headers: {
             "Authorization": "Bearer " + token
           }
@@ -291,7 +291,7 @@
       }
 
       try {
-        const response = await fetch("/api/admin/approve-doctor", {
+        const response = await fetch("/admin/approve-doctor", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
