@@ -2864,11 +2864,13 @@ async function resolvePatientForOtp({ email, phone }) {
   let foundLanguage = "en";
   let resolvedEmail = emailNormalized || "";
 
-  const selectColumns = "id, patient_id, email, phone, status, name, language";
+  const selectColumns = "id, patient_id, email, phone, status, name, language, role"; // 🔥 ADD ROLE COLUMN
 
   if (isSupabaseEnabled()) {
     try {
+      // 🔥 FIX: Check both patients table and doctor applications
       if (emailNormalized) {
+        // First check patients table
         const { data: row, error: pErr } = await supabase
           .from("patients")
           .select(selectColumns)
@@ -2876,6 +2878,7 @@ async function resolvePatientForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundPatient = row;
+          console.log(`[OTP] Found patient with role: ${row.role}`);
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[OTP] Supabase patient lookup (email) failed:", {
             message: pErr.message,
@@ -2886,6 +2889,7 @@ async function resolvePatientForOtp({ email, phone }) {
       }
 
       if (!foundPatient && phoneNormalized) {
+        // First check patients table
         const { data: row, error: pErr } = await supabase
           .from("patients")
           .select(selectColumns)
@@ -2893,6 +2897,7 @@ async function resolvePatientForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundPatient = row;
+          console.log(`[OTP] Found patient by phone with role: ${row.role}`);
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[OTP] Supabase patient lookup (phone) failed:", {
             message: pErr.message,
@@ -3479,13 +3484,15 @@ app.post("/auth/verify-otp", async (req, res) => {
     
     // Generate JWT token (7-14 days expiry, using 14 days)
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const userRole = (foundPatient.role || "PATIENT").toUpperCase(); // 🔥 FIX: Get role from patient data
     const token = jwt.sign(
       { 
         patientId: foundPatientId,
         email: emailNormalized || "",
         language: foundLanguage,
         ...(foundPhone ? { phone: foundPhone } : {}),
-        type: "patient",
+        role: userRole, // 🔥 FIX: Include actual role instead of hardcoded "patient"
+        type: "patient", // Keep for backward compatibility
       },
       JWT_SECRET,
       { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
@@ -3495,7 +3502,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     const tokens = readJson(TOK_FILE, {});
     tokens[token] = {
       patientId: foundPatientId,
-      role: foundPatient.status || "PENDING",
+      role: userRole, // 🔥 FIX: Use actual role instead of status
       createdAt: now(),
       email: emailNormalized || "",
       language: foundLanguage,
@@ -3503,12 +3510,13 @@ app.post("/auth/verify-otp", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (patient ${foundPatientId}), token generated`);
+    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (patient ${foundPatientId}), token generated with role: ${userRole}`);
     
     res.json({
       ok: true,
       token,
       patientId: foundPatientId,
+      role: userRole, // 🔥 FIX: Include role in response
       status: foundPatient.status || "PENDING",
       name: foundPatient.name || "",
       ...(foundPhone ? { phone: foundPhone } : {}),
