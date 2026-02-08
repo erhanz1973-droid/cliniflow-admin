@@ -366,7 +366,7 @@
         console.log("[LOGIN] Login successful, redirecting to dashboard...");
         
         // Redirect immediately to correct port
-        window.location.href = "http://localhost:5050/admin-dashboard.html";
+        window.location.href = window.location.origin + "/admin-dashboard.html";
       } else {
         setMsg(i18n.t("login.errors.loginFailed"), "err");
         submitBtn.disabled = false;
@@ -507,7 +507,7 @@
           
           // Redirect to dashboard
           setTimeout(() => {
-            window.location.href = "http://localhost:5050/admin.html";
+            window.location.href = window.location.origin + "/admin.html";
           }, 1000);
         } else {
           setOTPMsg(i18n.t("login.errors.otpFailed"), "err");

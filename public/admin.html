@@ -561,10 +561,10 @@
     } catch (e) {
       console.error("[LOGOUT] Error clearing token:", e);
     }
-    window.location.href = "/admin-login.html";
+    window.location.href = window.location.origin + "/admin-login.html";
   }
 
-  const API = "https://cliniflow-admin.onrender.com";
+  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
   function applyTokenFromUrl() {
     try {
       const url = new URL(location.href);
@@ -583,7 +583,7 @@
     const token = getAdminToken();
     if (!token) {
       // No token - redirect to login page
-      window.location.href = "http://localhost:5050/admin-login.html";
+      window.location.href = window.location.origin + "/admin-login.html";
       return false;
     }
     return true;
