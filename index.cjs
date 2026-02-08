@@ -3787,18 +3787,34 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     console.log(`[OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
     
-    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
-    console.log(`[OTP] Resolved patient data:`, resolved);
-    const resolvedEmail = resolved.email || emailNormalized;
-    console.log(`[OTP] Using resolved email: "${resolvedEmail}" (from resolved: ${!!resolved.email})`);
+    // 🔥 FIX: Check if user is doctor or patient first
+    const doctorResolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
+    const patientResolved = await resolvePatientForOtp({ email: emailNormalized, phone });
     
-    if (!resolvedEmail) {
-      return res.status(400).json({
+    let resolved = null;
+    let userType = null;
+    
+    if (doctorResolved.patientId) {
+      resolved = doctorResolved;
+      userType = "DOCTOR";
+      console.log(`[OTP] Found DOCTOR user:`, doctorResolved);
+    } else if (patientResolved.patientId) {
+      resolved = patientResolved;
+      userType = "PATIENT";
+      console.log(`[OTP] Found PATIENT user:`, patientResolved);
+    }
+    
+    if (!resolved || !resolved.patientId) {
+      return res.status(404).json({
         ok: false,
-        error: "email_not_found",
-        message: "Bu hastanın email adresi kayıtlı değil. Lütfen admin ile iletişime geçin.",
+        error: "user_not_found",
+        message: "Bu email veya telefon ile kayıtlı kullanıcı bulunamadı.",
       });
     }
+    
+    console.log(`[OTP] User type determined: ${userType}`);
+    const resolvedEmail = resolved.email || emailNormalized;
+    console.log(`[OTP] Using resolved email: "${resolvedEmail}"`);
 
     console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
 
@@ -3930,34 +3946,33 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
     
-    // OTP is valid - resolve patient by email (Supabase first, then file)
-    const foundPatient = resolved.patient;
-    const foundPatientId = resolved.patientId;
+    // OTP is valid - use resolved user data
+    const foundUser = resolved.patient;
+    const foundUserId = resolved.patientId;
     const foundLanguage = resolved.language;
-    if (!foundPatientId) {
+    if (!foundUserId) {
       return res.status(404).json({
         ok: false,
-        error: "patient_not_found",
-        message: "Bu email ile kayıtlı hasta bulunamadı.",
+        error: "user_not_found",
+        message: "Bu email ile kayıtlı kullanıcı bulunamadı.",
       });
     }
     
     // Mark OTP as verified (by email - OTP is stored by email)
     markOTPVerified(emailNormalized);
 
-    const foundPhone = String(foundPatient?.phone || "").trim();
+    const foundPhone = String(foundUser?.phone || "").trim();
     
-    // Generate JWT token (7-14 days expiry, using 14 days)
+    // 🔥 FIX: Generate role-aware JWT token
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
-    const userRole = (foundPatient.role || "PATIENT").toUpperCase(); // 🔥 FIX: Get role from patient data
     const token = jwt.sign(
       { 
-        patientId: foundPatientId,
+        patientId: foundUserId,
         email: emailNormalized || "",
         language: foundLanguage,
         ...(foundPhone ? { phone: foundPhone } : {}),
-        role: userRole, // 🔥 FIX: Include actual role instead of hardcoded "patient"
-        type: "patient", // Keep for backward compatibility
+        role: userType, // 🔥 FIX: Use determined user type (DOCTOR/PATIENT)
+        type: userType.toLowerCase(), // 🔥 FIX: Set type based on user type
       },
       JWT_SECRET,
       { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
@@ -3966,8 +3981,8 @@ app.post("/auth/verify-otp", async (req, res) => {
     // Also save token in legacy tokens.json for backward compatibility
     const tokens = readJson(TOK_FILE, {});
     tokens[token] = {
-      patientId: foundPatientId,
-      role: userRole, // 🔥 FIX: Use actual role instead of status
+      patientId: foundUserId,
+      role: userType, // 🔥 FIX: Use actual user type
       createdAt: now(),
       email: emailNormalized || "",
       language: foundLanguage,
@@ -3975,15 +3990,15 @@ app.post("/auth/verify-otp", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (patient ${foundPatientId}), token generated with role: ${userRole}`);
+    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (${userType} ${foundUserId}), token generated with role: ${userType}`);
     
     res.json({
       ok: true,
       token,
-      patientId: foundPatientId,
-      role: userRole, // 🔥 FIX: Include role in response
-      status: foundPatient.status || "PENDING",
-      name: foundPatient.name || "",
+      patientId: foundUserId,
+      role: userType, // 🔥 FIX: Include actual user type in response
+      status: foundUser.status || "PENDING",
+      name: foundUser.name || "",
       ...(foundPhone ? { phone: foundPhone } : {}),
       email: emailNormalized || "",
       language: foundLanguage,
