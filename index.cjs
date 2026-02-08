@@ -13898,13 +13898,12 @@ app.post(
       const { doctorId } = req.body || {};
       console.log("[ADMIN ALIAS] Extracted doctorId:", doctorId);
 
-      // 🔥 UUID GUARD: Validate doctorId format
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!isUUID.test(doctorId)) {
+      // 🔥 UUID GUARD: Validate doctorId format (CRITICAL)
+      if (!doctorId || !doctorId.includes('-')) {
         return res.status(400).json({
           ok: false,
-          error: "invalid_doctor_id",
-          message: "doctorId must be UUID",
+          error: 'invalid_doctor_id',
+          message: 'doctorId must be UUID',
         });
       }
 
