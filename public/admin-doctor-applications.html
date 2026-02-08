@@ -208,7 +208,15 @@
           }
         });
 
-        const data = await response.json();
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          console.error("Response text:", text);
+          throw new Error("Invalid JSON response from server");
+        }
 
         if (data.ok) {
           allDoctors = data.doctors || [];
@@ -300,7 +308,15 @@
           body: JSON.stringify({ patientId })
         });
 
-        const data = await response.json();
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (parseError) {
+          console.error("JSON parse error:", parseError);
+          console.error("Response text:", text);
+          throw new Error("Invalid JSON response from server");
+        }
 
         if (data.ok) {
           alert("✅ Doktor başarıyla onaylandı!");
