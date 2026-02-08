@@ -1,4 +1,5 @@
 console.log("🔥 RUNNING INDEX.CJS FROM ROOT /cliniflow-admin");
+console.log("🔥 ADMIN ALIAS ROUTES LOADED FROM INDEX.CJS");
 
 // Load environment variables from .env file
 require("dotenv").config();
@@ -12853,99 +12854,82 @@ app.patch("/debug/test-patch", (req, res) => {
 // ================== ADMIN ROUTE ALIASES ==================
 console.log("[INIT] Adding admin route aliases to correct entry point");
 
-app.get("/admin/doctor-applications", async (req, res) => {
-  console.log("[ADMIN ALIAS] /admin/doctor-applications hit!");
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-    
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
+// 🔥 ADMIN ALIAS ROUTES (MUTLAKA INDEX.CJS İÇİNDE)
+app.get(
+  "/admin/doctor-applications",
+  requireAdminAuth,
+  async (req, res) => {
+    console.log("[ADMIN ALIAS] /admin/doctor-applications hit!");
+    try {
+      // Get all doctor applications (both PENDING and ACTIVE)
+      const { data: doctors, error } = await supabase
+        .from("patients")
+        .select("*")
+        .eq("role", "DOCTOR")
+        .in("status", ["PENDING", "ACTIVE"])
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("[DOCTOR APPLICATIONS] Error:", error);
+        return res.status(500).json({ ok: false, error: "fetch_failed" });
+      }
+
+      res.json({
+        ok: true,
+        doctors: doctors || [],
+      });
+    } catch (error) {
+      console.error("[DOCTOR APPLICATIONS] Error:", error);
+      res.status(500).json({ ok: false, error: "internal_error" });
     }
-
-    // Verify admin token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "admin_required" });
-    }
-
-    // Get all doctor applications
-    const { data: doctors, error } = await supabase
-      .from("patients")
-      .select("*")
-      .eq("role", "DOCTOR")
-      .in("status", ["PENDING", "ACTIVE"])
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("[ADMIN DOCTOR APPLICATIONS] Error:", error);
-      return res.status(500).json({ ok: false, error: "fetch_failed" });
-    }
-
-    res.json({
-      ok: true,
-      doctors: doctors || [],
-    });
-  } catch (error) {
-    console.error("[ADMIN DOCTOR APPLICATIONS] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
   }
-});
+);
 
-app.post("/admin/approve-doctor", async (req, res) => {
-  console.log("[ADMIN ALIAS] /admin/approve-doctor hit!");
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7) : null;
-    
-    if (!token) {
-      return res.status(401).json({ ok: false, error: "missing_token" });
+app.post(
+  "/admin/approve-doctor",
+  requireAdminAuth,
+  async (req, res) => {
+    console.log("[ADMIN ALIAS] /admin/approve-doctor hit!");
+    try {
+      const { patientId } = req.body || {};
+
+      if (!patientId) {
+        return res.status(400).json({ ok: false, error: "missing_patient_id" });
+      }
+
+      // Update doctor status to ACTIVE
+      const { data: updatedDoctor, error: updateError } = await supabase
+        .from("patients")
+        .update({ 
+          status: "ACTIVE"
+        })
+        .eq("patient_id", patientId)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error("[APPROVE DOCTOR] Update error:", updateError);
+        return res.status(500).json({ ok: false, error: "update_failed" });
+      }
+
+      res.json({
+        ok: true,
+        message: "Doctor approved successfully",
+        doctor: {
+          patientId: updatedDoctor.patient_id,
+          name: updatedDoctor.name,
+          role: updatedDoctor.role,
+          status: updatedDoctor.status,
+          clinicId: updatedDoctor.clinic_id,
+          clinicCode: updatedDoctor.clinic_code,
+        },
+      });
+    } catch (error) {
+      console.error("[APPROVE DOCTOR] Error:", error);
+      res.status(500).json({ ok: false, error: "internal_error" });
     }
-
-    // Verify admin token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "admin_required" });
-    }
-
-    const { patientId } = req.body || {};
-
-    if (!patientId) {
-      return res.status(400).json({ ok: false, error: "missing_patient_id" });
-    }
-
-    // Update doctor status to ACTIVE
-    const { data: updatedDoctor, error: updateError } = await supabase
-      .from("patients")
-      .update({ 
-        status: "ACTIVE"
-      })
-      .eq("patient_id", patientId)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error("[APPROVE DOCTOR] Update error:", updateError);
-      return res.status(500).json({ ok: false, error: "update_failed" });
-    }
-
-    res.json({
-      ok: true,
-      message: "Doctor approved successfully",
-      doctor: {
-        patientId: updatedDoctor.patient_id,
-        name: updatedDoctor.name,
-        role: updatedDoctor.role,
-        status: updatedDoctor.status,
-        clinicId: updatedDoctor.clinic_id,
-        clinicCode: updatedDoctor.clinic_code,
-      },
-    });
-  } catch (error) {
-    console.error("[APPROVE DOCTOR] Error:", error);
-    res.status(500).json({ ok: false, error: "internal_error" });
   }
-});
+);
 
 console.log("[INIT] Admin route aliases added to correct entry point");
 
