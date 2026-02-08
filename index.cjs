@@ -2851,6 +2851,88 @@ app.get("/api/me", requireToken, (req, res) => {
 });
 
 // ================== EMAIL-ONLY OTP AUTHENTICATION ==================
+async function resolveDoctorForOtp({ email, phone }) {
+  const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+  const phoneTrimmed = phone ? String(phone).trim() : "";
+  const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
+
+  console.log(`[DOCTOR OTP] resolveDoctorForOtp input: email="${emailNormalized}", phone="${phoneTrimmed}"`);
+
+  let foundDoctor = null;
+  let foundDoctorId = null;
+  let foundPhone = phoneNormalized || null;
+  let foundLanguage = "en";
+  let resolvedEmail = emailNormalized || "";
+
+  const selectColumns = "id, patient_id, email, phone, status, name, language, role";
+
+  if (isSupabaseEnabled()) {
+    try {
+      // 🔥 FIX: Only look for doctors with role="DOCTOR"
+      if (emailNormalized) {
+        const { data: row, error: pErr } = await supabase
+          .from("patients")
+          .select(selectColumns)
+          .eq("email", emailNormalized)
+          .eq("role", "DOCTOR") // 🔥 FIX: Only doctors
+          .single();
+        if (!pErr && row) {
+          foundDoctor = row;
+          console.log(`[DOCTOR OTP] Found doctor with role: ${row.role}`);
+        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          console.error("[DOCTOR OTP] Supabase doctor lookup (email) failed:", {
+            message: pErr.message,
+            code: pErr.code,
+            details: pErr.details,
+          });
+        }
+      }
+
+      if (!foundDoctor && phoneNormalized) {
+        const { data: row, error: pErr } = await supabase
+          .from("patients")
+          .select(selectColumns)
+          .eq("phone", phoneNormalized)
+          .eq("role", "DOCTOR") // 🔥 FIX: Only doctors
+          .single();
+        if (!pErr && row) {
+          foundDoctor = row;
+          console.log(`[DOCTOR OTP] Found doctor by phone with role: ${row.role}`);
+        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          console.error("[DOCTOR OTP] Supabase doctor lookup (phone) failed:", {
+            message: pErr.message,
+            code: pErr.code,
+            details: pErr.details,
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[DOCTOR OTP] Supabase doctor lookup exception:", e?.message || e);
+    }
+  }
+
+  // File-based fallback (if needed)
+  if (!foundDoctor) {
+    // Add file-based lookup logic here if needed
+    console.log("[DOCTOR OTP] No doctor found in Supabase, checking file-based storage");
+  }
+
+  if (foundDoctor) {
+    foundDoctorId = foundDoctor.patient_id || foundDoctor.id;
+    foundPhone = foundDoctor.phone || phoneNormalized;
+    foundLanguage = foundDoctor.language || "en";
+    resolvedEmail = foundDoctor.email || emailNormalized;
+  }
+
+  return {
+    patient: foundDoctor,
+    patientId: foundDoctorId,
+    email: resolvedEmail,
+    phone: foundPhone,
+    language: foundLanguage,
+  };
+}
+
 async function resolvePatientForOtp({ email, phone }) {
   const emailNormalized = email ? String(email).trim().toLowerCase() : "";
   const phoneTrimmed = phone ? String(phone).trim() : "";
@@ -3285,6 +3367,182 @@ app.post("/api/admin/verify-otp", async (req, res) => {
   } catch (error) {
     console.error("[ADMIN OTP] Verify error:", error);
     res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
+  }
+});
+
+// POST /api/doctor/verify-otp
+// Doctor-specific OTP verification endpoint
+app.post("/api/doctor/verify-otp", async (req, res) => {
+  try {
+    const { email, phone, otp, sessionId } = req.body || {};
+
+    // Strict parameter validation
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
+
+    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
+      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
+    }
+
+    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+    const otpCode = String(otp).trim();
+
+    // Validate OTP format (should be 6 digits)
+    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
+      return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
+    }
+
+    console.log(`[DOCTOR OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+    
+    // 🔥 FIX: Resolve doctor from patients table with role="DOCTOR"
+    const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
+    console.log(`[DOCTOR OTP] Resolved doctor data:`, resolved);
+    const resolvedEmail = resolved.email || emailNormalized;
+    console.log(`[DOCTOR OTP] Using resolved email: "${resolvedEmail}"`);
+    
+    if (!resolvedEmail) {
+      return res.status(400).json({
+        ok: false,
+        error: "email_not_found",
+        message: "Bu doktorun email adresi kayıtlı değil. Lütfen admin ile iletişime geçin.",
+      });
+    }
+
+    // Get OTP data for this email
+    const otpData = await getOTPsForEmail(resolvedEmail);
+    console.log(`[DOCTOR OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+    
+    if (!otpData) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "otp_not_found", 
+        message: "OTP kodu bulunamadı veya süresi dolmuş. Lütfen önce OTP isteyin." 
+      });
+    }
+    
+    // Check if already verified
+    if (otpData.verified) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_already_used", 
+        message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check if expired
+    const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    if (expiresAt < now()) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_expired", 
+        message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check attempts
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_max_attempts", 
+        message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Verify OTP
+    let isValid = false;
+    try {
+      const hashToUse = otpData.otp_hash;
+      if (!hashToUse) {
+        return res.status(500).json({ 
+          ok: false, 
+          error: "hash_missing", 
+          message: "OTP hash bulunamadı. Lütfen yeni bir OTP isteyin." 
+        });
+      }
+      
+      isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
+      console.log(`[DOCTOR OTP] Verification result: ${isValid}`);
+    } catch (verifyError) {
+      console.error("[DOCTOR OTP] Verification error:", verifyError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "verification_failed", 
+        message: "OTP doğrulanamadı. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    if (!isValid) {
+      incrementOTPAttempt(emailNormalized);
+      return res.status(401).json({ 
+        ok: false, 
+        error: "invalid_otp", 
+        message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    // OTP is valid - resolve doctor by email
+    const foundDoctor = resolved.patient;
+    const foundDoctorId = resolved.patientId;
+    const foundLanguage = resolved.language;
+    
+    if (!foundDoctorId) {
+      return res.status(404).json({
+        ok: false,
+        error: "doctor_not_found",
+        message: "Bu email ile kayıtlı doktor bulunamadı.",
+      });
+    }
+    
+    // Mark OTP as verified
+    markOTPVerified(emailNormalized);
+
+    const foundPhone = String(foundDoctor?.phone || "").trim();
+    
+    // 🔥 FIX: Generate DOCTOR JWT token
+    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const token = jwt.sign(
+      { 
+        patientId: foundDoctorId,
+        email: emailNormalized || "",
+        language: foundLanguage,
+        ...(foundPhone ? { phone: foundPhone } : {}),
+        role: "DOCTOR", // 🔥 FIX: Hardcode DOCTOR role
+        type: "doctor", // 🔥 FIX: Set type to doctor
+      },
+      JWT_SECRET,
+      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+    );
+    
+    // Save token in legacy tokens.json
+    const tokens = readJson(TOK_FILE, {});
+    tokens[token] = {
+      patientId: foundDoctorId,
+      role: "DOCTOR", // 🔥 FIX: Use DOCTOR role
+      createdAt: now(),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      ...(foundPhone ? { phone: foundPhone } : {}),
+    };
+    writeJson(TOK_FILE, tokens);
+    
+    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (doctor ${foundDoctorId}), DOCTOR token generated`);
+    
+    res.json({
+      ok: true,
+      token,
+      patientId: foundDoctorId,
+      role: "DOCTOR", // 🔥 FIX: Include DOCTOR role in response
+      status: foundDoctor.status || "PENDING",
+      name: foundDoctor.name || "",
+      ...(foundPhone ? { phone: foundPhone } : {}),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
+    });
+  } catch (error) {
+    console.error("[DOCTOR OTP] Verify OTP error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
 
