@@ -12863,14 +12863,16 @@ app.get(
     console.log("[ADMIN ALIAS] req.admin:", req.admin);
     console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
     console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
+    console.log("[ADMIN ALIAS] req.clinicId:", req.clinicId);
     
     try {
-      // Get all doctor applications (both PENDING and ACTIVE)
-      console.log("[ADMIN ALIAS] Querying doctor applications...");
+      // Get all doctor applications scoped to this clinic
+      console.log("[ADMIN ALIAS] Querying doctor applications for clinic:", req.clinicCode);
       const { data: doctors, error } = await supabase
         .from("patients")
         .select("*")
         .eq("role", "DOCTOR")
+        .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER
         .in("status", ["PENDING", "ACTIVE"])
         .order("created_at", { ascending: false });
 
@@ -12881,10 +12883,11 @@ app.get(
         return res.status(500).json({ ok: false, error: "fetch_failed", details: error });
       }
 
-      console.log("[ADMIN ALIAS] Sending success response with", doctors?.length, "doctors");
+      console.log("[ADMIN ALIAS] Sending success response with", doctors?.length, "doctors for clinic:", req.clinicCode);
       res.json({
         ok: true,
         doctors: doctors || [],
+        clinicCode: req.clinicCode,
       });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
@@ -12907,6 +12910,7 @@ app.post(
     console.log("[ADMIN ALIAS] req.admin:", req.admin);
     console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
     console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
+    console.log("[ADMIN ALIAS] req.clinicId:", req.clinicId);
     console.log("[ADMIN ALIAS] req.body:", req.body);
     
     try {
@@ -12918,14 +12922,16 @@ app.post(
         return res.status(400).json({ ok: false, error: "missing_patient_id" });
       }
 
-      // Update doctor status to ACTIVE
-      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE...");
+      // Update doctor status to ACTIVE, scoped to this clinic
+      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
       const { data: updatedDoctor, error: updateError } = await supabase
         .from("patients")
         .update({ 
           status: "ACTIVE"
         })
         .eq("patient_id", patientId)
+        .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER - only approve doctors from this clinic
+        .eq("role", "DOCTOR") // 🔥 ROLE FILTER - only approve doctors
         .select()
         .single();
 
@@ -12934,6 +12940,11 @@ app.post(
       if (updateError) {
         console.error("[ADMIN ALIAS] Update error:", updateError);
         return res.status(500).json({ ok: false, error: "update_failed", details: updateError });
+      }
+
+      if (!updatedDoctor) {
+        console.error("[ADMIN ALIAS] No doctor found with patientId:", patientId, "for clinic:", req.clinicCode);
+        return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
       }
 
       console.log("[ADMIN ALIAS] Sending success response");
@@ -12948,6 +12959,7 @@ app.post(
           clinicId: updatedDoctor.clinic_id,
           clinicCode: updatedDoctor.clinic_code,
         },
+        clinicCode: req.clinicCode,
       });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
