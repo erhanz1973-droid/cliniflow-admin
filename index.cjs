@@ -12860,8 +12860,13 @@ app.get(
   requireAdminAuth,
   async (req, res) => {
     console.log("[ADMIN ALIAS] /admin/doctor-applications hit!");
+    console.log("[ADMIN ALIAS] req.admin:", req.admin);
+    console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
+    console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
+    
     try {
       // Get all doctor applications (both PENDING and ACTIVE)
+      console.log("[ADMIN ALIAS] Querying doctor applications...");
       const { data: doctors, error } = await supabase
         .from("patients")
         .select("*")
@@ -12869,18 +12874,27 @@ app.get(
         .in("status", ["PENDING", "ACTIVE"])
         .order("created_at", { ascending: false });
 
+      console.log("[ADMIN ALIAS] Supabase query result:", { doctors: doctors?.length, error });
+
       if (error) {
-        console.error("[DOCTOR APPLICATIONS] Error:", error);
-        return res.status(500).json({ ok: false, error: "fetch_failed" });
+        console.error("[ADMIN ALIAS] Supabase error:", error);
+        return res.status(500).json({ ok: false, error: "fetch_failed", details: error });
       }
 
+      console.log("[ADMIN ALIAS] Sending success response with", doctors?.length, "doctors");
       res.json({
         ok: true,
         doctors: doctors || [],
       });
-    } catch (error) {
-      console.error("[DOCTOR APPLICATIONS] Error:", error);
-      res.status(500).json({ ok: false, error: "internal_error" });
+    } catch (handlerError) {
+      console.error("[ADMIN ALIAS] Handler error:", handlerError);
+      console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
+      res.status(500).json({ 
+        ok: false, 
+        error: "internal_error", 
+        message: handlerError.message,
+        stack: handlerError.stack 
+      });
     }
   }
 );
@@ -12890,14 +12904,22 @@ app.post(
   requireAdminAuth,
   async (req, res) => {
     console.log("[ADMIN ALIAS] /admin/approve-doctor hit!");
+    console.log("[ADMIN ALIAS] req.admin:", req.admin);
+    console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
+    console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
+    console.log("[ADMIN ALIAS] req.body:", req.body);
+    
     try {
       const { patientId } = req.body || {};
+      console.log("[ADMIN ALIAS] Extracted patientId:", patientId);
 
       if (!patientId) {
+        console.log("[ADMIN ALIAS] Missing patientId");
         return res.status(400).json({ ok: false, error: "missing_patient_id" });
       }
 
       // Update doctor status to ACTIVE
+      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE...");
       const { data: updatedDoctor, error: updateError } = await supabase
         .from("patients")
         .update({ 
@@ -12907,11 +12929,14 @@ app.post(
         .select()
         .single();
 
+      console.log("[ADMIN ALIAS] Update result:", { updatedDoctor, error: updateError });
+
       if (updateError) {
-        console.error("[APPROVE DOCTOR] Update error:", updateError);
-        return res.status(500).json({ ok: false, error: "update_failed" });
+        console.error("[ADMIN ALIAS] Update error:", updateError);
+        return res.status(500).json({ ok: false, error: "update_failed", details: updateError });
       }
 
+      console.log("[ADMIN ALIAS] Sending success response");
       res.json({
         ok: true,
         message: "Doctor approved successfully",
@@ -12924,9 +12949,15 @@ app.post(
           clinicCode: updatedDoctor.clinic_code,
         },
       });
-    } catch (error) {
-      console.error("[APPROVE DOCTOR] Error:", error);
-      res.status(500).json({ ok: false, error: "internal_error" });
+    } catch (handlerError) {
+      console.error("[ADMIN ALIAS] Handler error:", handlerError);
+      console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
+      res.status(500).json({ 
+        ok: false, 
+        error: "internal_error", 
+        message: handlerError.message,
+        stack: handlerError.stack 
+      });
     }
   }
 );
