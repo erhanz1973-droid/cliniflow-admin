@@ -14,6 +14,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
+const { validate: isUUID } = require("uuid"); // 🔥 UUID VALIDATION
 const procedures = require("./shared/procedures");
 
 // Supabase client
@@ -13895,64 +13896,48 @@ app.post(
     console.log("[ADMIN ALIAS] req.body:", req.body);
     
     try {
-      const { doctorId } = req.body || {};
-      console.log("[ADMIN ALIAS] Extracted doctorId:", doctorId);
+      const { doctorId } = req.body;
 
-      // 🔥 UUID GUARD: Validate doctorId format (CRITICAL)
-      if (!doctorId || !doctorId.includes('-')) {
+      console.log('[APPROVE] doctorId:', doctorId);
+
+      // 🔐 EK KİLİT: HATALI ID'Yİ DAHA BAŞTA ENGELLE
+      if (!isUUID(doctorId)) {
         return res.status(400).json({
           ok: false,
           error: 'invalid_doctor_id',
-          message: 'doctorId must be UUID',
         });
       }
 
-      if (!doctorId) {
-        console.log("[ADMIN ALIAS] Missing doctorId");
-        return res.status(400).json({ ok: false, error: "missing_doctor_id" });
-      }
-
-      const clinicId = req.clinicId;
-
-      // 🔥 ÇİFT SCOPE: doctor + clinic
-      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
-      const { data: updatedDoctor, error: updateError } = await supabase
-        .from("doctors") // 🔥 FIX: Update DOCTORS table
-        .update({ 
-          status: "ACTIVE",
-          approved_at: new Date().toISOString(),
-        })
-        .eq("id", doctorId)          // ⬅️ TABLODA GERÇEKTEN VAR MI KONTROL ET
-        .eq("clinic_id", clinicId)   // ⬅️ ŞART
+      // 2️⃣ Supabase update'i sadece id kolonu ile yap
+      const { data, error } = await supabase
+        .from('doctors')
+        .update({ status: 'ACTIVE' })
+        .eq('id', doctorId)
         .select()
         .single();
 
-      console.log("[ADMIN ALIAS] Update result:", { updatedDoctor, error: updateError });
-
-      if (updateError) {
-        console.error("[ADMIN ALIAS] Update error:", updateError);
-        return res.status(500).json({ ok: false, error: "update_failed", details: updateError });
+      if (error) {
+        console.error('[APPROVE] Supabase error:', error);
+        return res.status(500).json({
+          ok: false,
+          error: 'update_failed',
+          details: error.message,
+        });
       }
 
-      if (!updatedDoctor) {
-        console.error("[ADMIN ALIAS] No doctor found with doctorId:", doctorId, "for clinic:", req.clinicCode);
-        return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
+      // 3️⃣ clinic_code ile asla filter yapma
+      // 4️⃣ doctor_id kolonu kullanma (yok)
+
+      // Eğer data === null gelirse → WHERE yanlış demektir
+      if (!data) {
+        console.error('[APPROVE] No doctor found with id:', doctorId);
+        return res.status(404).json({
+          ok: false,
+          error: 'doctor_not_found',
+        });
       }
 
-      console.log("[ADMIN ALIAS] Sending success response");
-      res.json({
-        ok: true,
-        approved: true,
-        message: "Doctor approved successfully",
-        doctor: {
-          doctorId: updatedDoctor.doctor_id || updatedDoctor.id,
-          name: updatedDoctor.name || updatedDoctor.full_name,
-          status: updatedDoctor.status,
-          clinicId: updatedDoctor.clinic_id,
-          clinicCode: updatedDoctor.clinic_code,
-        },
-        clinicCode: req.clinicCode,
-      });
+      res.json({ ok: true, doctor: data });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
       console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
