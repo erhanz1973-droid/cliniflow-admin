@@ -2930,8 +2930,8 @@ async function resolveDoctorForOtp({ email, phone }) {
   }
 
   return {
-    patient: foundDoctor,
-    patientId: foundDoctorId,
+    doctor: foundDoctor,
+    doctorId: foundDoctorId,
     email: resolvedEmail,
     phone: foundPhone,
     language: foundLanguage,
@@ -3755,8 +3755,186 @@ app.post("/api/register/doctor", async (req, res) => {
   }
 });
 
+// POST /auth/verify-otp-patient
+// PATIENTS ONLY - Clean separation
+app.post("/auth/verify-otp-patient", async (req, res) => {
+  try {
+    const { email, phone, otp, sessionId } = req.body || {};
+
+    // Strict parameter validation
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
+
+    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
+      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
+    }
+
+    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+    const otpCode = String(otp).trim();
+
+    // Validate OTP format (should be 6 digits)
+    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
+      return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
+    }
+
+    console.log(`[PATIENT OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+    
+    // 🔥 CLEAN SEPARATION: Resolve patient from PATIENTS table only
+    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
+    console.log(`[PATIENT OTP] Resolved patient data:`, resolved);
+    const resolvedEmail = resolved.email || emailNormalized;
+    console.log(`[PATIENT OTP] Using resolved email: "${resolvedEmail}"`);
+    
+    if (!resolvedEmail || !resolved.patientId) {
+      return res.status(404).json({
+        ok: false,
+        error: "patient_not_found",
+        message: "Bu email veya telefon ile kayıtlı hasta bulunamadı.",
+      });
+    }
+
+    // Get OTP data for this email
+    const otpData = await getOTPsForEmail(resolvedEmail);
+    console.log(`[PATIENT OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+    
+    if (!otpData) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "otp_not_found", 
+        message: "OTP kodu bulunamadı veya süresi dolmuş. Lütfen önce OTP isteyin." 
+      });
+    }
+    
+    // Check if already verified
+    if (otpData.verified) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_already_used", 
+        message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check if expired
+    const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    if (expiresAt < now()) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_expired", 
+        message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check attempts
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_max_attempts", 
+        message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Verify OTP
+    let isValid = false;
+    try {
+      const hashToUse = otpData.otp_hash;
+      if (!hashToUse) {
+        return res.status(500).json({ 
+          ok: false, 
+          error: "hash_missing", 
+          message: "OTP hash bulunamadı. Lütfen yeni bir OTP isteyin." 
+        });
+      }
+      
+      isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
+      console.log(`[PATIENT OTP] Verification result: ${isValid}`);
+    } catch (verifyError) {
+      console.error("[PATIENT OTP] Verification error:", verifyError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "verification_failed", 
+        message: "OTP doğrulanamadı. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    if (!isValid) {
+      incrementOTPAttempt(emailNormalized);
+      return res.status(401).json({ 
+        ok: false, 
+        error: "invalid_otp", 
+        message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    // OTP is valid - get patient data
+    const foundPatient = resolved.patient;
+    const foundPatientId = resolved.patientId;
+    const foundLanguage = resolved.language;
+    
+    if (!foundPatientId) {
+      return res.status(404).json({
+        ok: false,
+        error: "patient_not_found",
+        message: "Bu email ile kayıtlı hasta bulunamadı.",
+      });
+    }
+    
+    // Mark OTP as verified
+    markOTPVerified(emailNormalized);
+
+    const foundPhone = String(foundPatient?.phone || "").trim();
+    
+    // 🔥 CLEAN SEPARATION: Generate PATIENT JWT token with REQUIRED payload
+    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const token = jwt.sign(
+      { 
+        type: "patient", // 🔥 REQUIRED: type is PRIMARY routing key
+        patientId: foundPatientId, // 🔥 REQUIRED: patientId
+        role: "PATIENT", // 🔥 REQUIRED: role
+        email: emailNormalized || "",
+        language: foundLanguage,
+        ...(foundPhone ? { phone: foundPhone } : {}),
+      },
+      JWT_SECRET,
+      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+    );
+    
+    // Save token in legacy tokens.json
+    const tokens = readJson(TOK_FILE, {});
+    tokens[token] = {
+      type: "patient",
+      patientId: foundPatientId,
+      role: "PATIENT",
+      createdAt: now(),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      ...(foundPhone ? { phone: foundPhone } : {}),
+    };
+    writeJson(TOK_FILE, tokens);
+    
+    console.log(`[PATIENT OTP] OTP verified successfully for email ${emailNormalized} (PATIENT ${foundPatientId}), PATIENT token generated`);
+    
+    res.json({
+      ok: true,
+      type: "patient", // 🔥 REQUIRED: type for frontend routing
+      token,
+      patientId: foundPatientId,
+      role: "PATIENT",
+      status: foundPatient.status || "APPROVED",
+      name: foundPatient.name || "",
+      ...(foundPhone ? { phone: foundPhone } : {}),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
+    });
+  } catch (error) {
+    console.error("[PATIENT OTP] Verify OTP error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
 // POST /auth/verify-otp-doctor
-// Doctor-specific OTP verification endpoint - SEPARATE FROM PATIENT FLOW
+// DOCTORS ONLY - Clean separation
 app.post("/auth/verify-otp-doctor", async (req, res) => {
   try {
     const { email, phone, otp, sessionId } = req.body || {};
@@ -3780,13 +3958,13 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
 
     console.log(`[DOCTOR OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
     
-    // 🔥 FIX: Resolve doctor from DOCTORS table only
+    // 🔥 CLEAN SEPARATION: Resolve doctor from DOCTORS table only
     const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
     console.log(`[DOCTOR OTP] Resolved doctor data:`, resolved);
     const resolvedEmail = resolved.email || emailNormalized;
     console.log(`[DOCTOR OTP] Using resolved email: "${resolvedEmail}"`);
     
-    if (!resolvedEmail || !resolved.patientId) {
+    if (!resolvedEmail || !resolved.doctorId) {
       return res.status(404).json({
         ok: false,
         error: "doctor_not_found",
@@ -3867,8 +4045,8 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
     }
     
     // OTP is valid - get doctor data
-    const foundDoctor = resolved.patient;
-    const foundDoctorId = resolved.patientId;
+    const foundDoctor = resolved.doctor;
+    const foundDoctorId = resolved.doctorId;
     const foundLanguage = resolved.language;
     
     if (!foundDoctorId) {
@@ -3884,15 +4062,15 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
 
     const foundPhone = String(foundDoctor?.phone || "").trim();
     
-    // 🔥 FIX: Generate DOCTOR JWT token with REQUIRED payload
+    // 🔥 CLEAN SEPARATION: Generate DOCTOR JWT token with REQUIRED payload
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
     const token = jwt.sign(
       { 
-        doctorId: foundDoctorId, // 🔥 REQUIRED: doctorId (not patientId)
+        type: "doctor", // 🔥 REQUIRED: type is PRIMARY routing key
+        doctorId: foundDoctorId, // 🔥 REQUIRED: doctorId
         clinicId: foundDoctor.clinic_id, // 🔥 REQUIRED: clinicId
-        role: "DOCTOR", // 🔥 REQUIRED: role: "DOCTOR"
+        role: "DOCTOR", // 🔥 REQUIRED: role
         status: foundDoctor.status || "PENDING", // 🔥 REQUIRED: status
-        type: "doctor", // 🔥 REQUIRED: type: "doctor"
         email: emailNormalized || "",
         language: foundLanguage,
         ...(foundPhone ? { phone: foundPhone } : {}),
@@ -3904,7 +4082,8 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
     // Save token in legacy tokens.json
     const tokens = readJson(TOK_FILE, {});
     tokens[token] = {
-      doctorId: foundDoctorId, // 🔥 Use doctorId
+      type: "doctor",
+      doctorId: foundDoctorId,
       role: "DOCTOR",
       status: foundDoctor.status || "PENDING",
       createdAt: now(),
@@ -3914,13 +4093,14 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (doctor ${foundDoctorId}), DOCTOR token generated`);
+    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (DOCTOR ${foundDoctorId}), DOCTOR token generated`);
     
     res.json({
       ok: true,
+      type: "doctor", // 🔥 REQUIRED: type for frontend routing
       token,
-      doctorId: foundDoctorId, // 🔥 Return doctorId (not patientId)
-      role: "DOCTOR", // 🔥 REQUIRED: role: "DOCTOR"
+      doctorId: foundDoctorId,
+      role: "DOCTOR",
       status: foundDoctor.status || "PENDING",
       name: foundDoctor.name || "",
       ...(foundPhone ? { phone: foundPhone } : {}),
@@ -3934,246 +4114,141 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
   }
 });
 
-// POST /auth/verify-otp
-// OTP verification endpoint - FIXED VERSION v2.0
-app.post("/auth/verify-otp", async (req, res) => {
+// POST /api/admin/verify-otp
+// ADMIN ONLY - Clean separation
+app.post("/api/admin/verify-otp", async (req, res) => {
   try {
-    const { email, phone, otp, sessionId } = req.body || {};
+    const { clinicCode, email, otp } = req.body || {};
 
-    // Strict parameter validation
-    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required", message: "Klinik kodu gereklidir." });
+    }
+    
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required", message: "Email adresi gereklidir." });
+    }
+    
+    if (!otp || !String(otp).trim()) {
       return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
     }
 
-    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
-      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
-    }
-
-    // Additional validation to prevent undefined parameters
-    if (otp === undefined || (email === undefined && phone === undefined)) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "missing_parameters", 
-        message: "Missing required parameters for OTP verification" 
-      });
-    }
-
-    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+    const code = String(clinicCode).trim().toUpperCase();
+    const emailNormalized = String(email).trim().toLowerCase();
     const otpCode = String(otp).trim();
 
-    // Validate OTP format (should be 6 digits)
-    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
-      return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
+    // Find clinic
+    let clinic = null;
+    if (isSupabaseEnabled()) {
+      clinic = await getClinicByCode(code);
+    } else {
+      clinic = readJson(CLINIC_FILE, []).find(c => String(c.clinicCode || "").toUpperCase() === code);
     }
 
-    console.log(`[OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
-    
-    // 🔥 FIX: /auth/verify-otp is PATIENTS ONLY - no doctor checking
-    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
-    console.log(`[OTP] Resolved patient data:`, resolved);
-    const resolvedEmail = resolved.email || emailNormalized;
-    console.log(`[OTP] Using resolved email: "${resolvedEmail}"`);
-    
-    if (!resolvedEmail || !resolved.patientId) {
-      return res.status(404).json({
-        ok: false,
-        error: "patient_not_found",
-        message: "Bu email veya telefon ile kayıtlı hasta bulunamadı.",
+    if (!clinic) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found", message: "Klinik bulunamadı." });
+    }
+
+    // Review Mode Bypass: Accept static OTP for test@clinifly.net
+    if (REVIEW_MODE && emailNormalized === "test@clinifly.net" && otp === "123456") {
+      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Static OTP bypass for test@clinifly.net`);
+      
+      // 🔥 CLEAN SEPARATION: Generate ADMIN JWT token with REQUIRED payload
+      const token = jwt.sign(
+        { 
+          type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+          clinicId: clinic.id, // 🔥 REQUIRED: clinicId
+          clinicCode: clinic.clinic_code,
+          email: emailNormalized,
+          role: "ADMIN", // 🔥 REQUIRED: role
+          otpVerified: true,
+          reviewMode: true
+        },
+        JWT_SECRET,
+        { expiresIn: JWT_EXPIRES_IN }
+      );
+
+      console.log(`[ADMIN OTP] ✅ REVIEW MODE: Login successful for ${clinic.clinic_code}`);
+
+      return res.json({
+        ok: true,
+        type: "admin", // 🔥 REQUIRED: type for frontend routing
+        token,
+        clinicId: clinic.id,
+        clinicCode: clinic.clinic_code,
+        email: emailNormalized,
+        message: "Giriş başarılı (Review Mode).",
+        reviewMode: true
       });
     }
 
-    console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    console.log(`[OTP] Email validation check: "${resolvedEmail}"`);
-    console.log(`[OTP] Regex test result: ${emailRegex.test(resolvedEmail)}`);
-    
-    if (!emailRegex.test(resolvedEmail)) {
-      console.log(`[OTP] Email validation failed for: "${resolvedEmail}"`);
-      return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
-    }
-
-    // Get OTP data for this email
-    const otpData = await getOTPsForEmail(resolvedEmail);
-    console.log(`[OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
-    
-    if (otpData) {
-      console.log(`[OTP] OTP data structure:`, {
-        hasHashedOTP: !!otpData.otp_hash,  // Fixed: use otp_hash instead of hashedOTP
-        hasOtpHash: !!otpData.otp_hash,
-        attempts: otpData.attempts,
-        expiresAt: otpData.expires_at,  // Fixed: use expires_at instead of expiresAt
-        verified: otpData.verified
-      });
-    }
-    
+    // Verify OTP
+    const otpData = await getOTPsForEmail(emailNormalized);
     if (!otpData) {
-      console.log(`[OTP] OTP not found for email: ${resolvedEmail}`);
-      return res.status(404).json({ 
-        ok: false, 
-        error: "otp_not_found", 
-        message: "OTP kodu bulunamadı veya süresi dolmuş. Lütfen önce OTP isteyin." 
-      });
+      return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP bulunamadı veya süresi dolmuş." });
     }
-    
-    // Check if already verified
-    console.log(`[OTP] Checking if already verified: ${otpData.verified}`);
-    if (otpData.verified) {
-      console.log(`[OTP] OTP already used, returning error`);
-      return res.status(400).json({ 
-        ok: false, 
-        error: "otp_already_used", 
-        message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
-      });
-    }
-    
-    // Check if expired
-    const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);  // Fixed: use expires_at
-    console.log(`[OTP] Checking expiration: expiresAt=${expiresAt}, now=${now()}`);
-    if (expiresAt < now()) {
-      console.log(`[OTP] OTP expired: expiresAt=${expiresAt}, now=${now()}`);
-      return res.status(400).json({ 
-        ok: false, 
-        error: "otp_expired", 
-        message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
-      });
-    }
-    
-    // Check attempts
-    console.log(`[OTP] Checking attempts: ${otpData.attempts} >= ${OTP_MAX_ATTEMPTS}`);
-    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
-      console.log(`[OTP] Max attempts reached`);
-      return res.status(400).json({ 
-        ok: false, 
-        error: "otp_max_attempts", 
-        message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
-      });
-    }
-    
-    console.log(`[OTP] All checks passed, proceeding to verification`);
-    
-    // Final validation before OTP verification
-    console.log(`[OTP] Final validation check: otpData=${!!otpData}, hashedOTP=${!!otpData.otp_hash}, otp_hash=${!!otpData.otp_hash}`);
-    
-    if (!otpData || !otpData.otp_hash) {  // Fixed: only check otp_hash
-      console.log(`[OTP] Final validation failed - no hash found`);
-      return res.status(400).json({ 
-        ok: false, 
-        error: "otp_data_missing", 
-        message: "OTP verisi bulunamadı. Lütfen yeni bir OTP isteyin." 
-      });
-    }
-    
-    console.log(`[OTP] Final validation passed`);
 
-    // Verify OTP with additional safety checks
-    let isValid = false;
-    try {
-      const hashToUse = otpData.otp_hash;  // Fixed: only use otp_hash
-      console.log(`[OTP] Using hash field:`, hashToUse ? "found" : "missing");
-      
-      if (!hashToUse) {
-        console.error(`[OTP] No hash found in OTP data`);
-        return res.status(500).json({ 
-          ok: false, 
-          error: "hash_missing", 
-          message: "OTP hash bulunamadı. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      console.log(`[OTP] About to call verifyOTP with otp="${String(otpCode).trim()}" and hash="${hashToUse.substring(0, 10)}..."`);
-      
-      // Debug: Test hash generation with current OTP
-      const testHash = await bcrypt.hash(String(otpCode).trim(), 10);
-      console.log(`[OTP] Test hash generated: ${testHash.substring(0, 10)}...`);
-      const testResult = await bcrypt.compare(String(otpCode).trim(), testHash);
-      console.log(`[OTP] Test verification result: ${testResult}`);
-      
-      isValid = await verifyOTP(String(otpCode).trim(), hashToUse);  // Standardize: String + trim
-      console.log(`[OTP] Verification result: ${isValid}`);
-    } catch (verifyError) {
-      console.error("[OTP] Verification error:", verifyError);
-      console.error("[OTP] Verification error stack:", verifyError.stack);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "verification_failed", 
-        message: "OTP doğrulanamadı. Lütfen tekrar deneyin." 
-      });
+    if (otpData.verified || otpData.expiresAt < now()) {
+      return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP süresi dolmuş." });
     }
-    
-    if (!isValid) {
-      // Increment attempt count (email-based)
-      incrementOTPAttempt(emailNormalized);
-      
-      return res.status(401).json({ 
+
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ ok: false, error: "otp_max_attempts", message: "Maksimum deneme sayısına ulaşıldı." });
+    }
+
+    const isValidOTP = await verifyOTP(otpCode, otpData.otp_hash || otpData.hashedOTP);
+    if (!isValidOTP) {
+      await incrementOTPAttempt(emailNormalized);
+      const remainingAttempts = OTP_MAX_ATTEMPTS - (otpData.attempts + 1);
+      return res.status(400).json({ 
         ok: false, 
         error: "invalid_otp", 
-        message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+        message: `Geçersiz OTP kodu. Kalan deneme: ${remainingAttempts}` 
       });
     }
-    
-    // OTP is valid - use resolved user data
-    const foundUser = resolved.patient;
-    const foundUserId = resolved.patientId;
-    const foundLanguage = resolved.language;
-    if (!foundUserId) {
-      return res.status(404).json({
-        ok: false,
-        error: "user_not_found",
-        message: "Bu email ile kayıtlı kullanıcı bulunamadı.",
-      });
-    }
-    
-    // Mark OTP as verified (by email - OTP is stored by email)
-    markOTPVerified(emailNormalized);
 
-    const foundPhone = String(foundUser?.phone || "").trim();
-    
-    // 🔥 FIX: Generate PATIENT JWT token (PATIENTS ONLY)
-    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    // Mark OTP as verified
+    await markOTPVerified(emailNormalized);
+
+    // 🔥 CLEAN SEPARATION: Generate ADMIN JWT token with REQUIRED payload
     const token = jwt.sign(
       { 
-        patientId: foundUserId, // 🔥 PATIENT: patientId
-        email: emailNormalized || "",
-        language: foundLanguage,
-        ...(foundPhone ? { phone: foundPhone } : {}),
-        role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
-        type: "patient", // 🔥 PATIENT: type: "patient"
+        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+        clinicId: clinic.id, // 🔥 REQUIRED: clinicId
+        clinicCode: clinic.clinic_code,
+        email: emailNormalized,
+        role: "ADMIN", // 🔥 REQUIRED: role
+        otpVerified: true
       },
       JWT_SECRET,
-      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+      { expiresIn: JWT_EXPIRES_IN }
     );
-    
-    // Also save token in legacy tokens.json for backward compatibility
-    const tokens = readJson(TOK_FILE, {});
-    tokens[token] = {
-      patientId: foundUserId, // 🔥 PATIENT: patientId
-      role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
-      createdAt: now(),
-      email: emailNormalized || "",
-      language: foundLanguage,
-      ...(foundPhone ? { phone: foundPhone } : {}),
-    };
-    writeJson(TOK_FILE, tokens);
-    
-    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (PATIENT ${foundUserId}), PATIENT token generated`);
-    
+
+    console.log(`[ADMIN OTP] ✅ OTP verification successful for ${clinic.clinic_code}`);
+
     res.json({
       ok: true,
+      type: "admin", // 🔥 REQUIRED: type for frontend routing
       token,
-      patientId: foundUserId, // 🔥 PATIENT: patientId
-      role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
-      status: foundUser.status || "PENDING",
-      name: foundUser.name || "",
-      ...(foundPhone ? { phone: foundPhone } : {}),
-      email: emailNormalized || "",
-      language: foundLanguage,
-      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
+      clinicId: clinic.id,
+      clinicCode: clinic.clinic_code,
+      email: emailNormalized,
+      message: "Giriş başarılı."
     });
+
   } catch (error) {
-    console.error("[OTP] Verify OTP error:", error);
-    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+    console.error("[ADMIN OTP] Verify error:", error);
+    res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
   }
+});
+
+// DEPRECATED: /auth/verify-otp - SHARED ENDPOINT REMOVED
+// This endpoint is REMOVED to enforce clean separation
+app.post("/auth/verify-otp", async (req, res) => {
+  return res.status(410).json({ 
+    ok: false, 
+    error: "endpoint_deprecated", 
+    message: "This endpoint is deprecated. Use /auth/verify-otp-patient or /auth/verify-otp-doctor instead." 
+  });
 });
 
 // ================== PATIENT LOGIN ==================
