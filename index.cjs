@@ -1786,6 +1786,7 @@ app.post("/api/register", async (req, res) => {
       clinic_id: supabaseClinicId,
       status: "PENDING",
       language: patientLanguage,
+      role: (req.body?.role || "PATIENT").toUpperCase(), // 🔥 NORMALIZE ROLE TO UPPERCASE
       ...(phoneNormalized ? { phone: phoneNormalized } : {}),
     };
     const { data, error } = await supabase
@@ -2392,6 +2393,7 @@ app.post("/api/patient/register", async (req, res) => {
       clinic_id: supabaseClinicId,
       status: "PENDING",
       language: patientLanguage,
+      role: (req.body?.role || "PATIENT").toUpperCase(), // 🔥 NORMALIZE ROLE TO UPPERCASE
       ...(phoneNormalized ? { phone: phoneNormalized } : {}),
     };
     const { data, error } = await supabase
@@ -2809,7 +2811,7 @@ function requireToken(req, res, next) {
         const pid = decoded?.patientId;
         if (pid) {
           req.patientId = pid;
-          req.role = decoded?.role || decoded?.status || "PENDING";
+          req.role = (decoded?.role || decoded?.status || "PENDING").toUpperCase(); // 🔥 NORMALIZE ROLE TO UPPERCASE
           req.tokenType = "jwt_patient";
           return next();
         }
@@ -2828,7 +2830,7 @@ function requireToken(req, res, next) {
   }
 
   req.patientId = t.patientId;
-  req.role = t.role || "PENDING";
+  req.role = (t.role || "PENDING").toUpperCase(); // 🔥 NORMALIZE ROLE TO UPPERCASE
   req.tokenType = "legacy_patient";
   next();
 }
