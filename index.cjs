@@ -2850,7 +2850,7 @@ app.get("/api/me", requireToken, (req, res) => {
   });
 });
 
-// ================== EMAIL-ONLY OTP AUTHENTICATION ==================
+// ================== DOCTOR-ONLY OTP AUTHENTICATION ==================
 async function resolveDoctorForOtp({ email, phone }) {
   const emailNormalized = email ? String(email).trim().toLowerCase() : "";
   const phoneTrimmed = phone ? String(phone).trim() : "";
@@ -2864,21 +2864,20 @@ async function resolveDoctorForOtp({ email, phone }) {
   let foundLanguage = "en";
   let resolvedEmail = emailNormalized || "";
 
-  const selectColumns = "id, patient_id, email, phone, status, name, language, role";
+  const selectColumns = "id, doctor_id, email, phone, status, name, language, clinic_id"; // 🔥 DOCTOR TABLE FIELDS
 
   if (isSupabaseEnabled()) {
     try {
-      // 🔥 FIX: Only look for doctors with role="DOCTOR"
+      // 🔥 FIX: Query DOCTORS table only
       if (emailNormalized) {
         const { data: row, error: pErr } = await supabase
-          .from("patients")
+          .from("doctors") // 🔥 DOCTORS TABLE
           .select(selectColumns)
           .eq("email", emailNormalized)
-          .eq("role", "DOCTOR") // 🔥 FIX: Only doctors
           .single();
         if (!pErr && row) {
           foundDoctor = row;
-          console.log(`[DOCTOR OTP] Found doctor with role: ${row.role}`);
+          console.log(`[DOCTOR OTP] Found doctor in DOCTORS table:`, row);
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[DOCTOR OTP] Supabase doctor lookup (email) failed:", {
             message: pErr.message,
@@ -2890,14 +2889,13 @@ async function resolveDoctorForOtp({ email, phone }) {
 
       if (!foundDoctor && phoneNormalized) {
         const { data: row, error: pErr } = await supabase
-          .from("patients")
+          .from("doctors") // 🔥 DOCTORS TABLE
           .select(selectColumns)
           .eq("phone", phoneNormalized)
-          .eq("role", "DOCTOR") // 🔥 FIX: Only doctors
           .single();
         if (!pErr && row) {
           foundDoctor = row;
-          console.log(`[DOCTOR OTP] Found doctor by phone with role: ${row.role}`);
+          console.log(`[DOCTOR OTP] Found doctor by phone in DOCTORS table:`, row);
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[DOCTOR OTP] Supabase doctor lookup (phone) failed:", {
             message: pErr.message,
@@ -2918,7 +2916,7 @@ async function resolveDoctorForOtp({ email, phone }) {
   }
 
   if (foundDoctor) {
-    foundDoctorId = foundDoctor.patient_id || foundDoctor.id;
+    foundDoctorId = foundDoctor.doctor_id || foundDoctor.id; // 🔥 DOCTOR: use doctor_id
     foundPhone = foundDoctor.phone || phoneNormalized;
     foundLanguage = foundDoctor.language || "en";
     resolvedEmail = foundDoctor.email || emailNormalized;
@@ -3547,7 +3545,7 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
 });
 
 // POST /api/register/doctor
-// Real doctor registration endpoint
+// Real doctor registration endpoint - INSERTS INTO DOCTORS TABLE
 app.post("/api/register/doctor", async (req, res) => {
   try {
     const { 
@@ -3640,21 +3638,20 @@ app.post("/api/register/doctor", async (req, res) => {
       return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
     }
 
-    // Check if doctor already exists
+    // 🔥 FIX: Check if doctor already exists in DOCTORS table
     let existingDoctorId = null;
     if (isSupabaseEnabled()) {
       try {
         const { data: existing, error: e } = await supabase
-          .from("patients")
-          .select("id, patient_id, email")
+          .from("doctors")
+          .select("id, doctor_id, email")
           .eq("email", emailNormalized)
-          .eq("role", "DOCTOR")
           .limit(1)
           .maybeSingle();
         
         if (!e && existing) {
-          existingDoctorId = existing.patient_id || existing.id;
-          console.log("[DOCTOR REGISTER] Doctor already exists:", existingDoctorId);
+          existingDoctorId = existing.doctor_id || existing.id;
+          console.log("[DOCTOR REGISTER] Doctor already exists in doctors table:", existingDoctorId);
         }
       } catch (err) {
         console.error("[DOCTOR REGISTER] Error checking existing doctor:", err?.message || err);
@@ -3672,17 +3669,16 @@ app.post("/api/register/doctor", async (req, res) => {
     // Generate doctor ID
     const doctorId = 'd_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-    // Insert doctor into Supabase
+    // 🔥 FIX: Insert doctor into DOCTORS table (not patients)
     if (isSupabaseEnabled()) {
       try {
         const doctorPayload = {
-          patient_id: doctorId,
+          doctor_id: doctorId,
           email: emailNormalized,
           name: String(name || ""),
           clinic_id: supabaseClinicId,
           clinic_code: code,
           status: "PENDING",
-          role: "DOCTOR",
           language: "tr",
           phone: phoneNormalized,
           license_number: licenseNumber,
@@ -3693,16 +3689,15 @@ app.post("/api/register/doctor", async (req, res) => {
           languages: languages || [],
         };
 
-        console.log("[DOCTOR REGISTER] Inserting doctor into Supabase:", {
-          patient_id: doctorPayload.patient_id,
+        console.log("[DOCTOR REGISTER] Inserting doctor into DOCTORS table:", {
+          doctor_id: doctorPayload.doctor_id,
           email: doctorPayload.email,
-          role: doctorPayload.role,
           clinic_code: doctorPayload.clinic_code,
           status: doctorPayload.status,
         });
 
         const { data, error } = await supabase
-          .from("patients")
+          .from("doctors")
           .insert(doctorPayload)
           .select()
           .single();
@@ -3716,7 +3711,7 @@ app.post("/api/register/doctor", async (req, res) => {
           });
         }
 
-        console.log("[DOCTOR REGISTER] Doctor registered successfully:", data);
+        console.log("[DOCTOR REGISTER] Doctor registered successfully in DOCTORS table:", data);
         
         res.json({
           ok: true,
@@ -3750,6 +3745,185 @@ app.post("/api/register/doctor", async (req, res) => {
       error: "internal_error", 
       message: "Sunucu hatası." 
     });
+  }
+});
+
+// POST /auth/verify-otp-doctor
+// Doctor-specific OTP verification endpoint - SEPARATE FROM PATIENT FLOW
+app.post("/auth/verify-otp-doctor", async (req, res) => {
+  try {
+    const { email, phone, otp, sessionId } = req.body || {};
+
+    // Strict parameter validation
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
+    }
+
+    if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
+      return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
+    }
+
+    const emailNormalized = email ? String(email).trim().toLowerCase() : "";
+    const otpCode = String(otp).trim();
+
+    // Validate OTP format (should be 6 digits)
+    if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
+      return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
+    }
+
+    console.log(`[DOCTOR OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+    
+    // 🔥 FIX: Resolve doctor from DOCTORS table only
+    const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
+    console.log(`[DOCTOR OTP] Resolved doctor data:`, resolved);
+    const resolvedEmail = resolved.email || emailNormalized;
+    console.log(`[DOCTOR OTP] Using resolved email: "${resolvedEmail}"`);
+    
+    if (!resolvedEmail || !resolved.patientId) {
+      return res.status(404).json({
+        ok: false,
+        error: "doctor_not_found",
+        message: "Bu email veya telefon ile kayıtlı doktor bulunamadı.",
+      });
+    }
+
+    // Get OTP data for this email
+    const otpData = await getOTPsForEmail(resolvedEmail);
+    console.log(`[DOCTOR OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+    
+    if (!otpData) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "otp_not_found", 
+        message: "OTP kodu bulunamadı veya süresi dolmuş. Lütfen önce OTP isteyin." 
+      });
+    }
+    
+    // Check if already verified
+    if (otpData.verified) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_already_used", 
+        message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check if expired
+    const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
+    if (expiresAt < now()) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_expired", 
+        message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Check attempts
+    if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "otp_max_attempts", 
+        message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+      });
+    }
+    
+    // Verify OTP
+    let isValid = false;
+    try {
+      const hashToUse = otpData.otp_hash;
+      if (!hashToUse) {
+        return res.status(500).json({ 
+          ok: false, 
+          error: "hash_missing", 
+          message: "OTP hash bulunamadı. Lütfen yeni bir OTP isteyin." 
+        });
+      }
+      
+      isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
+      console.log(`[DOCTOR OTP] Verification result: ${isValid}`);
+    } catch (verifyError) {
+      console.error("[DOCTOR OTP] Verification error:", verifyError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "verification_failed", 
+        message: "OTP doğrulanamadı. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    if (!isValid) {
+      incrementOTPAttempt(emailNormalized);
+      return res.status(401).json({ 
+        ok: false, 
+        error: "invalid_otp", 
+        message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+      });
+    }
+    
+    // OTP is valid - get doctor data
+    const foundDoctor = resolved.patient;
+    const foundDoctorId = resolved.patientId;
+    const foundLanguage = resolved.language;
+    
+    if (!foundDoctorId) {
+      return res.status(404).json({
+        ok: false,
+        error: "doctor_not_found",
+        message: "Bu email ile kayıtlı doktor bulunamadı.",
+      });
+    }
+    
+    // Mark OTP as verified
+    markOTPVerified(emailNormalized);
+
+    const foundPhone = String(foundDoctor?.phone || "").trim();
+    
+    // 🔥 FIX: Generate DOCTOR JWT token with REQUIRED payload
+    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const token = jwt.sign(
+      { 
+        doctorId: foundDoctorId, // 🔥 REQUIRED: doctorId (not patientId)
+        clinicId: foundDoctor.clinic_id, // 🔥 REQUIRED: clinicId
+        role: "DOCTOR", // 🔥 REQUIRED: role: "DOCTOR"
+        status: foundDoctor.status || "PENDING", // 🔥 REQUIRED: status
+        type: "doctor", // 🔥 REQUIRED: type: "doctor"
+        email: emailNormalized || "",
+        language: foundLanguage,
+        ...(foundPhone ? { phone: foundPhone } : {}),
+      },
+      JWT_SECRET,
+      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+    );
+    
+    // Save token in legacy tokens.json
+    const tokens = readJson(TOK_FILE, {});
+    tokens[token] = {
+      doctorId: foundDoctorId, // 🔥 Use doctorId
+      role: "DOCTOR",
+      status: foundDoctor.status || "PENDING",
+      createdAt: now(),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      ...(foundPhone ? { phone: foundPhone } : {}),
+    };
+    writeJson(TOK_FILE, tokens);
+    
+    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (doctor ${foundDoctorId}), DOCTOR token generated`);
+    
+    res.json({
+      ok: true,
+      token,
+      doctorId: foundDoctorId, // 🔥 Return doctorId (not patientId)
+      role: "DOCTOR", // 🔥 REQUIRED: role: "DOCTOR"
+      status: foundDoctor.status || "PENDING",
+      name: foundDoctor.name || "",
+      ...(foundPhone ? { phone: foundPhone } : {}),
+      email: emailNormalized || "",
+      language: foundLanguage,
+      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
+    });
+  } catch (error) {
+    console.error("[DOCTOR OTP] Verify OTP error:", error);
+    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
 
@@ -3787,34 +3961,19 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     console.log(`[OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
     
-    // 🔥 FIX: Check if user is doctor or patient first
-    const doctorResolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
-    const patientResolved = await resolvePatientForOtp({ email: emailNormalized, phone });
-    
-    let resolved = null;
-    let userType = null;
-    
-    if (doctorResolved.patientId) {
-      resolved = doctorResolved;
-      userType = "DOCTOR";
-      console.log(`[OTP] Found DOCTOR user:`, doctorResolved);
-    } else if (patientResolved.patientId) {
-      resolved = patientResolved;
-      userType = "PATIENT";
-      console.log(`[OTP] Found PATIENT user:`, patientResolved);
-    }
-    
-    if (!resolved || !resolved.patientId) {
-      return res.status(404).json({
-        ok: false,
-        error: "user_not_found",
-        message: "Bu email veya telefon ile kayıtlı kullanıcı bulunamadı.",
-      });
-    }
-    
-    console.log(`[OTP] User type determined: ${userType}`);
+    // 🔥 FIX: /auth/verify-otp is PATIENTS ONLY - no doctor checking
+    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
+    console.log(`[OTP] Resolved patient data:`, resolved);
     const resolvedEmail = resolved.email || emailNormalized;
     console.log(`[OTP] Using resolved email: "${resolvedEmail}"`);
+    
+    if (!resolvedEmail || !resolved.patientId) {
+      return res.status(404).json({
+        ok: false,
+        error: "patient_not_found",
+        message: "Bu email veya telefon ile kayıtlı hasta bulunamadı.",
+      });
+    }
 
     console.log(`[OTP] Verify OTP request: email=${resolvedEmail}, otp=${otpCode}`);
 
@@ -3963,16 +4122,16 @@ app.post("/auth/verify-otp", async (req, res) => {
 
     const foundPhone = String(foundUser?.phone || "").trim();
     
-    // 🔥 FIX: Generate role-aware JWT token
+    // 🔥 FIX: Generate PATIENT JWT token (PATIENTS ONLY)
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
     const token = jwt.sign(
       { 
-        patientId: foundUserId,
+        patientId: foundUserId, // 🔥 PATIENT: patientId
         email: emailNormalized || "",
         language: foundLanguage,
         ...(foundPhone ? { phone: foundPhone } : {}),
-        role: userType, // 🔥 FIX: Use determined user type (DOCTOR/PATIENT)
-        type: userType.toLowerCase(), // 🔥 FIX: Set type based on user type
+        role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
+        type: "patient", // 🔥 PATIENT: type: "patient"
       },
       JWT_SECRET,
       { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
@@ -3981,8 +4140,8 @@ app.post("/auth/verify-otp", async (req, res) => {
     // Also save token in legacy tokens.json for backward compatibility
     const tokens = readJson(TOK_FILE, {});
     tokens[token] = {
-      patientId: foundUserId,
-      role: userType, // 🔥 FIX: Use actual user type
+      patientId: foundUserId, // 🔥 PATIENT: patientId
+      role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
       createdAt: now(),
       email: emailNormalized || "",
       language: foundLanguage,
@@ -3990,13 +4149,13 @@ app.post("/auth/verify-otp", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (${userType} ${foundUserId}), token generated with role: ${userType}`);
+    console.log(`[OTP] OTP verified successfully for email ${emailNormalized} (PATIENT ${foundUserId}), PATIENT token generated`);
     
     res.json({
       ok: true,
       token,
-      patientId: foundUserId,
-      role: userType, // 🔥 FIX: Include actual user type in response
+      patientId: foundUserId, // 🔥 PATIENT: patientId
+      role: "PATIENT", // 🔥 PATIENT: role: "PATIENT"
       status: foundUser.status || "PENDING",
       name: foundUser.name || "",
       ...(foundPhone ? { phone: foundPhone } : {}),
@@ -13358,16 +13517,15 @@ app.get(
     console.log("[ADMIN ALIAS] Authorization:", req.headers.authorization ? "present" : "missing");
     
     try {
-      // Get all doctor applications scoped to this clinic
-      console.log("[ADMIN ALIAS] Querying doctor applications for clinic:", req.clinicCode);
+      // Get all doctor applications from DOCTORS table scoped to this clinic
+      console.log("[ADMIN ALIAS] Querying doctor applications from DOCTORS table for clinic:", req.clinicCode);
       
       // Log the exact query being executed
       const query = supabase
-        .from("patients")
+        .from("doctors") // 🔥 FIX: Query DOCTORS table
         .select("*")
-        .eq("role", "DOCTOR")
         .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER
-        .in("status", ["PENDING", "ACTIVE"])
+        .in("status", ["PENDING", "ACTIVE"]) // 🔥 STATUS FILTER
         .order("created_at", { ascending: false });
       
       console.log("[ADMIN ALIAS] Supabase query built with clinic_code:", req.clinicCode);
@@ -13431,17 +13589,16 @@ app.post(
       }
 
       // Update doctor status to ACTIVE, scoped to this clinic
-      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
-      const { data: updatedDoctor, error: updateError } = await supabase
-        .from("patients")
-        .update({ 
-          status: "ACTIVE"
-        })
-        .eq("patient_id", patientId)
-        .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER - only approve doctors from this clinic
-        .eq("role", "DOCTOR") // 🔥 ROLE FILTER - only approve doctors
-        .select()
-        .single();
+    console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
+    const { data: updatedDoctor, error: updateError } = await supabase
+      .from("doctors") // 🔥 FIX: Update DOCTORS table
+      .update({ 
+        status: "ACTIVE"
+      })
+      .eq("doctor_id", patientId) // 🔥 FIX: Use doctor_id
+      .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER - only approve doctors from this clinic
+      .select()
+      .single();
 
       console.log("[ADMIN ALIAS] Update result:", { updatedDoctor, error: updateError });
 
@@ -13451,24 +13608,23 @@ app.post(
       }
 
       if (!updatedDoctor) {
-        console.error("[ADMIN ALIAS] No doctor found with patientId:", patientId, "for clinic:", req.clinicCode);
-        return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
-      }
+      console.error("[ADMIN ALIAS] No doctor found with doctorId:", patientId, "for clinic:", req.clinicCode);
+      return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
+    }
 
-      console.log("[ADMIN ALIAS] Sending success response");
-      res.json({
-        ok: true,
-        message: "Doctor approved successfully",
-        doctor: {
-          patientId: updatedDoctor.patient_id,
-          name: updatedDoctor.name,
-          role: updatedDoctor.role,
-          status: updatedDoctor.status,
-          clinicId: updatedDoctor.clinic_id,
-          clinicCode: updatedDoctor.clinic_code,
-        },
-        clinicCode: req.clinicCode,
-      });
+    console.log("[ADMIN ALIAS] Sending success response");
+    res.json({
+      ok: true,
+      message: "Doctor approved successfully",
+      doctor: {
+        doctorId: updatedDoctor.doctor_id, // 🔥 FIX: Use doctor_id
+        name: updatedDoctor.name,
+        status: updatedDoctor.status,
+        clinicId: updatedDoctor.clinic_id,
+        clinicCode: updatedDoctor.clinic_code,
+      },
+      clinicCode: req.clinicCode,
+    });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
       console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
