@@ -14,7 +14,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
-const { validate: isUUID } = require("uuid"); // 🔥 UUID VALIDATION
+// 🔥 NATIVE CRYPTO - NO EXTERNAL DEPS
+const { randomUUID } = require("crypto");
 const procedures = require("./shared/procedures");
 
 // Supabase client
@@ -431,7 +432,8 @@ if (!fs.existsSync(REF_FILE)) {
 }
 
 const now = () => Date.now();
-const rid = (p) => p + "_" + crypto.randomBytes(6).toString("hex");
+// 🔥 NATIVE CRYPTO - NO EXTERNAL DEPS
+const rid = (p) => p + "_" + randomUUID();
 const makeToken = () => "t_" + crypto.randomBytes(10).toString("base64url");
 
 // ================== PATIENT LANGUAGE ==================
