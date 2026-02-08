@@ -12864,19 +12864,31 @@ app.get(
     console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
     console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
     console.log("[ADMIN ALIAS] req.clinicId:", req.clinicId);
+    console.log("[ADMIN ALIAS] Headers:", Object.keys(req.headers));
+    console.log("[ADMIN ALIAS] Authorization:", req.headers.authorization ? "present" : "missing");
     
     try {
       // Get all doctor applications scoped to this clinic
       console.log("[ADMIN ALIAS] Querying doctor applications for clinic:", req.clinicCode);
-      const { data: doctors, error } = await supabase
+      
+      // Log the exact query being executed
+      const query = supabase
         .from("patients")
         .select("*")
         .eq("role", "DOCTOR")
         .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER
         .in("status", ["PENDING", "ACTIVE"])
         .order("created_at", { ascending: false });
+      
+      console.log("[ADMIN ALIAS] Supabase query built with clinic_code:", req.clinicCode);
+      
+      const { data: doctors, error } = await query;
 
-      console.log("[ADMIN ALIAS] Supabase query result:", { doctors: doctors?.length, error });
+      console.log("[ADMIN ALIAS] Supabase query result:");
+      console.log("  - Doctors count:", doctors?.length || 0);
+      console.log("  - Error:", error);
+      console.log("  - Clinic codes in results:", doctors?.map(d => d.clinic_code) || []);
+      console.log("  - Sample doctor:", doctors?.[0] || "none");
 
       if (error) {
         console.error("[ADMIN ALIAS] Supabase error:", error);
@@ -12888,6 +12900,12 @@ app.get(
         ok: true,
         doctors: doctors || [],
         clinicCode: req.clinicCode,
+        debug: {
+          clinicCode: req.clinicCode,
+          clinicId: req.clinicId,
+          resultCount: doctors?.length || 0,
+          clinicCodesInResults: doctors?.map(d => d.clinic_code) || []
+        }
       });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
