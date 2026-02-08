@@ -13895,25 +13895,28 @@ app.post(
     console.log("[ADMIN ALIAS] req.body:", req.body);
     
     try {
-      const { patientId } = req.body || {};
-      console.log("[ADMIN ALIAS] Extracted patientId:", patientId);
+      const { doctorId } = req.body || {};
+      console.log("[ADMIN ALIAS] Extracted doctorId:", doctorId);
 
-      if (!patientId) {
-        console.log("[ADMIN ALIAS] Missing patientId");
-        return res.status(400).json({ ok: false, error: "missing_patient_id" });
+      if (!doctorId) {
+        console.log("[ADMIN ALIAS] Missing doctorId");
+        return res.status(400).json({ ok: false, error: "missing_doctor_id" });
       }
 
-      // Update doctor status to ACTIVE, scoped to this clinic
-    console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
-    const { data: updatedDoctor, error: updateError } = await supabase
-      .from("doctors") // 🔥 FIX: Update DOCTORS table
-      .update({ 
-        status: "ACTIVE"
-      })
-      .eq("doctor_id", patientId) // 🔥 FIX: Use doctor_id
-      .eq("clinic_code", req.clinicCode) // 🔥 CLINIC SCOPE FILTER - only approve doctors from this clinic
-      .select()
-      .single();
+      const clinicId = req.clinicId;
+
+      // 🔥 ÇİFT SCOPE: doctor + clinic
+      console.log("[ADMIN ALIAS] Updating doctor status to ACTIVE for clinic:", req.clinicCode);
+      const { data: updatedDoctor, error: updateError } = await supabase
+        .from("doctors") // 🔥 FIX: Update DOCTORS table
+        .update({ 
+          status: "ACTIVE",
+          approved_at: new Date().toISOString(),
+        })
+        .eq("id", doctorId)          // ⬅️ TABLODA GERÇEKTEN VAR MI KONTROL ET
+        .eq("clinic_id", clinicId)   // ⬅️ ŞART
+        .select()
+        .single();
 
       console.log("[ADMIN ALIAS] Update result:", { updatedDoctor, error: updateError });
 
@@ -13923,23 +13926,24 @@ app.post(
       }
 
       if (!updatedDoctor) {
-      console.error("[ADMIN ALIAS] No doctor found with doctorId:", patientId, "for clinic:", req.clinicCode);
-      return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
-    }
+        console.error("[ADMIN ALIAS] No doctor found with doctorId:", doctorId, "for clinic:", req.clinicCode);
+        return res.status(404).json({ ok: false, error: "doctor_not_found_or_unauthorized" });
+      }
 
-    console.log("[ADMIN ALIAS] Sending success response");
-    res.json({
-      ok: true,
-      message: "Doctor approved successfully",
-      doctor: {
-        doctorId: updatedDoctor.doctor_id, // 🔥 FIX: Use doctor_id
-        name: updatedDoctor.name,
-        status: updatedDoctor.status,
-        clinicId: updatedDoctor.clinic_id,
-        clinicCode: updatedDoctor.clinic_code,
-      },
-      clinicCode: req.clinicCode,
-    });
+      console.log("[ADMIN ALIAS] Sending success response");
+      res.json({
+        ok: true,
+        approved: true,
+        message: "Doctor approved successfully",
+        doctor: {
+          doctorId: updatedDoctor.doctor_id || updatedDoctor.id,
+          name: updatedDoctor.name || updatedDoctor.full_name,
+          status: updatedDoctor.status,
+          clinicId: updatedDoctor.clinic_id,
+          clinicCode: updatedDoctor.clinic_code,
+        },
+        clinicCode: req.clinicCode,
+      });
     } catch (handlerError) {
       console.error("[ADMIN ALIAS] Handler error:", handlerError);
       console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
