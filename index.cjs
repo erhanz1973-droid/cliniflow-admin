@@ -13898,17 +13898,6 @@ app.post(
     try {
       const { doctorId } = req.body;
 
-      console.log('[APPROVE] doctorId:', doctorId);
-
-      // 🔐 EK KİLİT: HATALI ID'Yİ DAHA BAŞTA ENGELLE
-      if (!isUUID(doctorId)) {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_doctor_id',
-        });
-      }
-
-      // 2️⃣ Supabase update'i sadece id kolonu ile yap
       const { data, error } = await supabase
         .from('doctors')
         .update({ status: 'ACTIVE' })
@@ -13917,24 +13906,8 @@ app.post(
         .single();
 
       if (error) {
-        console.error('[APPROVE] Supabase error:', error);
-        return res.status(500).json({
-          ok: false,
-          error: 'update_failed',
-          details: error.message,
-        });
-      }
-
-      // 3️⃣ clinic_code ile asla filter yapma
-      // 4️⃣ doctor_id kolonu kullanma (yok)
-
-      // Eğer data === null gelirse → WHERE yanlış demektir
-      if (!data) {
-        console.error('[APPROVE] No doctor found with id:', doctorId);
-        return res.status(404).json({
-          ok: false,
-          error: 'doctor_not_found',
-        });
+        console.error('[APPROVE] error:', error);
+        return res.status(500).json({ ok: false, error: 'update_failed' });
       }
 
       res.json({ ok: true, doctor: data });
