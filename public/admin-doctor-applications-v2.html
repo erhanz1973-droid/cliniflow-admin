@@ -7,7 +7,6 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <script src="https://unpkg.com/@supabase/supabase-js"></script>
   <script src="/admin-i18n.js"></script>
   <style>
     :root {
@@ -264,45 +263,7 @@
       }
     })();
 
-    // Initialize Supabase with dynamic config from backend
-    let supabaseClient = null;
-    
-    async function initSupabase() {
-      try {
-        console.log("[SUPABASE] Getting config from backend...");
-        const response = await fetch("/public-supabase-config");
-        
-        if (!response.ok) {
-          throw new Error('Failed to get Supabase config');
-        }
-        
-        const data = await response.json();
-        
-        if (!data.ok) {
-          throw new Error(data.error || 'Supabase not configured');
-        }
-        
-        const { createClient } = supabase;
-        supabaseClient = createClient(data.supabaseUrl, data.supabaseAnonKey, {
-          auth: {
-            autoRefreshToken: false,
-            persistSession: false
-          },
-          db: {
-            schema: 'public'
-          }
-        });
-        
-        console.log("[SUPABASE] Initialized successfully with backend config");
-        loadDoctors();
-        
-      } catch (error) {
-        console.error("[SUPABASE] Initialization failed:", error);
-        document.getElementById('error-container').innerHTML = 
-          `<div class="error">❌ Supabase bağlantı hatası: ${error.message}</div>`;
-      }
-    }
-
+    // Use backend endpoints instead of direct Supabase
     let allDoctors = [];
     let filteredDoctors = [];
 
@@ -318,36 +279,28 @@
       emptyContainer.style.display = "none";
 
       try {
-        console.log("[SUPABASE] Loading doctors from Supabase...");
+        console.log("[BACKEND] Loading doctors from backend...");
         
-        const { data, error } = await supabaseClient
-          .from('doctors')
-          .select(`
-            id,
-            doctor_id,
-            name,
-            email,
-            phone,
-            status,
-            clinic_code,
-            department,
-            title,
-            specialties,
-            license_number,
-            created_at,
-            updated_at
-          `)
-          .eq('clinic_code', 'SAVSAT') // Bu dinamik olmalı
-          .order('created_at', { ascending: false });
+        const token = localStorage.getItem("admin_token");
+        const response = await fetch("/admin/doctor-list", {
+          headers: {
+            "Authorization": "Bearer " + token
+          }
+        });
 
-        if (error) {
-          console.error('[SUPABASE] Failed to load doctors:', error);
-          throw new Error(error.message);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        console.log("[SUPABASE] Doctors loaded successfully:", data);
+        const data = await response.json();
         
-        allDoctors = data || [];
+        if (!data.ok) {
+          throw new Error(data.error || 'Failed to load doctors');
+        }
+
+        console.log("[BACKEND] Doctors loaded successfully:", data.doctors);
+        
+        allDoctors = data.doctors || [];
         filteredDoctors = [...allDoctors];
         updateStats();
         renderDoctors();
@@ -422,7 +375,7 @@
     }
 
     async function approveDoctor(doctorId) {
-      console.log("[SUPABASE] Approving doctor with doctor_id:", doctorId);
+      console.log("[BACKEND] Approving doctor with doctor_id:", doctorId);
       
       if (!doctorId) {
         alert('doctor_id missing (this should never happen)');
@@ -434,33 +387,38 @@
       }
 
       try {
-        const { error } = await supabaseClient
-          .from('doctors')
-          .update({
-            status: 'APPROVED',
-            approved_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('doctor_id', doctorId);
+        const token = localStorage.getItem("admin_token");
+        const response = await fetch("/admin/approve-doctor-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          },
+          body: JSON.stringify({ doctorId: doctorId })
+        });
 
-        if (error) {
-          console.error('[SUPABASE] Approve failed:', error);
-          alert('Approve failed: ' + error.message);
-          return;
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        console.log('[SUPABASE] Doctor approved successfully');
+        const data = await response.json();
+
+        if (!data.ok) {
+          throw new Error(data.error || 'Approve failed');
+        }
+
+        console.log('[BACKEND] Doctor approved successfully');
         alert('✅ Doktor başarıyla onaylandı!');
         loadDoctors(); // refresh list
         
       } catch (error) {
-        console.error('[SUPABASE] Approve error:', error);
+        console.error('[BACKEND] Approve error:', error);
         alert('❌ Onaylama hatası: ' + error.message);
       }
     }
 
     async function rejectDoctor(doctorId) {
-      console.log("[SUPABASE] Rejecting doctor with doctor_id:", doctorId);
+      console.log("[BACKEND] Rejecting doctor with doctor_id:", doctorId);
       
       if (!doctorId) {
         alert('doctor_id missing (this should never happen)');
@@ -472,27 +430,32 @@
       }
 
       try {
-        const { error } = await supabaseClient
-          .from('doctors')
-          .update({
-            status: 'REJECTED',
-            rejected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('doctor_id', doctorId);
+        const token = localStorage.getItem("admin_token");
+        const response = await fetch("/admin/reject-doctor-v2", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + token
+          },
+          body: JSON.stringify({ doctorId: doctorId })
+        });
 
-        if (error) {
-          console.error('[SUPABASE] Reject failed:', error);
-          alert('Reject failed: ' + error.message);
-          return;
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        console.log('[SUPABASE] Doctor rejected successfully');
+        const data = await response.json();
+
+        if (!data.ok) {
+          throw new Error(data.error || 'Reject failed');
+        }
+
+        console.log('[BACKEND] Doctor rejected successfully');
         alert('❌ Doktor başvurusu reddedildi!');
         loadDoctors(); // refresh list
         
       } catch (error) {
-        console.error('[SUPABASE] Reject error:', error);
+        console.error('[BACKEND] Reject error:', error);
         alert('❌ Reddetme hatası: ' + error.message);
       }
     }
@@ -550,9 +513,9 @@ Doctor ID: ${doctor.doctor_id}
 
     // Load doctors on page load
     document.addEventListener("DOMContentLoaded", function() {
-      console.log("[PRODUCTION DEBUG] Page loaded at:", new Date().toISOString());
-      console.log("[PRODUCTION DEBUG] Initializing Supabase from backend...");
-      initSupabase();
+      console.log("[BACKEND] Page loaded at:", new Date().toISOString());
+      console.log("[BACKEND] Using backend endpoints for doctor management...");
+      loadDoctors();
     });
   </script>
 </body>

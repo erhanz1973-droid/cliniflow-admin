@@ -13893,6 +13893,110 @@ app.get("/public-supabase-config", async (req, res) => {
   }
 });
 
+// ================== DOCTOR MANAGEMENT ENDPOINTS ==================
+app.get("/admin/doctor-list", requireAdminAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('doctors')
+      .select(`
+        id,
+        doctor_id,
+        name,
+        email,
+        phone,
+        status,
+        clinic_code,
+        department,
+        title,
+        specialties,
+        license_number,
+        created_at,
+        updated_at
+      `)
+      .eq('clinic_code', req.clinicCode)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[DOCTOR LIST] Supabase error:', error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log('[DOCTOR LIST] Loaded doctors:', data?.length || 0);
+    res.json({ ok: true, doctors: data || [] });
+  } catch (error) {
+    console.error('[DOCTOR LIST] Error:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/admin/approve-doctor-v2", requireAdminAuth, async (req, res) => {
+  try {
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: 'doctorId_required' });
+    }
+
+    console.log('[APPROVE V2] Approving doctor with doctor_id:', doctorId);
+
+    const { data, error } = await supabase
+      .from('doctors')
+      .update({
+        status: 'APPROVED',
+        approved_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('doctor_id', doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[APPROVE V2] Supabase error:', error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log('[APPROVE V2] Doctor approved successfully:', data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error('[APPROVE V2] Error:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post("/admin/reject-doctor-v2", requireAdminAuth, async (req, res) => {
+  try {
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: 'doctorId_required' });
+    }
+
+    console.log('[REJECT V2] Rejecting doctor with doctor_id:', doctorId);
+
+    const { data, error } = await supabase
+      .from('doctors')
+      .update({
+        status: 'REJECTED',
+        rejected_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('doctor_id', doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[REJECT V2] Supabase error:', error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log('[REJECT V2] Doctor rejected successfully:', data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error('[REJECT V2] Error:', error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 // ================== DOCTOR API ROUTES ==================
 
 // Get current doctor profile
