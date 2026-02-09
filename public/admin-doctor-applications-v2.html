@@ -268,7 +268,16 @@
     const { createClient } = supabase;
     const supabaseClient = createClient(
       'https://dqjrqxqqjgqzayxjxqdv.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxanJxeHFxamdxemF5eGp4cWR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0OTc3MDQsImV4cCI6MjA1MjA3MzcwNH0.8rFqLs8_4Fz6QWgKJhQxJQvNkDnZjD5JQhQxJQvNkDnZjD5JQ'
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxanJxeHFxamdxemF5eGp4cWR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0OTc3MDQsImV4cCI6MjA1MjA3MzcwNH0.8rFqLs8_4Fz6QWgKJhQxJQvNkDnZjD5JQhQxJQvNkDnZjD5JQ',
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        },
+        db: {
+          schema: 'public'
+        }
+      }
     );
 
     let allDoctors = [];
