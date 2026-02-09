@@ -55,7 +55,7 @@ const {
 } = require("./lib/supabase");
 
 const app = express();
-console.log("[MESSAGES] fallback insert enabled: v2");
+
 const server = http.createServer(app);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
@@ -162,11 +162,11 @@ async function resolveClinicCodeForPatient(patientId) {
         null
       );
     } catch (fileError) {
-      console.warn("[MESSAGES] clinic_code fallback (file) failed:", fileError?.message || fileError);
+
     }
     return null;
   } catch (error) {
-    console.error("[MESSAGES] Failed to resolve clinic_code:", error?.message || error);
+
     return null;
   }
 }
@@ -309,11 +309,11 @@ function isSupabaseEnabled() {
 async function calculateClinicOralHealthAverage(clinicId) {
   try {
     if (!isSupabaseEnabled()) {
-      console.log("[ORAL_HEALTH_AVG] Supabase not enabled, returning null");
+
       return null;
     }
 
-    console.log("[ORAL_HEALTH_AVG] Calculating weighted average for clinic:", clinicId);
+
     
     // Get patients with oral health scores from the last 6 months
     const sixMonthsAgo = new Date();
@@ -326,16 +326,16 @@ async function calculateClinicOralHealthAverage(clinicId) {
       .gte('created_at', sixMonthsAgo.toISOString());
 
     if (error) {
-      console.error("[ORAL_HEALTH_AVG] Error fetching patients:", error);
+
       return null;
     }
 
     if (!patients || patients.length === 0) {
-      console.log("[ORAL_HEALTH_AVG] No patients found for clinic:", clinicId);
+
       return null;
     }
 
-    console.log("[ORAL_HEALTH_AVG] Found", patients.length, "patients in last 6 months");
+
 
     let weightedSum = 0;
     let totalWeight = 0;
@@ -371,28 +371,28 @@ async function calculateClinicOralHealthAverage(clinicId) {
       }
     });
 
-    console.log("[ORAL_HEALTH_AVG] Valid assessments:", validCount, "Total weight:", totalWeight);
+
 
     // Minimum 5 assessments required
     if (validCount < 5) {
-      console.log("[ORAL_HEALTH_AVG] Insufficient assessments (< 5), returning null");
+
       return null;
     }
 
     const weightedAverage = weightedSum / totalWeight;
-    console.log("[ORAL_HEALTH_AVG] Weighted average calculated:", weightedAverage.toFixed(1));
+
     
     return parseFloat(weightedAverage.toFixed(1));
     
   } catch (error) {
-    console.error("[ORAL_HEALTH_AVG] Error calculating oral health average:", error);
+
     return null;
   }
 }
 
 // ================== SUPER ADMIN GUARD ==================
 const publicDir = path.join(__dirname, "public");
-console.log("📂 Serving static files from:", publicDir);
+
 
 app.use(express.static(publicDir));
 
@@ -564,7 +564,7 @@ async function updatePatientReferralState(patientId, nextState) {
       .eq("patient_id", patientId);
     if (error) {
       if (isMissingColumnError(error, "referral_state")) {
-        console.warn("[REFERRALS] referral_state column missing; skipping update");
+
         return;
       }
       console.error("[REFERRALS] Failed to update referral_state", {
@@ -574,7 +574,7 @@ async function updatePatientReferralState(patientId, nextState) {
       });
     }
   } catch (e) {
-    console.error("[REFERRALS] referral_state update exception:", e?.message || e);
+
   }
 }
 
@@ -676,7 +676,7 @@ const SMTP_FROM = process.env.SMTP_FROM || "noreply@clinifly.net";
 let emailTransporter = null;
 
 if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
-  console.log("[EMAIL] Creating SMTP transporter...");
+
   emailTransporter = nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -686,12 +686,12 @@ if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
       pass: SMTP_PASS 
     },
   });
-  console.log(`[EMAIL] ✅ SMTP transporter created for ${SMTP_HOST}:${SMTP_PORT}`);
+
 } else {
   console.error("[EMAIL] ❌ SMTP NOT configured - missing credentials:");
-  console.error("[EMAIL]   SMTP_HOST:", SMTP_HOST ? "OK" : "MISSING");
-  console.error("[EMAIL]   SMTP_USER:", SMTP_USER ? "OK" : "MISSING");
-  console.error("[EMAIL]   SMTP_PASS:", SMTP_PASS ? "OK" : "MISSING");
+
+
+
 }
 
 // ================== PUSH NOTIFICATIONS ==================
@@ -713,22 +713,22 @@ try {
     const vapidKeys = webpush.generateVAPIDKeys();
     VAPID_PUBLIC_KEY = vapidKeys.publicKey;
     VAPID_PRIVATE_KEY = vapidKeys.privateKey;
-    console.log("[PUSH] VAPID keys generated. Add these to your .env file:");
-    console.log(`VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}`);
-    console.log(`VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}`);
+
+
+
   }
   
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  console.log("[PUSH] Push notifications configured");
+
 } catch (e) {
-  console.warn("[PUSH] web-push module not installed. Install with: npm install web-push");
-  console.warn("[PUSH] Push notifications will not work until web-push is installed");
+
+
 }
 
 // Helper function to send push notification to a patient
 async function sendPushNotification(patientId, title, message, options = {}) {
   if (!webpush) {
-    console.warn("[PUSH] Cannot send notification: web-push not available");
+
     return false;
   }
   
@@ -737,7 +737,7 @@ async function sendPushNotification(patientId, title, message, options = {}) {
     const patientSubscriptions = subscriptions[patientId] || [];
     
     if (patientSubscriptions.length === 0) {
-      console.log(`[PUSH] No subscriptions found for patient ${patientId}`);
+
       return false;
     }
     
@@ -760,13 +760,13 @@ async function sendPushNotification(patientId, title, message, options = {}) {
       patientSubscriptions.map(async (subscription) => {
         try {
           await webpush.sendNotification(subscription, payload);
-          console.log(`[PUSH] Notification sent successfully to patient ${patientId}`);
+
           return { success: true, subscription };
         } catch (error) {
-          console.error(`[PUSH] Failed to send notification:`, error);
+
           // If subscription is invalid (410), remove it
           if (error.statusCode === 410) {
-            console.log(`[PUSH] Removing invalid subscription for patient ${patientId}`);
+
             const updatedSubs = (subscriptions[patientId] || []).filter(
               sub => JSON.stringify(sub) !== JSON.stringify(subscription)
             );
@@ -781,7 +781,7 @@ async function sendPushNotification(patientId, title, message, options = {}) {
     const successCount = results.filter(r => r.status === "fulfilled" && r.value.success).length;
     return successCount > 0;
   } catch (error) {
-    console.error("[PUSH] Error sending push notification:", error);
+
     return false;
   }
 }
@@ -799,9 +799,9 @@ const OTP_REQUIRED_FOR_NEW_ADMINS = process.env.OTP_REQUIRED_FOR_NEW_ADMINS !== 
 // Review Mode for Google Play
 const REVIEW_MODE = process.env.REVIEW_MODE === "true";
 
-console.log("[OTP CONFIG] Enabled for admins:", OTP_ENABLED_FOR_ADMINS);
-console.log("[OTP CONFIG] Required for new admins:", OTP_REQUIRED_FOR_NEW_ADMINS);
-console.log("[REVIEW MODE] Enabled:", REVIEW_MODE);
+
+
+
 
 /**
  * Generate a 6-digit numeric OTP
@@ -826,9 +826,9 @@ async function hashOTP(otp) {
  * Verify OTP against hashed version
  */
 async function verifyOTP(plainOTP, hashedOTP) {
-  console.log(`[VERIFY-OTP] Input: plainOTP="${plainOTP}" (${typeof plainOTP}), hashedOTP="${hashedOTP.substring(0, 10)}..." (${typeof hashedOTP})`);
+
   const result = await bcrypt.compare(plainOTP, hashedOTP);
-  console.log(`[VERIFY-OTP] bcrypt.compare result: ${result}`);
+
   return result;
 }
 
@@ -842,7 +842,7 @@ async function getOTPsForEmail(email) {
   if (isSupabaseEnabled()) {
     try {
       // Direct Supabase query instead of missing function
-      console.log("[OTP] DEBUG: Querying 'otps' table for email:", emailKey);
+
       const { data, error } = await supabase
         .from('otps')
         .select('*')
@@ -850,24 +850,24 @@ async function getOTPsForEmail(email) {
         .order('created_at', { ascending: false })
         .limit(1);
       
-      console.log("[OTP] DEBUG: Supabase query result - data length:", data?.length || 0);
-      console.log("[OTP] DEBUG: Supabase query error:", error);
+
+
       if (data && data.length > 0) {
-        console.log("[OTP] DEBUG: First OTP record keys:", Object.keys(data[0]));
-        console.log("[OTP] DEBUG: First OTP record email:", data[0].email);
+
+
       }
       
       if (error) {
-        console.error("[OTP] Supabase query error:", error);
+
         throw error;
       }
       
       if (data && data.length > 0) {
-        console.log("[OTP] Retrieved OTP from Supabase for:", emailKey);
+
         return data[0];  // Return first element, not the array
       }
     } catch (error) {
-      console.error("[OTP] Failed to get OTP from Supabase, falling back to file:", error);
+
       // Fall back to file-based
     }
   }
@@ -889,10 +889,10 @@ async function saveOTP(email, otpCode, attempts = 0) {
   if (isSupabaseEnabled()) {
     try {
       const result = await createOTP(emailKey, hashedOTP, new Date(expiresAt), attempts);
-      console.log("[OTP] Saved OTP to Supabase for:", emailKey);
+
       return result;
     } catch (error) {
-      console.error("[OTP] Failed to save OTP to Supabase, falling back to file:", error);
+
       // Fall back to file-based
     }
   }
@@ -907,7 +907,7 @@ async function saveOTP(email, otpCode, attempts = 0) {
     verified: false
   };
   writeJson(OTP_FILE, otps);
-  console.log("[OTP] Saved OTP to file for:", emailKey);
+
   return true;
 }
 
@@ -917,13 +917,13 @@ async function saveOTP(email, otpCode, attempts = 0) {
 async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
   const emailKey = email.toLowerCase().trim();
   
-  console.log("[OTP] storeOTPForEmail called for:", emailKey);
-  console.log("[OTP] Supabase enabled:", isSupabaseEnabled());
+
+
   
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
-      console.log("[OTP] Attempting to insert OTP into Supabase...");
+
       
       // First, delete any existing unverified OTPs for this email (prevent overwrite)
       await supabase
@@ -948,16 +948,16 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
         .single();
       
       if (error) {
-        console.error("[OTP] Direct insert error:", error);
-        console.error("[OTP] Error details:", JSON.stringify(error, null, 2));
+
+
         throw error;
       }
       
-      console.log("[OTP] Stored registration OTP to Supabase for:", emailKey);
-      console.log("[OTP] Registration data stored:", JSON.stringify(registrationData));
+
+
       return data;
     } catch (error) {
-      console.error("[OTP] Failed to store registration OTP to Supabase, falling back to file:", error);
+
       // Fall back to file-based
     }
   }
@@ -973,7 +973,7 @@ async function storeOTPForEmail(email, otpHash, clinicCode, registrationData) {
     registration_data: registrationData
   };
   writeJson(OTP_FILE, otps);
-  console.log("[OTP] Stored registration OTP to file for:", emailKey);
+
   return true;
 }
 
@@ -987,10 +987,10 @@ async function incrementOTPAttempt(email) {
   if (isSupabaseEnabled()) {
     try {
       const result = await incrementOTPAttempts(emailKey);
-      console.log("[OTP] Incremented attempt in Supabase for:", emailKey);
+
       return result;
     } catch (error) {
-      console.error("[OTP] Failed to increment OTP in Supabase, falling back to file:", error);
+
       // Fall back to file-based
     }
   }
@@ -1000,7 +1000,7 @@ async function incrementOTPAttempt(email) {
   if (otps[emailKey]) {
     otps[emailKey].attempts = (otps[emailKey].attempts || 0) + 1;
     writeJson(OTP_FILE, otps);
-    console.log("[OTP] Incremented attempt in file for:", emailKey, "attempts:", otps[emailKey].attempts);
+
   }
 }
 
@@ -1014,10 +1014,10 @@ async function markOTPVerified(email) {
   if (isSupabaseEnabled()) {
     try {
       const result = await markOTPUsed(emailKey);
-      console.log("[OTP] Marked OTP as verified in Supabase for:", emailKey);
+
       return result;
     } catch (error) {
-      console.error("[OTP] Failed to mark OTP in Supabase, falling back to file:", error);
+
       // Fall back to file-based
     }
   }
@@ -1028,7 +1028,7 @@ async function markOTPVerified(email) {
     otps[emailKey].verified = true;
     otps[emailKey].expiresAt = now(); // Immediately expire
     writeJson(OTP_FILE, otps);
-    console.log("[OTP] Marked OTP as verified in file for:", emailKey);
+
   }
 }
 
@@ -1036,17 +1036,17 @@ async function markOTPVerified(email) {
  * Send OTP email using Brevo REST API (not SMTP)
  */
 async function sendOTPEmail(email, otpCode, lang = "en") {
-  console.log(`[sendOTPEmail] ========================================`);
-  console.log(`[sendOTPEmail] FUNCTION CALLED (Brevo REST API)`);
-  console.log(`[sendOTPEmail] email: ${email}`);
-  console.log(`[sendOTPEmail] otpCode: ${otpCode}`);
-  console.log(`[sendOTPEmail] lang: ${lang}`);
-  console.log(`[sendOTPEmail] ========================================`);
+
+
+
+
+
+
   
   // Review Mode Bypass: Skip email sending for test@clinifly.net
   if (REVIEW_MODE && email.toLowerCase() === "test@clinifly.net") {
-    console.log(`[sendOTPEmail] 🚫 REVIEW MODE: Skipping email for test@clinifly.net`);
-    console.log(`[sendOTPEmail] 📝 Static OTP 123456 will work for this account`);
+
+
     return { messageId: "review-mode-bypass", accepted: [email] };
   }
   
@@ -1054,9 +1054,9 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
   const fromEmail = process.env.SMTP_FROM || SMTP_FROM; // prefer explicit env, fallback to default
   const fromName = process.env.BREVO_FROM_NAME || "Clinifly";
 
-  console.log(`[sendOTPEmail] BREVO_API_KEY: ${apiKey ? 'SET' : 'NOT SET'}`);
-  console.log(`[sendOTPEmail] SMTP_FROM: ${fromEmail || 'NOT SET'}`);
-  console.log(`[sendOTPEmail] BREVO_FROM_NAME: ${fromName}`);
+
+
+
 
   const safeLang = normalizePatientLanguage(lang);
   const subject =
@@ -1086,7 +1086,7 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
       console.error(`[sendOTPEmail] ❌ No BREVO_API_KEY and SMTP transporter is not configured`);
       throw new Error("email_not_configured");
     }
-    console.log(`[sendOTPEmail] BREVO_API_KEY missing; using SMTP transporter fallback`);
+
     try {
       const info = await emailTransporter.sendMail({
         from: fromEmail || "noreply@clinifly.net",
@@ -1127,8 +1127,8 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
     htmlContent,
   };
 
-  console.log(`[sendOTPEmail] Calling Brevo API: https://api.brevo.com/v3/smtp/email`);
-  console.log(`[sendOTPEmail] Payload:`, JSON.stringify(payload).substring(0, 200));
+
+
 
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -1140,7 +1140,7 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
       body: JSON.stringify(payload),
     });
 
-    console.log(`[sendOTPEmail] Brevo API response status: ${response.status}`);
+
 
     if (!response.ok) {
       const text = await response.text();
@@ -1149,8 +1149,8 @@ async function sendOTPEmail(email, otpCode, lang = "en") {
     }
 
     const result = await response.json();
-    console.log(`[sendOTPEmail] ✅ Email sent successfully via Brevo API`);
-    console.log(`[sendOTPEmail] Brevo response:`, JSON.stringify(result).substring(0, 200));
+
+
     return result;
   } catch (error) {
     console.error(`[sendOTPEmail] ❌ Error sending email via Brevo API:`, error.message);
@@ -1190,7 +1190,7 @@ async function requireAdminToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log("[requireAdminToken] Missing or invalid auth header");
+
       return res.status(401).json({ ok: false, error: "unauthorized", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
     }
 
@@ -1199,29 +1199,29 @@ async function requireAdminToken(req, res, next) {
     
     // clinicCode is the PRIMARY key - NOT clinicId
     const clinicCode = decoded.clinicCode;
-    console.log("[requireAdminToken] Token decoded, clinicCode:", clinicCode);
+
 
     if (!clinicCode) {
-      console.error("[requireAdminToken] No clinicCode in token!");
+
       return res.status(401).json({ ok: false, error: "invalid_token", message: "Token geçersiz." });
     }
 
     // SUPABASE: Primary lookup by clinicCode
-    console.log("[requireAdminToken] isSupabaseEnabled:", isSupabaseEnabled());
-    console.log("[requireAdminToken] SUPABASE_URL set:", !!process.env.SUPABASE_URL);
-    console.log("[requireAdminToken] SUPABASE_SERVICE_ROLE_KEY set:", !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+
+
     
     if (isSupabaseEnabled()) {
-      console.log("[requireAdminToken] Calling getClinicByCode with:", clinicCode);
+
       const clinic = await getClinicByCode(clinicCode);
-      console.log("[requireAdminToken] getClinicByCode returned:", clinic ? "FOUND" : "NULL");
+
       
       if (clinic) {
         if (typeof clinic.settings === "string") {
           try {
             clinic.settings = JSON.parse(clinic.settings);
           } catch (e) {
-            console.warn("[requireAdminToken] Failed to parse clinic.settings JSON");
+
             clinic.settings = {};
           }
         }
@@ -1229,14 +1229,14 @@ async function requireAdminToken(req, res, next) {
         req.clinicCode = clinic.clinic_code;   // e.g. "ORDU"
         req.clinicStatus = clinic.settings?.status || "ACTIVE";
         req.clinic = clinic;
-        console.log("[requireAdminToken] ✅ Supabase auth successful for clinic:", req.clinicCode, "(uuid:", req.clinicId, ")");
+
         return next();
       }
       
-      console.log("[requireAdminToken] ❌ Clinic not found in Supabase for code:", clinicCode);
-      console.log("[requireAdminToken] Trying file fallback...");
+
+
     } else {
-      console.log("[requireAdminToken] ⚠️ Supabase not enabled, using file fallback");
+
     }
     
     // FILE FALLBACK (legacy)
@@ -1274,10 +1274,10 @@ async function requireAdminToken(req, res, next) {
     req.clinicCode = clinic.clinicCode || clinic.code;
     req.clinicStatus = clinic.status || "PENDING";
     req.clinic = clinic;
-    console.log("[requireAdminToken] ✅ File auth successful for clinic:", req.clinicCode);
+
     next();
   } catch (error) {
-    console.error("[requireAdminToken] Auth error:", error.name, error.message);
+
     if (error?.name === "JsonWebTokenError" || error?.name === "TokenExpiredError") {
       return res.status(401).json({ ok: false, error: "invalid_token", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
     }
@@ -1333,7 +1333,7 @@ app.get("/debug/test-email", async (req, res) => {
   }
 
   try {
-    console.log("[DEBUG] Sending test email to:", testEmail);
+
     const info = await emailTransporter.sendMail({
       from: SMTP_FROM,
       to: testEmail,
@@ -1341,7 +1341,7 @@ app.get("/debug/test-email", async (req, res) => {
       text: "If you receive this email, SMTP is working correctly!",
       html: "<h1>SMTP Test</h1><p>If you receive this email, SMTP is working correctly!</p><p>Time: " + new Date().toISOString() + "</p>",
     });
-    console.log("[DEBUG] Test email sent:", info.messageId);
+
     res.json({ 
       ok: true, 
       messageId: info.messageId,
@@ -1349,7 +1349,7 @@ app.get("/debug/test-email", async (req, res) => {
       accepted: info.accepted,
     });
   } catch (e) {
-    console.error("[DEBUG] SMTP TEST ERROR:", e);
+
     res.status(500).json({ 
       ok: false, 
       error: e.message,
@@ -1541,7 +1541,7 @@ app.get("/admin-v2.html", (req, res) => {
   const filePath = path.resolve(__dirname, "admin_v2.html");
   res.sendFile(filePath, (err) => {
     if (err) {
-      console.error("[GET /admin-v2.html] Error:", err);
+
       res.status(500).send("File not found: " + err.message);
     }
   });
@@ -1558,17 +1558,17 @@ app.get("/admin-login.html", (req, res) => {
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
     } else {
-    console.error(`[GET /admin-login.html] File not found: ${filePath}`);
-    console.error(`[GET /admin-login.html] __dirname: ${__dirname}`);
-    console.error(`[GET /admin-login.html] process.cwd(): ${process.cwd()}`);
+
+
+
     // Try alternative paths
     const altPath1 = path.join(process.cwd(), "public", "admin-login.html");
     const altPath2 = path.resolve("public", "admin-login.html");
     if (fs.existsSync(altPath1)) {
-      console.log(`[GET /admin-login.html] Using alternative path 1: ${altPath1}`);
+
       res.sendFile(altPath1);
     } else if (fs.existsSync(altPath2)) {
-      console.log(`[GET /admin-login.html] Using alternative path 2: ${altPath2}`);
+
       res.sendFile(altPath2);
     } else {
       res.status(404).send("Admin Login page not found");
@@ -1581,17 +1581,17 @@ app.get("/admin-register.html", (req, res) => {
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
   } else {
-    console.error(`[GET /admin-register.html] File not found: ${filePath}`);
-    console.error(`[GET /admin-register.html] __dirname: ${__dirname}`);
-    console.error(`[GET /admin-register.html] process.cwd(): ${process.cwd()}`);
+
+
+
     // Try alternative paths
     const altPath1 = path.join(process.cwd(), "public", "admin-register.html");
     const altPath2 = path.resolve("public", "admin-register.html");
     if (fs.existsSync(altPath1)) {
-      console.log(`[GET /admin-register.html] Using alternative path 1: ${altPath1}`);
+
       res.sendFile(altPath1);
     } else if (fs.existsSync(altPath2)) {
-      console.log(`[GET /admin-register.html] Using alternative path 2: ${altPath2}`);
+
       res.sendFile(altPath2);
     } else {
       res.status(404).send("Admin Register page not found");
@@ -1662,14 +1662,14 @@ app.post("/api/register", async (req, res) => {
     const code = String(clinicCode).trim().toUpperCase();
     let foundClinic = null;
     
-    console.log(`[REGISTER] Validating clinic code: ${code}`);
+
     
     // SUPABASE: Primary lookup
     if (isSupabaseEnabled()) {
       foundClinic = await getClinicByCode(code);
       if (foundClinic) {
         foundClinicId = foundClinic.id;
-        console.log(`[REGISTER] Found clinic in Supabase: ${foundClinic.id}`);
+
       }
     }
     
@@ -1678,10 +1678,10 @@ app.post("/api/register", async (req, res) => {
       const singleClinic = readJson(CLINIC_FILE, {});
       if (singleClinic && singleClinic.clinicCode) {
         const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-        console.log(`[REGISTER] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+
         if (singleClinicCode === code) {
           foundClinic = singleClinic;
-          console.log(`[REGISTER] Found matching clinic in CLINIC_FILE`);
+
         }
       }
     }
@@ -1689,7 +1689,7 @@ app.post("/api/register", async (req, res) => {
     // FILE FALLBACK: Then check CLINICS_FILE (multiple clinics object)
     if (!foundClinic) {
       const clinics = readJson(CLINICS_FILE, {});
-      console.log(`[REGISTER] Available clinics count in CLINICS_FILE: ${Object.keys(clinics).length}`);
+
       
       // Search for clinic by clinicCode or code field
       for (const clinicId in clinics) {
@@ -1699,11 +1699,11 @@ app.post("/api/register", async (req, res) => {
           const clinicCodeToCheck = clinic.clinicCode || clinic.code;
           if (clinicCodeToCheck) {
             const clinicCodeUpper = String(clinicCodeToCheck).toUpperCase();
-            console.log(`[REGISTER] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
+
             if (clinicCodeUpper === code) {
               foundClinic = clinic;
               foundClinicId = clinicId;
-              console.log(`[REGISTER] Found matching clinic in CLINICS_FILE: ${clinicId}`);
+
               break;
             }
           }
@@ -1713,10 +1713,10 @@ app.post("/api/register", async (req, res) => {
     
     if (foundClinic) {
       validatedClinicCode = code;
-      console.log(`[REGISTER] Using existing clinic: ${code}`);
+
     } else {
       // Clinic not found - return error
-      console.log(`[REGISTER] Clinic code "${code}" not found in Supabase, CLINIC_FILE or CLINICS_FILE`);
+
       return res.status(404).json({ 
         ok: false, 
         error: "clinic_not_found",
@@ -1724,10 +1724,10 @@ app.post("/api/register", async (req, res) => {
       });
     }
   } else {
-    console.log(`[REGISTER] No clinic code provided or empty, validatedClinicCode will be null`);
+
   }
   
-  console.log(`[REGISTER] Final validatedClinicCode: ${validatedClinicCode || "null"}`);
+
 
   // EMAIL is the identity: if a patient already exists for this email, reuse its patientId.
   let patientId = null;
@@ -1748,7 +1748,7 @@ app.post("/api/register", async (req, res) => {
         });
       }
     } catch (err) {
-      console.error("[REGISTER] Supabase patient lookup exception:", err?.message || err);
+
     }
   }
   if (!patientId) {
@@ -1773,17 +1773,17 @@ app.post("/api/register", async (req, res) => {
       const clinic = await getClinicByCode(validatedClinicCode);
       if (clinic) {
         supabaseClinicId = clinic.id;
-        console.log(`[REGISTER] Found clinic UUID: ${supabaseClinicId} for code: ${validatedClinicCode}`);
+
       } else {
-        console.warn(`[REGISTER] Clinic not found in Supabase for code: ${validatedClinicCode}`);
+
       }
     } catch (err) {
-      console.error(`[REGISTER] Error finding clinic in Supabase:`, err.message);
+
     }
   }
 
   if (isSupabaseEnabled() && !supabaseClinicId) {
-    console.error("[REGISTER] Missing clinic_id for Supabase insert. clinicCode:", validatedClinicCode);
+
     return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
   }
 
@@ -1832,7 +1832,7 @@ app.post("/api/register", async (req, res) => {
             .maybeSingle();
           if (!e2 && existing) {
             patientId = existing.patient_id || existing.id;
-            console.log("[REGISTER] Reusing existing patient for email:", emailNormalized, "patientId:", patientId);
+
             // Best-effort: keep language in sync
             if (patientLanguage && existing.language !== patientLanguage) {
               await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
@@ -1858,7 +1858,7 @@ app.post("/api/register", async (req, res) => {
             return res.status(500).json({ ok: false, error: "register_failed" });
           }
         } catch (e3) {
-          console.error("[REGISTER] Unique email fetch exception:", e3?.message || e3);
+
           return res.status(500).json({ ok: false, error: "register_failed" });
         }
       } else {
@@ -1981,7 +1981,7 @@ app.post("/api/register", async (req, res) => {
         }
 
         if (!inviter) {
-          console.log("[REGISTER] Referral code not found in Supabase:", refCodeRaw);
+
           return res.status(400).json({
             ok: false,
             error: "invalid_referral_code",
@@ -2114,9 +2114,9 @@ app.post("/api/register", async (req, res) => {
         }
 
         if (!inviterPatientId) {
-          console.log(`[REGISTER] Referral code not found (file fallback): ${refCode}`);
+
         } else if (inviterPatientId === patientId) {
-          console.log(`[REGISTER] ❌ Self-referral blocked (file): inviter=${inviterPatientId}, invited=${patientId}`);
+
         } else if (canUseFileFallback()) {
           const referrals = readJson(REF_FILE, []);
           const referralList = Array.isArray(referrals) ? referrals : Object.values(referrals);
@@ -2139,7 +2139,7 @@ app.post("/api/register", async (req, res) => {
         }
       }
     } catch (err) {
-      console.error("[REGISTER] Referral creation error:", err);
+
       // Don't fail registration if referral creation fails
     }
   }
@@ -2148,8 +2148,8 @@ app.post("/api/register", async (req, res) => {
   try {
     // Review Mode Bypass: Skip OTP generation and saving for test@clinifly.net
     if (REVIEW_MODE && emailNormalized === "test@clinifly.net") {
-      console.log(`[REGISTER] 🚫 REVIEW MODE: Skipping OTP generation for test@clinifly.net`);
-      console.log(`[REGISTER] 📝 Static OTP 123456 will work for this account`);
+
+
       
       // Still return success response but without actually sending OTP
       return res.status(201).json({
@@ -2167,24 +2167,24 @@ app.post("/api/register", async (req, res) => {
     
     // Generate OTP
     const otpCode = generateOTP();
-    console.log(`[REGISTER] Generated OTP for ${emailNormalized}`);
+
     
     // Save OTP (hashed) - this is fast, keep it sync
     await saveOTP(emailNormalized, otpCode, 0);
-    console.log(`[REGISTER] OTP saved to file`);
+
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
     // This prevents API timeout from blocking the response
-    console.log(`[REGISTER] ========================================`);
-    console.log(`[REGISTER] EMAIL SEND DECISION POINT (Brevo REST API)`);
-    console.log(`[REGISTER] BREVO_API_KEY: ${process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'}`);
-    console.log(`[REGISTER] SMTP_FROM: ${process.env.SMTP_FROM || 'NOT SET'}`);
-    console.log(`[REGISTER] ========================================`);
+
+
+
+
+
     
-    console.log(`[REGISTER] Calling sendOTPEmail (fire-and-forget)`);
+
     sendOTPEmail(emailNormalized, otpCode, patientLanguage)
       .then(() => {
-        console.log(`[REGISTER] ✅ OTP email sent successfully to ${emailNormalized}`);
+
       })
       .catch((emailError) => {
         console.error(`[REGISTER] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
@@ -2192,7 +2192,7 @@ app.post("/api/register", async (req, res) => {
       });
     
     // Return success IMMEDIATELY - don't wait for email
-    console.log(`[REGISTER] Returning success response for patient ${patientId}`);
+
     res.json({ 
       ok: true, 
       message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
@@ -2204,7 +2204,7 @@ app.post("/api/register", async (req, res) => {
       requiresOTP: true,
     });
   } catch (otpError) {
-    console.error("[REGISTER] OTP generation error:", otpError);
+
     // Still return success, but user will need to request OTP manually
     res.json({ 
       ok: true, 
@@ -2265,7 +2265,7 @@ app.post("/api/patient/register", async (req, res) => {
     const code = String(clinicCode).trim().toUpperCase();
     let foundClinic = null;
     
-    console.log(`[REGISTER /api/patient/register] Validating clinic code: ${code}`);
+
 
     // SUPABASE: Primary lookup (source of truth)
     if (isSupabaseEnabled()) {
@@ -2273,10 +2273,10 @@ app.post("/api/patient/register", async (req, res) => {
         foundClinic = await getClinicByCode(code);
         if (foundClinic) {
           foundClinicId = foundClinic.id;
-          console.log(`[REGISTER /api/patient/register] Found clinic in Supabase: ${foundClinic.id}`);
+
         }
       } catch (e) {
-        console.error(`[REGISTER /api/patient/register] Error checking clinic in Supabase:`, e?.message || e);
+
       }
     }
     
@@ -2285,10 +2285,10 @@ app.post("/api/patient/register", async (req, res) => {
       const singleClinic = readJson(CLINIC_FILE, {});
       if (singleClinic && singleClinic.clinicCode) {
         const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-        console.log(`[REGISTER /api/patient/register] Checking CLINIC_FILE: clinicCode=${singleClinic.clinicCode}, upper=${singleClinicCode}`);
+
         if (singleClinicCode === code) {
           foundClinic = singleClinic;
-          console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINIC_FILE`);
+
         }
       }
     }
@@ -2296,7 +2296,7 @@ app.post("/api/patient/register", async (req, res) => {
     // Then check CLINICS_FILE (multiple clinics object)
     if (!foundClinic) {
       const clinics = readJson(CLINICS_FILE, {});
-      console.log(`[REGISTER /api/patient/register] Available clinics count in CLINICS_FILE: ${Object.keys(clinics).length}`);
+
       
       // Search for clinic by clinicCode or code field
       for (const clinicId in clinics) {
@@ -2306,11 +2306,11 @@ app.post("/api/patient/register", async (req, res) => {
           const clinicCodeToCheck = clinic.clinicCode || clinic.code;
           if (clinicCodeToCheck) {
             const clinicCodeUpper = String(clinicCodeToCheck).toUpperCase();
-            console.log(`[REGISTER /api/patient/register] Checking clinic ${clinicId}: clinicCode=${clinic.clinicCode}, code=${clinic.code}, upper=${clinicCodeUpper}`);
+
             if (clinicCodeUpper === code) {
               foundClinic = clinic;
               foundClinicId = foundClinicId || clinicId;
-              console.log(`[REGISTER /api/patient/register] Found matching clinic in CLINICS_FILE: ${clinicId}`);
+
               break;
             }
           }
@@ -2320,10 +2320,10 @@ app.post("/api/patient/register", async (req, res) => {
     
     if (foundClinic) {
       validatedClinicCode = code;
-      console.log(`[REGISTER /api/patient/register] Using existing clinic: ${code}`);
+
     } else {
       // Clinic not found - return error
-      console.log(`[REGISTER /api/patient/register] Clinic code "${code}" not found in CLINIC_FILE or CLINICS_FILE`);
+
       return res.status(404).json({ 
         ok: false, 
         error: "clinic_not_found",
@@ -2331,10 +2331,10 @@ app.post("/api/patient/register", async (req, res) => {
       });
     }
   } else {
-    console.log(`[REGISTER /api/patient/register] No clinic code provided or empty, validatedClinicCode will be null`);
+
   }
   
-  console.log(`[REGISTER /api/patient/register] Final validatedClinicCode: ${validatedClinicCode || "null"}`);
+
 
   // EMAIL is the identity: if a patient already exists for this email, reuse its patientId.
   let patientId = null;
@@ -2355,7 +2355,7 @@ app.post("/api/patient/register", async (req, res) => {
         });
       }
     } catch (err) {
-      console.error("[REGISTER /api/patient/register] Supabase patient lookup exception:", err?.message || err);
+
     }
   }
   if (!patientId) {
@@ -2380,17 +2380,17 @@ app.post("/api/patient/register", async (req, res) => {
       const clinic = await getClinicByCode(validatedClinicCode);
       if (clinic) {
         supabaseClinicId = clinic.id;
-        console.log(`[REGISTER /api/patient/register] Found clinic UUID: ${supabaseClinicId} for code: ${validatedClinicCode}`);
+
       } else {
-        console.warn(`[REGISTER /api/patient/register] Clinic not found in Supabase for code: ${validatedClinicCode}`);
+
       }
     } catch (err) {
-      console.error(`[REGISTER /api/patient/register] Error finding clinic in Supabase:`, err.message);
+
     }
   }
 
   if (isSupabaseEnabled() && !supabaseClinicId) {
-    console.error("[REGISTER /api/patient/register] Missing clinic_id for Supabase insert. clinicCode:", validatedClinicCode);
+
     return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
   }
 
@@ -2439,7 +2439,7 @@ app.post("/api/patient/register", async (req, res) => {
             .maybeSingle();
           if (!e2 && existing) {
             patientId = existing.patient_id || existing.id;
-            console.log("[REGISTER /api/patient/register] Reusing existing patient for email:", emailNormalized, "patientId:", patientId);
+
             // Best-effort: keep language in sync
             if (patientLanguage && existing.language !== patientLanguage) {
               await supabase.from("patients").update({ language: patientLanguage }).eq("email", emailNormalized);
@@ -2465,7 +2465,7 @@ app.post("/api/patient/register", async (req, res) => {
             return res.status(500).json({ ok: false, error: "register_failed" });
           }
         } catch (e3) {
-          console.error("[REGISTER /api/patient/register] Unique email fetch exception:", e3?.message || e3);
+
           return res.status(500).json({ ok: false, error: "register_failed" });
         }
       } else {
@@ -2587,7 +2587,7 @@ app.post("/api/patient/register", async (req, res) => {
         }
 
         if (!inviter) {
-          console.log("[PATIENT/REGISTER] Referral code not found in Supabase:", refCodeRaw);
+
           return res.status(400).json({
             ok: false,
             error: "invalid_referral_code",
@@ -2729,7 +2729,7 @@ app.post("/api/patient/register", async (req, res) => {
         }
       }
     } catch (err) {
-      console.error("[PATIENT/REGISTER] Referral creation error:", err);
+
     }
   }
 
@@ -2741,8 +2741,8 @@ app.post("/api/patient/register", async (req, res) => {
     // Generate OTP with standardization
     const otpCode = String(generateOTP()).trim();
     const otpHash = await bcrypt.hash(otpCode, 10);
-    console.log(`[REGISTER /api/patient/register] Generated OTP for ${emailNormalized}: ${otpCode}`);
-    console.log(`[REGISTER /api/patient/register] OTP hash generated: ${otpHash.substring(0, 10)}...`);
+
+
     
     // Store OTP in Supabase (not file-based)
     await storeOTPForEmail(emailNormalized, otpHash, null, {
@@ -2751,20 +2751,20 @@ app.post("/api/patient/register", async (req, res) => {
       name: name || '',
       language: language || 'en'
     });
-    console.log(`[REGISTER /api/patient/register] OTP stored in Supabase for: ${emailNormalized}`);
+
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
     // This prevents API timeout from blocking the response
-    console.log(`[REGISTER /api/patient/register] ========================================`);
-    console.log(`[REGISTER /api/patient/register] EMAIL SEND DECISION POINT (Brevo REST API)`);
-    console.log(`[REGISTER /api/patient/register] BREVO_API_KEY: ${process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'}`);
-    console.log(`[REGISTER /api/patient/register] SMTP_FROM: ${process.env.SMTP_FROM || 'NOT SET'}`);
-    console.log(`[REGISTER /api/patient/register] ========================================`);
+
+
+
+
+
     
-    console.log(`[REGISTER /api/patient/register] Calling sendOTPEmail (fire-and-forget)`);
+
     sendOTPEmail(emailNormalized, otpCode, patientLanguage)
       .then(() => {
-        console.log(`[REGISTER /api/patient/register] ✅ OTP email sent successfully to ${emailNormalized}`);
+
       })
       .catch((emailError) => {
         console.error(`[REGISTER /api/patient/register] ❌ Failed to send OTP email to ${emailNormalized}:`, emailError.message);
@@ -2772,7 +2772,7 @@ app.post("/api/patient/register", async (req, res) => {
       });
     
     // Return success IMMEDIATELY - don't wait for email
-    console.log(`[REGISTER /api/patient/register] Returning success response for patient ${patientId}`);
+
     res.json({ 
       ok: true, 
       message: "Kayıt başarılı. Email adresinize gönderilen OTP kodunu girin.",
@@ -2784,7 +2784,7 @@ app.post("/api/patient/register", async (req, res) => {
       requiresOTP: true,
     });
   } catch (otpError) {
-    console.error("[REGISTER /api/patient/register] OTP generation error:", otpError);
+
     // Still return success, but user will need to request OTP manually
     res.json({ 
       ok: true, 
@@ -2807,7 +2807,7 @@ function requireToken(req, res, next) {
   const finalToken = token || altToken;
   
   if (!finalToken) {
-    console.log("[AUTH] Missing token");
+
     return res.status(401).json({ ok: false, error: "missing_token", message: "Token bulunamadı" });
   }
 
@@ -2826,12 +2826,12 @@ function requireToken(req, res, next) {
           return next();
         }
       } catch (e) {
-        console.log("[AUTH] JWT verify failed:", e?.name, e?.message);
+
       }
     }
 
-    console.log(`[AUTH] Bad token: ${finalToken.substring(0, 20)}... (not found in tokens.json and not valid JWT patient token)`);
-    console.log(`[AUTH] Available legacy tokens: ${Object.keys(tokens).length}`);
+
+
     return res.status(401).json({
       ok: false,
       error: "bad_token",
@@ -2866,7 +2866,7 @@ async function resolveDoctorForOtp({ email, phone }) {
   const phoneTrimmed = phone ? String(phone).trim() : "";
   const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
 
-  console.log(`[DOCTOR OTP] resolveDoctorForOtp input: email="${emailNormalized}", phone="${phoneTrimmed}"`);
+
 
   let foundDoctor = null;
   let foundDoctorId = null;
@@ -2887,7 +2887,7 @@ async function resolveDoctorForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundDoctor = row;
-          console.log(`[DOCTOR OTP] Found doctor in DOCTORS table:`, row);
+
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[DOCTOR OTP] Supabase doctor lookup (email) failed:", {
             message: pErr.message,
@@ -2905,7 +2905,7 @@ async function resolveDoctorForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundDoctor = row;
-          console.log(`[DOCTOR OTP] Found doctor by phone in DOCTORS table:`, row);
+
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[DOCTOR OTP] Supabase doctor lookup (phone) failed:", {
             message: pErr.message,
@@ -2915,14 +2915,14 @@ async function resolveDoctorForOtp({ email, phone }) {
         }
       }
     } catch (e) {
-      console.error("[DOCTOR OTP] Supabase doctor lookup exception:", e?.message || e);
+
     }
   }
 
   // File-based fallback (if needed)
   if (!foundDoctor) {
     // Add file-based lookup logic here if needed
-    console.log("[DOCTOR OTP] No doctor found in Supabase, checking file-based storage");
+
   }
 
   if (foundDoctor) {
@@ -2946,7 +2946,7 @@ async function resolvePatientForOtp({ email, phone }) {
   const phoneTrimmed = phone ? String(phone).trim() : "";
   const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
 
-  console.log(`[OTP] resolvePatientForOtp input: email="${emailNormalized}", phone="${phoneTrimmed}"`);
+
 
   let foundPatient = null;
   let foundPatientId = null;
@@ -2968,7 +2968,7 @@ async function resolvePatientForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundPatient = row;
-          console.log(`[OTP] Found patient with role: ${row.role}`);
+
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[OTP] Supabase patient lookup (email) failed:", {
             message: pErr.message,
@@ -2987,7 +2987,7 @@ async function resolvePatientForOtp({ email, phone }) {
           .single();
         if (!pErr && row) {
           foundPatient = row;
-          console.log(`[OTP] Found patient by phone with role: ${row.role}`);
+
         } else if (pErr && String(pErr.code || "") !== "PGRST116") {
           console.error("[OTP] Supabase patient lookup (phone) failed:", {
             message: pErr.message,
@@ -2997,7 +2997,7 @@ async function resolvePatientForOtp({ email, phone }) {
         }
       }
     } catch (e) {
-      console.error("[OTP] Supabase patient lookup exception:", e?.message || e);
+
     }
   }
 
@@ -3023,7 +3023,7 @@ async function resolvePatientForOtp({ email, phone }) {
     foundPhone = foundPatient.phone || foundPhone;
     foundLanguage = normalizePatientLanguage(foundPatient.language);
     resolvedEmail = String(foundPatient.email || resolvedEmail || "").trim().toLowerCase();
-    console.log(`[OTP] Found patient with email: "${foundPatient.email}", resolvedEmail: "${resolvedEmail}"`);
+
   }
 
   const result = {
@@ -3035,23 +3035,23 @@ async function resolvePatientForOtp({ email, phone }) {
     phoneNormalized,
   };
   
-  console.log(`[OTP] resolvePatientForOtp result:`, result);
+
   return result;
 }
 
 // POST /auth/request-otp
 // Request OTP: takes email, finds patient, sends OTP to that email
 app.post("/auth/request-otp", async (req, res) => {
-  console.log("[OTP] ========================================");
-  console.log("[OTP] /auth/request-otp endpoint HIT");
-  console.log("[OTP] Request body:", JSON.stringify(req.body));
-  console.log("[OTP] ========================================");
+
+
+
+
   
   try {
     const { email, phone } = req.body || {};
     
     if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
-      console.log("[OTP] ERROR: email_or_phone_required");
+
       return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
     }
 
@@ -3100,8 +3100,8 @@ app.post("/auth/request-otp", async (req, res) => {
     const hasSmtpTransporter = !!emailTransporter;
     if (!hasBrevo && !hasSmtpTransporter) {
       console.error("[OTP] ❌ Email not configured - cannot send OTP!");
-      console.error("[OTP]   BREVO_API_KEY:", hasBrevo ? "SET" : "NOT SET");
-      console.error("[OTP]   SMTP transporter:", hasSmtpTransporter ? "SET" : "NOT SET");
+
+
       // Keep legacy error code for client compatibility
       return res.status(500).json({
         ok: false,
@@ -3119,26 +3119,26 @@ app.post("/auth/request-otp", async (req, res) => {
     
     // Generate OTP
     const otpCode = generateOTP();
-    console.log("[OTP] Generated OTP code:", otpCode, "for email:", resolvedEmail);
+
     
     // Save OTP under email key (file-based store)
     await saveOTP(resolvedEmail, otpCode, 0);
     
     // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
     // This prevents API timeout from blocking the response
-    console.log("[OTP] ========================================");
-    console.log("[OTP] EMAIL SEND DECISION POINT (Brevo REST API)");
-    console.log("[OTP] BREVO_API_KEY: " + (process.env.BREVO_API_KEY ? 'SET' : 'NOT SET'));
-    console.log("[OTP] SMTP_FROM: " + (process.env.SMTP_FROM || 'NOT SET'));
-    console.log("[OTP] Email:", resolvedEmail);
-    console.log("[OTP] OTP Code:", otpCode);
-    console.log("[OTP] ========================================");
+
+
+
+
+
+
+
     
-    console.log("[OTP] Calling sendOTPEmail (fire-and-forget)");
+
     sendOTPEmail(resolvedEmail, otpCode, foundLanguage)
       .then(() => {
-        console.log("[OTP] ✅ sendOTPEmail completed successfully!");
-        console.log(`[OTP] OTP sent to ${resolvedEmail} (patient ${foundPatientId})`);
+
+
       })
       .catch((emailError) => {
         console.error("[OTP] ❌ Failed to send email:", emailError.message);
@@ -3146,7 +3146,7 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     
     // Return success IMMEDIATELY - don't wait for email
-    console.log("[OTP] Returning success response immediately");
+
     res.json({
       ok: true,
       message: "OTP email adresinize gönderildi",
@@ -3157,7 +3157,7 @@ app.post("/auth/request-otp", async (req, res) => {
       ...(foundPhone ? { phone: foundPhone } : {}),
     });
   } catch (error) {
-    console.error("[OTP] Request OTP error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -3212,8 +3212,8 @@ app.post("/api/admin/request-otp", async (req, res) => {
 
     // Review Mode Bypass: Skip OTP generation and email for test@clinifly.net
     if (REVIEW_MODE && emailNormalized === "test@clinifly.net") {
-      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Skipping OTP generation for test@clinifly.net`);
-      console.log(`[ADMIN OTP] 📝 Static OTP 123456 will work for this account`);
+
+
       
       return res.json({
         ok: true,
@@ -3232,9 +3232,9 @@ app.post("/api/admin/request-otp", async (req, res) => {
     // Send OTP email
     try {
       await sendOTPEmail(emailNormalized, otpCode, clinic.language || "en");
-      console.log(`[ADMIN OTP] OTP sent to ${emailNormalized} for clinic ${code}`);
+
     } catch (emailError) {
-      console.error("[ADMIN OTP] Failed to send email:", emailError);
+
       return res.status(500).json({ 
         ok: false, 
         error: "email_send_failed", 
@@ -3250,7 +3250,7 @@ app.post("/api/admin/request-otp", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("[ADMIN OTP] Request error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
   }
 });
@@ -3295,7 +3295,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 
     // Review Mode Bypass: Accept static OTP for test@clinifly.net
     if (REVIEW_MODE && emailNormalized === "test@clinifly.net" && otp === "123456") {
-      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Static OTP bypass for test@clinifly.net`);
+
       
       // Generate JWT token
       const token = jwt.sign(
@@ -3310,7 +3310,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
         { expiresIn: JWT_EXPIRES_IN }
       );
 
-      console.log(`[ADMIN OTP] ✅ REVIEW MODE: Login successful for ${clinic.clinic_code}`);
+
 
       return res.json({
         ok: true,
@@ -3362,7 +3362,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    console.log(`[ADMIN OTP] ✅ OTP verification successful for ${clinic.clinic_code}`);
+
 
     res.json({
       ok: true,
@@ -3373,7 +3373,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("[ADMIN OTP] Verify error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
   }
 });
@@ -3401,13 +3401,13 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
     }
 
-    console.log(`[DOCTOR OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+
     
     // 🔥 FIX: Resolve doctor from patients table with role="DOCTOR"
     const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
-    console.log(`[DOCTOR OTP] Resolved doctor data:`, resolved);
+
     const resolvedEmail = resolved.email || emailNormalized;
-    console.log(`[DOCTOR OTP] Using resolved email: "${resolvedEmail}"`);
+
     
     if (!resolvedEmail) {
       return res.status(400).json({
@@ -3419,7 +3419,7 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
 
     // Get OTP data for this email
     const otpData = await getOTPsForEmail(resolvedEmail);
-    console.log(`[DOCTOR OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+
     
     if (!otpData) {
       return res.status(404).json({ 
@@ -3470,9 +3470,9 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
       }
       
       isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
-      console.log(`[DOCTOR OTP] Verification result: ${isValid}`);
+
     } catch (verifyError) {
-      console.error("[DOCTOR OTP] Verification error:", verifyError);
+
       return res.status(500).json({ 
         ok: false, 
         error: "verification_failed", 
@@ -3534,7 +3534,7 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (doctor ${foundDoctorId}), DOCTOR token generated`);
+
     
     res.json({
       ok: true,
@@ -3549,7 +3549,7 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
       expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
     });
   } catch (error) {
-    console.error("[DOCTOR OTP] Verify OTP error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -3626,12 +3626,12 @@ app.post("/api/register/doctor", async (req, res) => {
         if (clinic) {
           foundClinic = clinic;
           supabaseClinicId = clinic.id;
-          console.log(`[DOCTOR REGISTER] Found clinic UUID: ${supabaseClinicId} for code: ${code}`);
+
         } else {
-          console.warn(`[DOCTOR REGISTER] Clinic not found in Supabase for code: ${code}`);
+
         }
       } catch (err) {
-        console.error(`[DOCTOR REGISTER] Error finding clinic in Supabase:`, err.message);
+
       }
     }
 
@@ -3644,7 +3644,7 @@ app.post("/api/register/doctor", async (req, res) => {
     }
 
     if (isSupabaseEnabled() && !supabaseClinicId) {
-      console.error("[DOCTOR REGISTER] Missing clinic_id for Supabase insert. clinicCode:", code);
+
       return res.status(400).json({ ok: false, error: "clinic_not_found", message: "Klinik kodu bulunamadı. Lütfen geçerli bir klinik kodu girin." });
     }
 
@@ -3661,10 +3661,10 @@ app.post("/api/register/doctor", async (req, res) => {
         
         if (!e && existing) {
           existingDoctorId = existing.doctor_id || existing.id;
-          console.log("[DOCTOR REGISTER] Doctor already exists in doctors table:", existingDoctorId);
+
         }
       } catch (err) {
-        console.error("[DOCTOR REGISTER] Error checking existing doctor:", err?.message || err);
+
       }
     }
 
@@ -3684,19 +3684,14 @@ app.post("/api/register/doctor", async (req, res) => {
       try {
         const doctorPayload = {
           doctor_id: doctorId,
-          email: emailNormalized,
-          name: String(name || ""),
           clinic_id: supabaseClinicId,
           clinic_code: code,
-          status: "PENDING",
-          language: "tr",
+          full_name: String(name || ""),
+          email: emailNormalized,
           phone: phoneNormalized,
           license_number: licenseNumber,
-          department: department || null,
-          specialties: specialties || [],
-          title: title || null,
-          experience_years: experienceYears || null,
-          languages: languages || [],
+          status: "PENDING",
+          role: "DOCTOR"
         };
 
         console.log("[DOCTOR REGISTER] Inserting doctor into DOCTORS table:", {
@@ -3706,6 +3701,11 @@ app.post("/api/register/doctor", async (req, res) => {
           status: doctorPayload.status,
         });
 
+        console.log(
+          "🔥 FINAL DOCTOR PAYLOAD",
+          JSON.stringify(doctorPayload, null, 2)
+        );
+
         const { data, error } = await supabase
           .from("doctors")
           .insert(doctorPayload)
@@ -3713,7 +3713,7 @@ app.post("/api/register/doctor", async (req, res) => {
           .single();
 
         if (error) {
-          console.error("[DOCTOR REGISTER] Supabase insert failed:", error);
+
           return res.status(500).json({ 
             ok: false, 
             error: "registration_failed", 
@@ -3721,7 +3721,7 @@ app.post("/api/register/doctor", async (req, res) => {
           });
         }
 
-        console.log("[DOCTOR REGISTER] Doctor registered successfully in DOCTORS table:", data);
+
         
         res.json({
           ok: true,
@@ -3733,7 +3733,7 @@ app.post("/api/register/doctor", async (req, res) => {
         });
 
       } catch (error) {
-        console.error("[DOCTOR REGISTER] Registration error:", error);
+
         return res.status(500).json({ 
           ok: false, 
           error: "registration_failed", 
@@ -3749,7 +3749,7 @@ app.post("/api/register/doctor", async (req, res) => {
     }
 
   } catch (error) {
-    console.error("[DOCTOR REGISTER] Unexpected error:", error);
+
     res.status(500).json({ 
       ok: false, 
       error: "internal_error", 
@@ -3781,13 +3781,13 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
     }
 
-    console.log(`[PATIENT OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+
     
     // 🔥 CLEAN SEPARATION: Resolve patient from PATIENTS table only
     const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
-    console.log(`[PATIENT OTP] Resolved patient data:`, resolved);
+
     const resolvedEmail = resolved.email || emailNormalized;
-    console.log(`[PATIENT OTP] Using resolved email: "${resolvedEmail}"`);
+
     
     if (!resolvedEmail || !resolved.patientId) {
       return res.status(404).json({
@@ -3799,7 +3799,7 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
 
     // Get OTP data for this email
     const otpData = await getOTPsForEmail(resolvedEmail);
-    console.log(`[PATIENT OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+
     
     if (!otpData) {
       return res.status(404).json({ 
@@ -3850,9 +3850,9 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
       }
       
       isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
-      console.log(`[PATIENT OTP] Verification result: ${isValid}`);
+
     } catch (verifyError) {
-      console.error("[PATIENT OTP] Verification error:", verifyError);
+
       return res.status(500).json({ 
         ok: false, 
         error: "verification_failed", 
@@ -3915,7 +3915,7 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[PATIENT OTP] OTP verified successfully for email ${emailNormalized} (PATIENT ${foundPatientId}), PATIENT token generated`);
+
     
     res.json({
       ok: true,
@@ -3931,7 +3931,7 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
       expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
     });
   } catch (error) {
-    console.error("[PATIENT OTP] Verify OTP error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -3959,13 +3959,13 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
     }
 
-    console.log(`[DOCTOR OTP] Verify OTP request: email=${emailNormalized}, phone=${phone}`);
+
     
     // 🔥 CLEAN SEPARATION: Resolve doctor from DOCTORS table only
     const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
-    console.log(`[DOCTOR OTP] Resolved doctor data:`, resolved);
+
     const resolvedEmail = resolved.email || emailNormalized;
-    console.log(`[DOCTOR OTP] Using resolved email: "${resolvedEmail}"`);
+
     
     if (!resolvedEmail || !resolved.doctorId) {
       return res.status(404).json({
@@ -3977,7 +3977,7 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
 
     // Get OTP data for this email
     const otpData = await getOTPsForEmail(resolvedEmail);
-    console.log(`[DOCTOR OTP] Looking for OTP by email: ${resolvedEmail}, OTP found: ${!!otpData}`);
+
     
     if (!otpData) {
       return res.status(404).json({ 
@@ -4028,9 +4028,9 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
       }
       
       isValid = await verifyOTP(String(otpCode).trim(), hashToUse);
-      console.log(`[DOCTOR OTP] Verification result: ${isValid}`);
+
     } catch (verifyError) {
-      console.error("[DOCTOR OTP] Verification error:", verifyError);
+
       return res.status(500).json({ 
         ok: false, 
         error: "verification_failed", 
@@ -4096,7 +4096,7 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
     };
     writeJson(TOK_FILE, tokens);
     
-    console.log(`[DOCTOR OTP] OTP verified successfully for email ${emailNormalized} (DOCTOR ${foundDoctorId}), DOCTOR token generated`);
+
     
     res.json({
       ok: true,
@@ -4112,7 +4112,7 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
       expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60, // seconds
     });
   } catch (error) {
-    console.error("[DOCTOR OTP] Verify OTP error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -4153,7 +4153,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 
     // Review Mode Bypass: Accept static OTP for test@clinifly.net
     if (REVIEW_MODE && emailNormalized === "test@clinifly.net" && otp === "123456") {
-      console.log(`[ADMIN OTP] 🚫 REVIEW MODE: Static OTP bypass for test@clinifly.net`);
+
       
       // 🔥 CLEAN SEPARATION: Generate ADMIN JWT token with REQUIRED payload
       const token = jwt.sign(
@@ -4170,7 +4170,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
         { expiresIn: JWT_EXPIRES_IN }
       );
 
-      console.log(`[ADMIN OTP] ✅ REVIEW MODE: Login successful for ${clinic.clinic_code}`);
+
 
       return res.json({
         ok: true,
@@ -4226,7 +4226,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
 
-    console.log(`[ADMIN OTP] ✅ OTP verification successful for ${clinic.clinic_code}`);
+
 
     res.json({
       ok: true,
@@ -4239,7 +4239,7 @@ app.post("/api/admin/verify-otp", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("[ADMIN OTP] Verify error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: "Sunucu hatası." });
   }
 });
@@ -4276,13 +4276,13 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ ok: false, error: "invalid_otp_format", message: "OTP kodu 6 haneli olmalıdır." });
     }
 
-    console.log(`[UNIFIED OTP] Verify OTP request: type=${type}, email=${emailNormalized}, phone=${phone}`);
+
 
     // 🔥 UNIFIED LOGIC: Route based on type
     if (type === "doctor") {
       // DOCTOR FLOW
       const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
-      console.log(`[UNIFIED OTP] Resolved doctor data:`, resolved);
+
       const resolvedEmail = resolved.email || emailNormalized;
       
       if (!resolvedEmail || !resolved.doctorId) {
@@ -4369,7 +4369,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
       );
       
-      console.log(`[UNIFIED OTP] ✅ Doctor OTP verified: ${foundDoctorId}`);
+
       
       return res.json({
         ok: true,
@@ -4384,7 +4384,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     } else {
       // PATIENT FLOW
       const resolved = await resolvePatientForOtp({ email: emailNormalized, phone });
-      console.log(`[UNIFIED OTP] Resolved patient data:`, resolved);
+
       const resolvedEmail = resolved.email || emailNormalized;
       
       if (!resolvedEmail || !resolved.patientId) {
@@ -4469,7 +4469,7 @@ app.post("/auth/verify-otp", async (req, res) => {
         { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
       );
       
-      console.log(`[UNIFIED OTP] ✅ Patient OTP verified: ${foundPatientId}`);
+
       
       return res.json({
         ok: true,
@@ -4482,7 +4482,7 @@ app.post("/auth/verify-otp", async (req, res) => {
     }
 
   } catch (error) {
-    console.error("[UNIFIED OTP] Verify OTP error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -4556,7 +4556,7 @@ app.post("/api/patient/login", (req, res) => {
       phone: foundPatient.phone || "",
     });
   } catch (error) {
-    console.error("Patient login error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -4677,7 +4677,7 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("[ME] /api/patient/me error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -4696,7 +4696,7 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
     const { months = 6 } = req.query;
     const monthsCount = Math.min(Math.max(parseInt(months), 1), 24); // 1-24 months range
     
-    console.log(`[METRICS] Getting monthly active patients for last ${monthsCount} months`);
+
     
     if (!isSupabaseEnabled()) {
       return res.status(500).json({ ok: false, error: "Database not available" });
@@ -4714,7 +4714,7 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
     endDate.setMonth(endDate.getMonth() + 1);
     endDate.setDate(0); // End of last month
     
-    console.log(`[METRICS] Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
     
     // Get all patients with their activity in the date range for this clinic
     const { data: patients, error } = await supabase
@@ -4725,7 +4725,7 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
       .lte('created_at', endDate.toISOString());
     
     if (error) {
-      console.error('[METRICS] Error fetching patients:', error);
+
       return res.status(500).json({ ok: false, error: "Failed to fetch patients" });
     }
     
@@ -4771,7 +4771,7 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
       return { ...item, growthPercent };
     });
     
-    console.log(`[METRICS] Monthly active patients result:`, resultWithGrowth);
+
     
     res.json({ 
       ok: true, 
@@ -4781,7 +4781,7 @@ app.get("/api/admin/metrics/monthly-active-patients", requireAdminAuth, async (r
     });
     
   } catch (error) {
-    console.error('[METRICS] Error in monthly active patients:', error);
+
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
@@ -4792,7 +4792,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
     const { months = 6 } = req.query;
     const monthsCount = Math.min(Math.max(parseInt(months), 1), 24); // 1-24 months range
     
-    console.log(`[METRICS] Getting monthly procedures for last ${monthsCount} months`);
+
     
     if (!isSupabaseEnabled()) {
       return res.status(500).json({ ok: false, error: "Database not available" });
@@ -4810,7 +4810,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
     endDate.setMonth(endDate.getMonth() + 1);
     endDate.setDate(0); // End of last month
     
-    console.log(`[METRICS] Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
     
     // Get all patients with treatments in the date range for this clinic
     const { data: patients, error } = await supabase
@@ -4821,7 +4821,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
       .lte('created_at', endDate.toISOString());
     
     if (error) {
-      console.error('[METRICS] Error fetching patients:', error);
+
       return res.status(500).json({ ok: false, error: "Failed to fetch patients" });
     }
     
@@ -4856,7 +4856,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
             });
           }
         } catch (e) {
-          console.warn('[METRICS] Error parsing treatments data:', e);
+
         }
       }
     });
@@ -4882,7 +4882,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
       return { ...item, growthPercent };
     });
     
-    console.log(`[METRICS] Monthly procedures result:`, resultWithGrowth);
+
     
     res.json({ 
       ok: true, 
@@ -4892,7 +4892,7 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
     });
     
   } catch (error) {
-    console.error('[METRICS] Error in monthly procedures:', error);
+
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
@@ -4937,7 +4937,7 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
 
     res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores });
   } catch (error) {
-    console.error("[ADMIN PATIENTS] Supabase error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -4962,7 +4962,7 @@ app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
     }
 
-    console.log("[SUPABASE] approving patient", { patientId, clinic_id: req.clinicId });
+
 
     const { error } = await supabase
       .from("patients")
@@ -4974,14 +4974,14 @@ app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
       .eq("clinic_id", req.clinicId);
 
     if (error) {
-      console.error("[SUPABASE] approve failed:", error);
+
       return res.status(500).json({ ok: false, error: "approve_failed" });
     }
 
-    console.log("[SUPABASE] patient approved:", patientId);
+
     return res.json({ ok: true, patientId, status: "APPROVED" });
   } catch (e) {
-    console.error("[SUPABASE] approve exception:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -5254,7 +5254,7 @@ async function getTravelHandler(req, res) {
 
     // Do not silently fall back unless explicitly enabled
     if (!canUseFileFallback()) {
-      console.error("[TRAVEL] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("travel"));
     }
 
@@ -5272,7 +5272,7 @@ async function getTravelHandler(req, res) {
     data.patientId = patientId;
     return res.json(data);
   } catch (e) {
-    console.error("[TRAVEL] GET error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
@@ -5448,11 +5448,11 @@ async function saveTravelHandler(req, res) {
             url: "/travel",
             data: { type: "AIRPORT_PICKUP", patientId, from: "CLINIC" },
           }).catch((err) => {
-            console.error(`[TRAVEL/${patientId}] Failed to send airport pickup notification:`, err);
+
           });
         }
       } catch (e) {
-        console.error(`[TRAVEL/${patientId}] Notification logic error (ignored):`, e);
+
       }
 
       return res.json({ ok: true, saved: true, travel: updatedPatient?.travel || payload, patient: updatedPatient });
@@ -5460,7 +5460,7 @@ async function saveTravelHandler(req, res) {
 
     // Do not silently fall back unless explicitly enabled
     if (!canUseFileFallback()) {
-      console.error("[TRAVEL] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("travel"));
     }
 
@@ -5518,7 +5518,7 @@ async function saveTravelHandler(req, res) {
     writeJson(travelFile, payload);
     return res.json({ ok: true, saved: true, travel: payload });
   } catch (e) {
-    console.error("[TRAVEL] SAVE error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
@@ -5902,7 +5902,7 @@ app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
     const events = applyEventPrices(mapTreatmentEventsForCalendar(data?.treatment_events), priceMap);
     return res.json({ ok: true, events });
   } catch (e) {
-    console.error("[TREATMENT_EVENTS] GET error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -5961,7 +5961,7 @@ app.put("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, 
 
     return res.json({ ok: true, saved: true, events: Array.isArray(data?.treatment_events) ? data.treatment_events : [] });
   } catch (e) {
-    console.error("[TREATMENT_EVENTS] PUT error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -6034,7 +6034,7 @@ async function saveTreatmentV1Handler(req, res) {
 
     return res.json({ ok: true, saved: true, patient: updatedPatient });
   } catch (e) {
-    console.error("[TREATMENT] POST/PUT error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
@@ -6079,7 +6079,7 @@ app.get("/api/patient/:patientId/treatment", requireAdminOrPatientToken, async (
     const merged = deepMerge(defaultTreatmentV1(), isPlainObject(p?.treatment) ? p.treatment : {});
     return res.json({ ok: true, treatment: merged });
   } catch (e) {
-    console.error("[TREATMENT] GET error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -6194,7 +6194,7 @@ async function patientHealthGetHandler(req, res) {
     }
 
     if (!canUseFileFallback()) {
-      console.error("[HEALTH] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("health"));
     }
 
@@ -6214,16 +6214,16 @@ async function patientHealthGetHandler(req, res) {
       createdAt: data.createdAt || null,
     });
   } catch (e) {
-    console.error("[HEALTH] GET error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
 
 async function patientHealthPostHandler(req, res) {
   try {
-    console.log("[HEALTH] POST params:", req.params);
-    console.log("[HEALTH] POST token patientId:", req.patientId);
-    console.log("[HEALTH] POST body:", safeJsonPreview(req.body));
+
+
+
 
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
@@ -6286,7 +6286,7 @@ async function patientHealthPostHandler(req, res) {
     }
 
     if (!canUseFileFallback()) {
-      console.error("[HEALTH] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("health"));
     }
 
@@ -6303,16 +6303,16 @@ async function patientHealthPostHandler(req, res) {
       createdAt: payload.createdAt,
     });
   } catch (e) {
-    console.error("[HEALTH] POST error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
 
 async function patientHealthPutHandler(req, res) {
   try {
-    console.log("[HEALTH] PUT params:", req.params);
-    console.log("[HEALTH] PUT token patientId:", req.patientId);
-    console.log("[HEALTH] PUT body:", safeJsonPreview(req.body));
+
+
+
 
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
@@ -6405,7 +6405,7 @@ async function patientHealthPutHandler(req, res) {
     }
 
     if (!canUseFileFallback()) {
-      console.error("[HEALTH] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("health"));
     }
 
@@ -6431,7 +6431,7 @@ async function patientHealthPutHandler(req, res) {
       createdAt: payload.createdAt,
     });
   } catch (e) {
-    console.error("[HEALTH] PUT error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 }
@@ -6492,7 +6492,7 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
     }
 
     if (!canUseFileFallback()) {
-      console.error("[ADMIN HEALTH] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("health"));
     }
 
@@ -6520,7 +6520,7 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
       createdAt: data.createdAt || null,
     });
   } catch (e) {
-    console.error("[ADMIN HEALTH] GET error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -6554,7 +6554,7 @@ app.get("/api/health-form/schema", (req, res) => {
   const isEnglish = lang === "en";
   
   // Debug logging
-  console.log(`[HEALTH-FORM-SCHEMA] Requested language: ${req.query.lang || "none"}, Accept-Language: ${req.headers["accept-language"] || "none"}, Final: ${lang}, isEnglish: ${isEnglish}`);
+
   
   // Helper function to get localized labels
   const t = (trLabel, enLabel) => isEnglish ? enLabel : trLabel;
@@ -6789,7 +6789,7 @@ function calculateOralHealthScore(patientId) {
       completed: isCompleted
     };
   } catch (error) {
-    console.error(`[ORAL_HEALTH_SCORE] Error calculating score for ${patientId}:`, error);
+
     // Return default scores on error
     return { beforeScore: 100, afterScore: null, completed: false };
   }
@@ -6810,10 +6810,10 @@ function updatePatientOralHealthScores(patientId) {
       patients[patientId].oralHealthCompleted = scores.completed;
       patients[patientId].updatedAt = now();
       writeJson(PAT_FILE, patients);
-      console.log(`[ORAL_HEALTH_SCORE] Updated scores for ${patientId}: before=${scores.beforeScore}, after=${scores.afterScore || "N/A"}`);
+
     }
   } catch (error) {
-    console.error(`[ORAL_HEALTH_SCORE] Error updating scores for ${patientId}:`, error);
+
   }
 }
 
@@ -6826,10 +6826,10 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   const url = req.url;
   const headers = req.headers;
   
-  console.log(`[TREATMENTS GET] ========== START ==========`);
-  console.log(`[TREATMENTS GET] Method: ${method}`);
-  console.log(`[TREATMENTS GET] URL: ${url}`);
-  console.log(`[TREATMENTS GET] Request for patientId: ${patientId}`);
+
+
+
+
   console.log(`[TREATMENTS GET] Headers:`, {
     authorization: headers.authorization ? "present" : "missing",
     "x-patient-token": headers["x-patient-token"] ? "present" : "missing",
@@ -6846,7 +6846,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       
       // Check if it's an admin token (has clinicCode)
       if (decoded.clinicCode) {
-        console.log(`[TREATMENTS GET] Admin token detected, clinicCode: ${decoded.clinicCode}`);
+
         // Use requireAdminToken logic
         const clinicCode = decoded.clinicCode;
         if (isSupabaseEnabled()) {
@@ -6857,7 +6857,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
             req.clinicStatus = clinic.settings?.status || "ACTIVE";
             req.clinic = clinic;
             req.isAdmin = true;
-            console.log(`[TREATMENTS GET] ✅ Admin auth successful`);
+
             return next();
           }
         }
@@ -6872,7 +6872,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
             req.clinicStatus = c.status || "ACTIVE";
             req.clinic = c;
             req.isAdmin = true;
-            console.log(`[TREATMENTS GET] ✅ Admin auth successful (file)`);
+
             return next();
           }
         }
@@ -6880,19 +6880,19 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       
       // Check if it's a patient token (has patientId)
       if (decoded.patientId) {
-        console.log(`[TREATMENTS GET] Patient token detected, patientId: ${decoded.patientId}`);
+
         // Verify patient can only access their own treatments
         if (decoded.patientId !== patientId) {
           return res.status(403).json({ ok: false, error: "patient_id_mismatch", message: "Bu hasta bilgilerine erişim yetkiniz yok." });
         }
         req.patientId = decoded.patientId;
         req.isAdmin = false;
-        console.log(`[TREATMENTS GET] ✅ Patient auth successful`);
+
         return next();
       }
     } catch (jwtError) {
       // JWT verification failed, try patient token fallback
-      console.log(`[TREATMENTS GET] JWT verification failed, trying patient token fallback`);
+
     }
   }
   
@@ -6911,13 +6911,13 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       }
       req.patientId = t.patientId;
       req.isAdmin = false;
-      console.log(`[TREATMENTS GET] ✅ Patient auth successful (legacy token)`);
+
       return next();
     }
   }
   
   // No valid token found
-  console.log(`[TREATMENTS GET] ❌ No valid token found`);
+
   return res.status(401).json({ ok: false, error: "unauthorized", message: "Token bulunamadı veya geçersiz." });
 }, async (req, res) => {
   // Continue with endpoint logic
@@ -6925,19 +6925,19 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
 
   // Do not read from disk unless explicitly enabled
   if (!isSupabaseEnabled() && !canUseFileFallback()) {
-    console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+
     return res.status(500).json(supabaseDisabledPayload("treatments"));
   }
 
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
   if (!fs.existsSync(TREATMENTS_DIR)) {
-    console.log(`[TREATMENTS GET] Creating treatments directory: ${TREATMENTS_DIR}`);
+
     fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   }
 
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
-  console.log(`[TREATMENTS GET] Treatments file path: ${treatmentsFile}`);
-  console.log(`[TREATMENTS GET] File exists: ${fs.existsSync(treatmentsFile)}`);
+
+
 
   const defaultData = {
     schemaVersion: 1,
@@ -6998,7 +6998,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
         source = supaPayload || defaultData;
       }
     } catch (e) {
-      console.error("[TREATMENTS GET] Supabase fetch exception:", e?.message || e);
+
       return res.status(500).json({ ok: false, error: "treatments_fetch_failed" });
     }
   } else if (canUseFileFallback()) {
@@ -7079,7 +7079,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   });
   
   // Log full teeth array for debugging
-  console.log(`[TREATMENTS GET] Full teeth array:`, JSON.stringify(data.teeth, null, 2));
+
   
   // Load treatment events from dedicated store (independent from travel)
   let treatmentEvents = [];
@@ -7104,7 +7104,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
         });
       }
     } catch (e) {
-      console.error("[TREATMENTS GET] treatment_events fetch exception (ignored):", e?.message || e);
+
     }
   } else if (canUseFileFallback()) {
     try {
@@ -7121,7 +7121,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     data.events = treatmentEvents;
   }
   
-  console.log(`[TREATMENTS GET] ========== END ==========`);
+
   
   // Return data directly (matching the format saved by POST)
   res.json(data);
@@ -7130,15 +7130,15 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
 // POST /api/patient/:patientId/treatments
 app.post("/api/patient/:patientId/treatments", async (req, res) => {
   const patientId = req.params.patientId;
-  console.log(`[TREATMENTS POST] ========== START ==========`);
-  console.log(`[TREATMENTS POST] Request for patientId: ${patientId}`);
-  console.log(`[TREATMENTS POST] Request body:`, JSON.stringify(req.body, null, 2));
+
+
+
   
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
   if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
   
   const treatmentsFile = path.join(TREATMENTS_DIR, `${patientId}.json`);
-  console.log(`[TREATMENTS POST] Treatments file path: ${treatmentsFile}`);
+
   const existing = await loadExistingTreatmentsPayload(
     patientId,
     req.isAdmin ? req.clinicId : null,
@@ -7161,7 +7161,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   });
   
   if (!toothId || !procedure) {
-    console.log(`[TREATMENTS POST] Missing required fields: toothId=${!!toothId}, procedure=${!!procedure}`);
+
     return res.status(400).json({ ok: false, error: "toothId and procedure required" });
   }
   
@@ -7174,9 +7174,9 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   if (!tooth) {
     tooth = { toothId: String(toothId), procedures: [] };
     teeth.push(tooth);
-    console.log(`[TREATMENTS POST] Created new tooth entry: ${toothId}`);
+
   } else {
-    console.log(`[TREATMENTS POST] Found existing tooth: ${toothId}, current procedures: ${tooth.procedures?.length || 0}`);
+
   }
   
   if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
@@ -7281,7 +7281,7 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
-      console.log(`[TREATMENTS POST] Updating treatments data in Supabase...`);
+
       const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
       if (!result.ok) throw result.error;
       console.log(
@@ -7320,18 +7320,18 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
         }
       }
     } catch (e) {
-      console.error("[TREATMENTS POST] treatment(v1) sync exception (ignored):", e?.message || e);
+
     }
-    console.log(`[TREATMENTS POST] ========== END ==========`);
+
   } else {
     if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("treatments"));
     }
 
     // FILE-BASED: Fallback storage (only when Supabase disabled)
     writeJson(treatmentsFile, payload);
-    console.log(`[TREATMENTS POST] ========== END ==========`);
+
   }
   
   // Update patient oral health scores after treatment plan change
@@ -7434,7 +7434,7 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
-      console.log(`[TREATMENTS PUT] Updating treatments data in Supabase...`);
+
       const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
       if (!result.ok) throw result.error;
       console.log(
@@ -7473,11 +7473,11 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
         }
       }
     } catch (e) {
-      console.error("[TREATMENTS PUT] treatment(v1) sync exception (ignored):", e?.message || e);
+
     }
   } else {
     if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("treatments"));
     }
 
@@ -7556,7 +7556,7 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
-      console.log(`[TREATMENTS DELETE] Updating treatments data in Supabase...`);
+
       const result = await saveTreatmentsSupabaseWithFallback(patientId, payload, "clinic");
       if (!result.ok) throw result.error;
       console.log(
@@ -7595,11 +7595,11 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
         }
       }
     } catch (e) {
-      console.error("[TREATMENTS DELETE] treatment(v1) sync exception (ignored):", e?.message || e);
+
     }
   } else {
     if (!canUseFileFallback()) {
-      console.error("[TREATMENTS] Supabase disabled (file fallback disabled)");
+
       return res.status(500).json(supabaseDisabledPayload("treatments"));
     }
 
@@ -7644,7 +7644,7 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
           return res.json({ ok: true, messages });
         })
         .catch((e) => {
-          console.error("[MESSAGES] Supabase fetch exception:", e);
+
           return res.status(500).json({ ok: false, error: "messages_fetch_failed", exception: String(e?.message || e) });
         });
       return;
@@ -7662,7 +7662,7 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
     const messages = Array.isArray(existing.messages) ? existing.messages : [];
     return res.json({ ok: true, messages });
   } catch (error) {
-    console.error("[GET /api/patient/me/messages] Error:", error);
+
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -7721,11 +7721,11 @@ app.post("/api/patient/me/messages", requireToken, (req, res) => {
         return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
       })
       .catch((e) => {
-        console.error("[MESSAGES] Supabase save exception:", e);
+
         return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
       });
   } catch (error) {
-    console.error("[POST /api/patient/me/messages] Error:", error);
+
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -7737,12 +7737,12 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
     const origin = req.headers.origin || "unknown";
     const userAgent = req.headers["user-agent"] || "unknown";
     
-    console.log(`[GET /api/patient/:patientId/messages] Request received - patientId: ${patientId}, origin: ${origin}, userAgent: ${userAgent?.substring(0, 50)}`);
+
     
     // CORS headers are handled by global middleware - no need to override
     
     if (!patientId) {
-      console.warn("[GET /api/patient/:patientId/messages] patientId missing");
+
       return res.status(400).json({ ok: false, error: "patientId_required", message: "Patient ID is required" });
     }
 
@@ -7785,7 +7785,7 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
           return res.json({ ok: true, messages });
         })
         .catch((e) => {
-          console.error("[MESSAGES] Supabase fetch exception:", e);
+
           return res.status(500).json({ ok: false, error: "messages_fetch_failed", exception: String(e?.message || e) });
         });
       return;
@@ -7802,10 +7802,10 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
     const existing = readJson(chatFile, { messages: [] });
     
     const messages = Array.isArray(existing.messages) ? existing.messages : [];
-    console.log(`[GET /api/patient/:patientId/messages] Returning ${messages.length} messages for patient ${patientId}`);
+
     res.json({ ok: true, messages });
   } catch (error) {
-    console.error("[GET /api/patient/:patientId/messages] Error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error", message: "Failed to load messages" });
   }
 });
@@ -7825,7 +7825,7 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
     const text = String(body.text || "").trim();
     const msgType = String(body.type || "text").trim() || "text";
     
-    console.log("Patient message - patientId:", patientId, "text length:", text.length, "body keys:", Object.keys(body));
+
     
     if (!text) {
       return res.status(400).json({ ok: false, error: "text_required", received: body });
@@ -7879,11 +7879,11 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
         return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
       })
       .catch((e) => {
-        console.error("[MESSAGES] Supabase save exception:", e);
+
         return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
       });
   } catch (error) {
-    console.error("Patient message send error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -7902,7 +7902,7 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
     const text = String(body.text || "").trim();
     const msgType = String(body.type || "text").trim() || "text";
     
-    console.log("Admin message - patientId:", patientId, "text length:", text.length, "body keys:", Object.keys(body));
+
     
     if (!text) {
       return res.status(400).json({ ok: false, error: "text_required", received: body });
@@ -7915,7 +7915,7 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
         url: "/chat",
         data: { messageId: newMessage.id }
       }).catch(err => {
-        console.error("[PUSH] Failed to send push notification:", err);
+
       });
       return res.json({ ok: true, message: newMessage });
     };
@@ -7967,12 +7967,12 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
         return sendAndRespond(msg);
       })
       .catch((e) => {
-        console.error("[MESSAGES] Supabase save exception:", e);
+
         return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
       });
     
   } catch (error) {
-    console.error("Admin message send error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8020,10 +8020,10 @@ app.post("/api/patient/:patientId/push-subscription", requireToken, (req, res) =
     
     writeJson(PUSH_SUBSCRIPTIONS_FILE, subscriptions);
     
-    console.log(`[PUSH] Subscription registered for patient ${patientId}`);
+
     res.json({ ok: true, message: "subscription_registered" });
   } catch (error) {
-    console.error("Push subscription registration error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8211,7 +8211,7 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
       message: uploadedFiles.length === 1 ? "File uploaded successfully" : `${uploadedFiles.length} files uploaded successfully`,
     });
   } catch (error) {
-    console.error("[Chat Upload] Error:", error);
+
     return res.status(500).json({ ok: false, error: "upload_exception", message: error?.message || "Upload failed" });
   }
 });
@@ -8219,16 +8219,16 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 // POST /api/admin/chat/upload (Admin uploads files/images to patient chat)
 app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5), async (req, res) => {
   try {
-    console.log("[Admin Chat Upload] Request received");
-    console.log("[Admin Chat Upload] Body keys:", Object.keys(req.body || {}));
-    console.log("[Admin Chat Upload] Files:", Array.isArray(req.files) ? req.files.length : "not array", req.files);
+
+
+
     
     const body = req.body || {};
     const patientId = String(body.patientId || "").trim();
-    console.log("[Admin Chat Upload] Patient ID:", patientId);
+
     
     if (!patientId) {
-      console.error("[Admin Chat Upload] Missing patientId");
+
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
 
@@ -8237,10 +8237,10 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
     }
 
     const files = Array.isArray(req.files) ? req.files : [];
-    console.log("[Admin Chat Upload] Files count:", files.length);
+
     
     if (files.length === 0) {
-      console.error("[Admin Chat Upload] No files received");
+
       return res.status(400).json({ ok: false, error: "no_files", message: "No files received" });
     }
 
@@ -8374,15 +8374,15 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
     if (useFileStore && chatFile) {
       writeJson(chatFile, { patientId, messages, updatedAt: now() });
     }
-    console.log("[Admin Chat Upload] Success! Uploaded", uploadedFiles.length, "file(s)");
+
     return res.json({
       ok: true,
       files: uploadedFiles,
       message: uploadedFiles.length === 1 ? "File uploaded successfully" : `${uploadedFiles.length} files uploaded successfully`,
     });
   } catch (error) {
-    console.error("[Admin Chat Upload] Error:", error);
-    console.error("[Admin Chat Upload] Error stack:", error?.stack);
+
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8392,7 +8392,7 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
 // Supports ?code=XXX query parameter to get specific clinic from CLINICS_FILE
 app.get("/api/clinic", (req, res) => {
   const codeParam = String(req.query.code || "").trim().toUpperCase();
-  console.log(`[CLINIC GET] Request with codeParam: "${codeParam}"`);
+
   
   // Helper function to validate and clean Google Maps URL
   const validateGoogleMapsUrl = (url) => {
@@ -8404,19 +8404,19 @@ app.get("/api/clinic", (req, res) => {
       
       // Check if it's a Google Maps URL
       if (!urlObj.hostname.includes('maps.google.com') && !urlObj.hostname.includes('google.com/maps')) {
-        console.log(`[CLINIC GET] Invalid Google Maps URL hostname: ${urlObj.hostname}`);
+
         return '';
       }
       
       // Check for basic Google Maps URL structure
       if (!url.includes('/maps/') && !url.includes('/place/')) {
-        console.log(`[CLINIC GET] Invalid Google Maps URL structure: ${url}`);
+
         return '';
       }
       
       return url;
     } catch (error) {
-      console.log(`[CLINIC GET] Invalid Google Maps URL format: ${url}`, error.message);
+
       return '';
     }
   };
@@ -8440,11 +8440,11 @@ app.get("/api/clinic", (req, res) => {
         if (!publicClinic.referralLevels && publicClinic.settings?.referralLevels) {
           publicClinic.referralLevels = publicClinic.settings.referralLevels;
         }
-        console.log(`[CLINIC GET] Found clinic in CLINICS_FILE: ${codeParam}, discounts: ${publicClinic.defaultInviterDiscountPercent}/${publicClinic.defaultInvitedDiscountPercent}`);
+
         return res.json(publicClinic);
       }
     }
-    console.log(`[CLINIC GET] Clinic ${codeParam} not found in CLINICS_FILE, trying CLINIC_FILE...`);
+
     // If not found in CLINICS_FILE, try CLINIC_FILE as fallback
     const singleClinic = readJson(CLINIC_FILE, {});
     if (singleClinic && (singleClinic.clinicCode === codeParam || !codeParam)) {
@@ -8460,13 +8460,13 @@ app.get("/api/clinic", (req, res) => {
       if (!singleClinic.referralLevels && singleClinic.settings?.referralLevels) {
         singleClinic.referralLevels = singleClinic.settings.referralLevels;
       }
-      console.log(`[CLINIC GET] Found clinic in CLINIC_FILE: ${singleClinic.clinicCode}, discounts: ${singleClinic.defaultInviterDiscountPercent}/${singleClinic.defaultInvitedDiscountPercent}`);
+
       return res.json(singleClinic);
     }
   }
   
   // Default: read from CLINIC_FILE (single-clinic mode - for backward compatibility)
-  console.log(`[CLINIC GET] No codeParam or clinic not found, using default from CLINIC_FILE`);
+
   const defaultClinic = {
     clinicCode: "MOON",
     name: "Clinifly Dental Clinic",
@@ -8492,7 +8492,7 @@ app.get("/api/clinic", (req, res) => {
       if (!clinic.referralLevels) {
         clinic.referralLevels = defaultClinic.referralLevels;
       }
-  console.log(`[CLINIC GET] Returning default clinic with discounts: ${clinic.defaultInviterDiscountPercent}/${clinic.defaultInvitedDiscountPercent}`);
+
   res.json(clinic);
 });
 
@@ -8569,7 +8569,7 @@ app.get("/api/admin/clinic", requireAdminAuth, (req, res) => {
     // requireAdminToken middleware already sets req.clinic
     // Use it directly - no need to lookup again
     if (!req.clinic) {
-      console.error("[GET /api/admin/clinic] Clinic not found in req.clinic, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
+
       return res.status(404).json({ ok: false, error: "clinic_not_found" });
     }
     
@@ -8602,7 +8602,7 @@ app.get("/api/admin/clinic", requireAdminAuth, (req, res) => {
     };
     res.json(safe);
   } catch (error) {
-    console.error("Get admin clinic error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8639,7 +8639,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
 // requireAdminToken middleware already sets req.clinic
     // Use it directly - no need to lookup again
     if (!req.clinic) {
-      console.error("[PUT /api/admin/clinic] Clinic not found in req.clinic, clinicCode:", req.clinicCode, "clinicId:", req.clinicId);
+
       return res.status(404).json({ ok: false, error: "clinic_not_found" });
     }
     
@@ -8734,7 +8734,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
     // SUPABASE: Update clinic (PRIMARY - production source of truth)
     if (isSupabaseEnabled() && req.clinicId) {
       try {
-        console.log(`[PUT /api/admin/clinic] Updating clinic in Supabase: ${req.clinicId}`);
+
         
         // Prepare update data for Supabase (remove password from update, handle separately)
         const isCreate = false; // PUT endpoint - always update, never create
@@ -8765,14 +8765,14 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           supabaseUpdate.password_hash = passwordHash;
         }
         
-        console.log("[DEBUG] isCreate:", isCreate);
-        console.log("[DEBUG] supabaseUpdate keys:", Object.keys(supabaseUpdate));
-        console.log("[DEBUG] supabaseUpdate payload:", supabaseUpdate);
+
+
+
         
         // 🔒 UPDATE sırasında unique alanları koru
         delete supabaseUpdate.clinic_code;
         
-        console.log("[DEBUG] Supabase update payload:", supabaseUpdate);
+
         
         const { data, error } = await supabase
           .from("clinics")
@@ -8782,11 +8782,11 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           .single();
         
         if (error) {
-          console.error("[PUT /api/admin/clinic] Supabase update error:", error);
+
           return res.status(400).json({ ok: false, error: error.message });
         }
         
-        console.log(`[PUT /api/admin/clinic] ✅ Clinic updated in Supabase:`, data);
+
         
         // Return success response immediately for Supabase
         const { password_hash, ...safeData } = data || updated;
@@ -8825,15 +8825,15 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         },
       };
       writeJson(CLINICS_FILE, clinics);
-      console.log(`[PUT /api/admin/clinic] File-based clinic updated`);
+
     } else {
-      console.log(`[PUT /api/admin/clinic] File-based clinic not found, skipping file update`);
+
     }
     
     const { password, password_hash, ...safe } = updated;
     res.json({ ok: true, clinic: safe });
   } catch (error) {
-    console.error("Clinic update error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8874,12 +8874,12 @@ app.post("/api/admin/reviews/import/google", (req, res) => {
         }));
         res.json({ ok: true, reviews, placeName: jsonData.result?.name || "" });
       } catch (e) {
-        console.error("Parse error:", e);
+
         res.status(500).json({ ok: false, error: "parse_error" });
       }
     });
   }).on("error", (e) => {
-    console.error("Google API request error:", e);
+
     res.status(500).json({ ok: false, error: e.message || "request_failed" });
   });
 });
@@ -8891,7 +8891,7 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
     // For now, return a message that manual entry is needed
     res.json({ ok: false, error: "Trustpilot import not yet implemented. Please add reviews manually or use Trustpilot API." });
   } catch (error) {
-    console.error("Trustpilot reviews import error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8942,7 +8942,7 @@ app.post("/api/referrals", requireToken, (req, res) => {
 
     return res.json({ ok: true, item: newReferral });
   } catch (error) {
-    console.error("Referral create error:", error);
+
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8969,7 +8969,7 @@ app.get("/api/me/referrals", requireToken, (req, res) => {
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     return res.json({ ok: true, items });
   } catch (error) {
-    console.error("Me referrals error:", error);
+
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8988,7 +8988,7 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
     const clinicId = req.clinicId; // UUID from Supabase or file-based ID
     const clinicCode = req.clinicCode;
     
-    console.log(`[REFERRALS] Fetching referrals for clinic: code=${clinicCode}, id=${clinicId}`);
+
     const respondFromFile = () => {
       const raw = readJson(REF_FILE, []);
       const list = Array.isArray(raw) ? raw : Object.values(raw);
@@ -9010,7 +9010,7 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
         }
       }
       
-      console.log(`[REFERRALS] Found ${clinicPatientIds.size} patients for clinic ${clinicCode}`);
+
       
       let items = [];
       if (clinicPatientIds.size === 0) {
@@ -9043,7 +9043,7 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
       //   items = list.filter((x) => x && !x.deleted_at);  // ❌ SECURITY RISK!
       // }
 
-      console.log(`[REFERRALS] Returning ${items.length} referrals for clinic ${clinicCode}`);
+
       
       items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       return res.json({ ok: true, items, source: "file" });
@@ -9077,7 +9077,7 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
                 clinicPatients = data;
               }
             } catch (e) {
-              console.error("[REFERRALS] Supabase patient clinic_code lookup exception:", e?.message || e);
+
             }
           }
 
@@ -9174,20 +9174,20 @@ app.get("/api/admin/referrals", requireAdminAuth, async (req, res) => {
         // Sort by created date (newest first)
         items.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
         
-        console.log(`[REFERRALS] Returning ${items.length} referrals from Supabase for clinic ${clinicCode}`);
+
         if (items.length === 0) {
           return respondFromFile();
         }
         return res.json({ ok: true, items, source: "supabase" });
       } catch (supabaseError) {
-        console.error(`[REFERRALS] Supabase error:`, supabaseError.message);
+
         // Fall through to file-based
       }
     }
     
     return respondFromFile();
   } catch (error) {
-    console.error("Referrals list error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -9241,7 +9241,7 @@ app.delete("/api/admin/referrals/:referralId", requireAdminAuth, async (req, res
 
     return res.json({ ok: true, deleted: true, id: referralId });
   } catch (error) {
-    console.error("[REFERRALS] delete error:", error);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -9419,7 +9419,7 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
           });
         }
       } catch (e) {
-        console.warn("[REFERRAL] clinic_code lookup exception:", e?.message || e);
+
       }
     }
 
@@ -9488,7 +9488,7 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
             });
           }
         } catch (verifyException) {
-          console.warn("[REFERRAL] Insert verify exception (non-fatal):", verifyException?.message || verifyException);
+
         }
         return res.json({
           ok: true,
@@ -9517,7 +9517,7 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
     });
     return res.status(500).json({ ok: false, error: "referral_invite_failed" });
   } catch (e) {
-    console.error("[REFERRAL] invite error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -9525,20 +9525,20 @@ app.post("/api/referral/invite", requireToken, async (req, res) => {
 // GET /api/patient/:patientId/referrals
 // Get referrals where this patient is the inviter OR the invited patient (legacy-compatible)
 app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (req, res) => {
-  console.log(`[GET /api/patient/:patientId/referrals] ========== START ==========`);
-  console.log(`[GET /api/patient/:patientId/referrals] URL: ${req.url}`);
-  console.log(`[GET /api/patient/:patientId/referrals] Method: ${req.method}`);
-  console.log(`[GET /api/patient/:patientId/referrals] Params:`, req.params);
-  console.log(`[GET /api/patient/:patientId/referrals] Query:`, req.query);
+
+
+
+
+
   
   try {
     const { patientId } = req.params;
     const status = req.query.status;
     
-    console.log(`[GET /api/patient/:patientId/referrals] Request received - patientId: ${patientId}, status filter: ${status || 'none'}`);
+
     
     if (!patientId) {
-      console.log(`[GET /api/patient/:patientId/referrals] Error: patientId_required`);
+
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
     
@@ -9550,10 +9550,10 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
     const respondFromFile = () => {
       const raw = readJson(REF_FILE, []);
       const list = Array.isArray(raw) ? raw : Object.values(raw);
-      console.log(`[GET /api/patient/:patientId/referrals] Total referrals in DB: ${list.length}`);
+
 
       const normalizedPatientId = String(patientId || "").trim();
-      console.log(`[GET /api/patient/:patientId/referrals] Searching for patientId: "${normalizedPatientId}"`);
+
 
       if (list.length > 0) {
         console.log(`[GET /api/patient/:patientId/referrals] All referral patient IDs in DB:`, list.map((r) => ({
@@ -9571,7 +9571,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
         const invitedId = String(x.invitedPatientId || "").trim();
         return inviterId === normalizedPatientId || invitedId === normalizedPatientId;
       });
-      console.log(`[GET /api/patient/:patientId/referrals] Filtered referrals (inviter or invited): ${items.length}`);
+
       console.log(`[GET /api/patient/:patientId/referrals] Referral details:`, items.map((r) => ({
         id: r.id,
         status: r.status,
@@ -9582,12 +9582,12 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
       if (status && (status === "PENDING" || status === "APPROVED" || status === "REJECTED")) {
         const beforeFilter = items.length;
         items = items.filter((x) => x.status === status);
-        console.log(`[GET /api/patient/:patientId/referrals] After status filter (${status}): ${items.length} (was ${beforeFilter})`);
+
       }
 
       items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-      console.log(`[GET /api/patient/:patientId/referrals] Returning ${items.length} referrals for patient ${patientId}`);
+
       return res.json({ ok: true, items, source: "file" });
     };
 
@@ -9674,7 +9674,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
       }
 
       if (canUseFileFallback()) {
-        console.warn("[REFERRALS] Supabase fetch failed, using file fallback");
+
         return respondFromFile();
       }
       return res.status(500).json({
@@ -9687,7 +9687,7 @@ app.get("/api/patient/:patientId/referrals", requireAdminOrPatientToken, async (
     // Legacy file fallback
     return respondFromFile();
   } catch (error) {
-    console.error("[GET /api/patient/:patientId/referrals] Error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -9731,7 +9731,7 @@ app.put("/api/referral/:referralId", requireAdminOrPatientToken, async (req, res
 
     return res.json({ ok: true, item: mapReferralRowToLegacyItem(data), referral: data });
   } catch (e) {
-    console.error("[REFERRAL] update error:", e);
+
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
@@ -9767,9 +9767,9 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
     if (isSupabaseEnabled()) {
       try {
         // Get referral from Supabase
-        console.log("[REFERRAL APPROVE] Searching for referral with ID:", id);
-        console.log("[REFERRAL APPROVE] Clinic ID from token:", req.clinicId);
-        console.log("[REFERRAL APPROVE] Full clinic object:", req.clinic);
+
+
+
         
         const { data: referral, error: fetchError } = await supabase
           .from('referrals')
@@ -9779,8 +9779,8 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
           .single();
         
         if (fetchError || !referral) {
-          console.warn("[REFERRAL APPROVE] Supabase referral not found, falling back to file");
-          console.warn("[REFERRAL APPROVE] Fetch error:", fetchError);
+
+
           throw new Error("supabase_referral_not_found");
         }
         
@@ -9856,11 +9856,11 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
           .single();
         
         if (updateError) {
-          console.error(`[REFERRAL APPROVE] Supabase error:`, updateError);
+
           return res.status(500).json({ ok: false, error: "update_failed" });
         }
         
-        console.log(`[REFERRAL APPROVE] ✅ Approved referral ${id} in Supabase`);
+
 
         // Update referral_state for inviter and invited
         const inviterPatient = await getPatientById(inviterId);
@@ -9891,7 +9891,7 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
         
         return res.json({ ok: true, item: updated });
       } catch (supabaseError) {
-        console.error(`[REFERRAL APPROVE] Supabase error:`, supabaseError);
+
         // Fall through to file-based
       }
     }
@@ -9975,7 +9975,7 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
     
     res.json({ ok: true, item: updated });
   } catch (error) {
-    console.error("Referral approve error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -9983,12 +9983,12 @@ app.patch("/api/admin/referrals/:id/approve", requireAdminAuth, async (req, res)
 // PATCH /api/admin/referrals/:id/reject
 app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) => {
   try {
-    console.log("[REFERRAL REJECT] ========================================");
-    console.log("[REFERRAL REJECT] Request received");
-    console.log("[REFERRAL REJECT] Params:", req.params);
-    console.log("[REFERRAL REJECT] Headers:", req.headers);
-    console.log("[REFERRAL REJECT] Body:", req.body);
-    console.log("[REFERRAL REJECT] ========================================");
+
+
+
+
+
+
     
     const { id } = req.params;
     
@@ -10001,8 +10001,8 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
     if (isSupabaseEnabled()) {
       try {
         // Get referral from Supabase
-        console.log("[REFERRAL REJECT] Searching for referral with ID:", id);
-        console.log("[REFERRAL REJECT] Clinic ID from token:", req.clinicId);
+
+
         
         const { data: referral, error: fetchError } = await supabase
           .from('referrals')
@@ -10012,7 +10012,7 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
           .single();
         
         if (fetchError || !referral) {
-          console.warn("[REFERRAL REJECT] Supabase referral not found, falling back to file");
+
           throw new Error("supabase_referral_not_found");
         }
         
@@ -10023,9 +10023,9 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
         }
         
         // Update in Supabase
-        console.log("[REFERRAL REJECT] Attempting to update referral with ID:", id);
-        console.log("[REFERRAL REJECT] Clinic ID for update:", req.clinicId);
-        console.log("[REFERRAL REJECT] Current referral status:", referral.status);
+
+
+
         
         const updateData = {
           status: 'REJECTED',
@@ -10036,7 +10036,7 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
           updated_at: new Date().toISOString()
         };
         
-        console.log("[REFERRAL REJECT] Update data:", updateData);
+
         
         const { data: updated, error: updateError } = await supabase
           .from('referrals')
@@ -10062,13 +10062,13 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
           });
         }
         
-        console.log(`[REFERRAL REJECT] ✅ Rejected referral ${id} in Supabase`);
+
         
         // TODO: Audit log - referral_rejected event
         
         return res.json({ ok: true, item: updated });
       } catch (supabaseError) {
-        console.error(`[REFERRAL REJECT] Supabase error:`, supabaseError);
+
         // Fall through to file-based
       }
     }
@@ -10101,12 +10101,12 @@ app.patch("/api/admin/referrals/:id/reject", requireAdminAuth, async (req, res) 
     writeJson(REF_FILE, list);
     res.json({ ok: true, item: list[idx] });
   } catch (error) {
-    console.error("[REFERRAL REJECT] ========================================");
-    console.error("[REFERRAL REJECT] ERROR CAUGHT:");
-    console.error("[REFERRAL REJECT] Error:", error);
-    console.error("[REFERRAL REJECT] Error message:", error?.message);
-    console.error("[REFERRAL REJECT] Error stack:", error?.stack);
-    console.error("[REFERRAL REJECT] ========================================");
+
+
+
+
+
+
     
     res.status(500).json({ 
       ok: false, 
@@ -10230,7 +10230,7 @@ app.post("/api/referrals/payment-event", async (req, res) => {
         writeJson(PAT_FILE, patients);
       }
       
-      console.log(`[REFERRAL_EVENT] Created: ${newEvent.id}, Inviter: ${referral.inviterPatientId}, Credit: ${earnedDiscountAmount} ${currency}`);
+
       
       return res.json({ ok: true, event: newEvent });
     };
@@ -10247,7 +10247,7 @@ app.post("/api/referrals/payment-event", async (req, res) => {
 
         if (referralError) {
           if (isMissingTableError(referralError, "referrals") && canUseFileFallback()) {
-            console.warn("[REFERRAL_EVENT] Supabase missing referrals table, using file fallback");
+
             return handleFileFallback();
           }
           return res.status(500).json({
@@ -10270,7 +10270,7 @@ app.post("/api/referrals/payment-event", async (req, res) => {
 
         if (existingError) {
           if (isMissingTableError(existingError, "referral_events") && canUseFileFallback()) {
-            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+
             return handleFileFallback();
           }
           return res.status(500).json({
@@ -10327,7 +10327,7 @@ app.post("/api/referrals/payment-event", async (req, res) => {
 
         if (insertError) {
           if (isMissingTableError(insertError, "referral_events") && canUseFileFallback()) {
-            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+
             return handleFileFallback();
           }
           return res.status(500).json({
@@ -10350,20 +10350,20 @@ app.post("/api/referrals/payment-event", async (req, res) => {
             .eq("patient_id", referral.inviter_patient_id);
 
           if (creditError && isMissingColumnError(creditError, "referral_credit")) {
-            console.warn("[REFERRAL_EVENT] referral_credit column missing; skipping credit update");
+
           } else if (creditError) {
-            console.error("[REFERRAL_EVENT] Failed to update referral_credit:", creditError.message);
+
           }
         } catch (creditUpdateError) {
-          console.error("[REFERRAL_EVENT] Credit update failed:", creditUpdateError?.message || creditUpdateError);
+
         }
 
-        console.log(`[REFERRAL_EVENT] Created (Supabase): ${inserted?.id || "unknown"}, Inviter: ${referral.inviter_patient_id}, Credit: ${earnedDiscountAmount} ${currency}`);
+
         return res.json({ ok: true, event: inserted });
       } catch (supabaseError) {
-        console.error("[REFERRAL_EVENT] Supabase flow failed:", supabaseError?.message || supabaseError);
+
         if (canUseFileFallback()) {
-          console.warn("[REFERRAL_EVENT] Using file fallback after Supabase error");
+
           return handleFileFallback();
         }
         return res.status(500).json({ ok: false, error: "referral_event_failed" });
@@ -10372,7 +10372,7 @@ app.post("/api/referrals/payment-event", async (req, res) => {
 
     return handleFileFallback();
   } catch (error) {
-    console.error("Referral event creation error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -10414,7 +10414,7 @@ app.post("/api/referrals/payment-refund", async (req, res) => {
         writeJson(PAT_FILE, patients);
       }
       
-      console.log(`[REFERRAL_EVENT] Reversed: ${event.id}, Credit reversed: ${event.earnedDiscountAmount} ${event.currency}`);
+
       
       return res.json({ ok: true, event });
     };
@@ -10430,7 +10430,7 @@ app.post("/api/referrals/payment-refund", async (req, res) => {
 
         if (fetchError) {
           if (isMissingTableError(fetchError, "referral_events") && canUseFileFallback()) {
-            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+
             return handleFileFallback();
           }
           return res.status(500).json({
@@ -10454,7 +10454,7 @@ app.post("/api/referrals/payment-refund", async (req, res) => {
 
         if (updateError) {
           if (isMissingTableError(updateError, "referral_events") && canUseFileFallback()) {
-            console.warn("[REFERRAL_EVENT] Supabase missing referral_events table, using file fallback");
+
             return handleFileFallback();
           }
           return res.status(500).json({
@@ -10477,20 +10477,20 @@ app.post("/api/referrals/payment-refund", async (req, res) => {
             .eq("patient_id", event.inviter_patient_id);
 
           if (creditError && isMissingColumnError(creditError, "referral_credit")) {
-            console.warn("[REFERRAL_EVENT] referral_credit column missing; skipping credit update");
+
           } else if (creditError) {
-            console.error("[REFERRAL_EVENT] Failed to update referral_credit:", creditError.message);
+
           }
         } catch (creditUpdateError) {
-          console.error("[REFERRAL_EVENT] Credit update failed:", creditUpdateError?.message || creditUpdateError);
+
         }
 
-        console.log(`[REFERRAL_EVENT] Reversed (Supabase): ${updated?.id || "unknown"}, Credit reversed: ${updated?.earned_discount_amount} ${updated?.currency}`);
+
         return res.json({ ok: true, event: updated });
       } catch (supabaseError) {
-        console.error("[REFERRAL_EVENT] Supabase refund flow failed:", supabaseError?.message || supabaseError);
+
         if (canUseFileFallback()) {
-          console.warn("[REFERRAL_EVENT] Using file fallback after Supabase error");
+
           return handleFileFallback();
         }
         return res.status(500).json({ ok: false, error: "referral_refund_failed" });
@@ -10499,7 +10499,7 @@ app.post("/api/referrals/payment-refund", async (req, res) => {
 
     return handleFileFallback();
   } catch (error) {
-    console.error("Referral event reversal error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -10536,7 +10536,7 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
           return res.json({ ok: true, credit, currency: "USD" });
         })
         .catch((error) => {
-          console.error("[REFERRAL_CREDIT] Supabase fetch failed:", error?.message || error);
+
           if (canUseFileFallback()) return respondFromFile();
           return res.status(500).json({ ok: false, error: "referral_credit_fetch_failed" });
         });
@@ -10545,7 +10545,7 @@ app.get("/api/patient/:patientId/referral-credit", (req, res) => {
 
     return respondFromFile();
   } catch (error) {
-    console.error("Get referral credit error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -10568,7 +10568,7 @@ app.get("/api/admin/referral-events", requireAdminAuth, async (req, res) => {
       const { data, error } = await q.order("created_at", { ascending: false });
       if (error) {
         if (isMissingTableError(error, "referral_events") && canUseFileFallback()) {
-          console.warn("[REFERRAL_EVENTS] Supabase table missing, using file fallback");
+
           return respondFromFile();
         }
         return res.status(500).json({
@@ -10600,7 +10600,7 @@ app.get("/api/admin/referral-events", requireAdminAuth, async (req, res) => {
 
     return respondFromFile();
   } catch (error) {
-    console.error("Get referral events error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -10984,7 +10984,7 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
             });
           }
         } catch (err) {
-          console.error(`Error reading travel file ${file}:`, err);
+
         }
       }
     }
@@ -11029,7 +11029,7 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
             });
           }
         } catch (err) {
-          console.error(`Error reading treatment file ${file}:`, err);
+
         }
       }
     }
@@ -11093,7 +11093,7 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
       upcomingCount: upcoming.length
     });
   } catch (error) {
-    console.error("Get admin events error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11104,13 +11104,13 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
 // Middleware: Validate admin JWT token
 async function requireAdminAuth(req, res, next) {
   try {
-    console.log("[requireAdminAuth] ========================================");
-    console.log("[requireAdminAuth] Request received for:", req.method, req.path);
-    console.log("[requireAdminAuth] Auth header:", req.headers.authorization ? "present" : "missing");
+
+
+
     
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.log("[requireAdminAuth] Missing or invalid auth header");
+
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     
@@ -11119,10 +11119,10 @@ async function requireAdminAuth(req, res, next) {
     
     // New JWT format: clinicCode is primary (not clinicId)
     const clinicCode = decoded.clinicCode;
-    console.log("[requireAdminAuth] Token decoded, clinicCode:", clinicCode);
+
     
     if (!clinicCode) {
-      console.error("[requireAdminAuth] No clinicCode in token!");
+
       return res.status(401).json({ ok: false, error: "invalid_token", message: "Token geçersiz." });
     }
     
@@ -11145,15 +11145,15 @@ async function requireAdminAuth(req, res, next) {
         
         // Only reject if clinic is suspended
         if (req.clinicStatus === "SUSPENDED") {
-          console.log("[requireAdminAuth] ❌ Blocking suspended clinic:", req.clinicCode);
+
           return res.status(403).json({ ok: false, error: "clinic_suspended", message: "Clinic account has been suspended" });
         }
         
-        console.log("[requireAdminAuth] ✅ Supabase auth successful for clinic:", req.clinicCode, "(uuid:", req.clinicId, ")");
+
         return next();
       }
       
-      console.log("[requireAdminAuth] Clinic not found in Supabase, trying file fallback...");
+
     }
     
     // FILE FALLBACK (legacy)
@@ -11196,10 +11196,10 @@ async function requireAdminAuth(req, res, next) {
     req.clinicCode = clinic.clinicCode || clinic.code;
     req.clinicStatus = clinic.status || "ACTIVE";
     req.clinic = clinic;
-    console.log("[requireAdminAuth] ✅ File auth successful for clinic:", req.clinicCode);
+
     next();
   } catch (error) {
-    console.error("[requireAdminAuth] Auth error:", error.name, error.message);
+
     if (error?.name === "JsonWebTokenError" || error?.name === "TokenExpiredError") {
       return res.status(401).json({ ok: false, error: "invalid_token", message: "Geçersiz token. Lütfen tekrar giriş yapın." });
     }
@@ -11244,40 +11244,40 @@ app.post("/api/admin/register", async (req, res) => {
     
     // SUPABASE: Primary storage
     if (isSupabaseEnabled()) {
-      console.log("[ADMIN REGISTER] ========================================");
-      console.log("[ADMIN REGISTER] Using Supabase for clinic registration");
-      console.log("[ADMIN REGISTER] Clinic code:", clinicCodeTrimmed);
-      console.log("[ADMIN REGISTER] Email:", emailLower);
-      console.log("[ADMIN REGISTER] Name:", String(name).trim());
-      console.log("[ADMIN REGISTER] ========================================");
+
+
+
+
+
+
       
       // Check if email already exists
-      console.log("[ADMIN REGISTER] Checking if email exists...");
+
       const existingByEmail = await getClinicByEmail(emailLower);
       if (existingByEmail) {
-        console.log("[ADMIN REGISTER] Email already exists:", existingByEmail.id);
+
         return res.status(400).json({ ok: false, error: "email_exists" });
       }
-      console.log("[ADMIN REGISTER] Email is available");
+
       
       // OTP Verification Required for New Admins
       if (OTP_REQUIRED_FOR_NEW_ADMINS) {
-        console.log("[ADMIN REGISTER] OTP verification required for new admin registration");
+
         
         // Generate and send OTP
         const otpCode = String(generateOTP()).trim();  // Standardize: String + trim
         const otpHash = await bcrypt.hash(otpCode, 10);
         
-        console.log("[ADMIN REGISTER] Generated OTP for email verification:", otpCode);
-        console.log("[ADMIN REGISTER] OTP hash generated for:", otpHash.substring(0, 10) + "...");
+
+
         
         try {
           // Send OTP email
           await sendOTPEmail(emailLower, otpCode, "en");
-          console.log("[ADMIN REGISTER] OTP email sent to:", emailLower);
+
           
           // Store OTP in Supabase for verification
-          console.log("[ADMIN REGISTER] About to store OTP for:", emailLower);
+
           console.log("[ADMIN REGISTER] Registration data:", JSON.stringify({
             name: String(name).trim(),
             phone: String(phone || "").trim(),
@@ -11308,7 +11308,7 @@ app.post("/api/admin/register", async (req, res) => {
             }
           });
           
-          console.log("[ADMIN REGISTER] OTP stored successfully for:", emailLower);
+
           
           return res.json({
             ok: true,
@@ -11319,7 +11319,7 @@ app.post("/api/admin/register", async (req, res) => {
           });
           
         } catch (emailError) {
-          console.error("[ADMIN REGISTER] Failed to send OTP email:", emailError);
+
           return res.status(500).json({
             ok: false,
             error: "email_send_failed",
@@ -11329,16 +11329,16 @@ app.post("/api/admin/register", async (req, res) => {
       }
       
       // Check if clinicCode already exists
-      console.log("[ADMIN REGISTER] Checking if clinic code exists...");
+
       const existingByCode = await getClinicByCode(clinicCodeTrimmed);
       if (existingByCode) {
-        console.log("[ADMIN REGISTER] Clinic code already exists:", existingByCode.id);
+
         return res.status(400).json({ ok: false, error: "clinic_code_exists" });
       }
-      console.log("[ADMIN REGISTER] Clinic code is available");
+
       
       // Create clinic in Supabase
-      console.log("[ADMIN REGISTER] Inserting clinic into Supabase...");
+
       try {
         const newClinic = await createClinic({
           clinic_code: clinicCodeTrimmed,
@@ -11368,11 +11368,11 @@ app.post("/api/admin/register", async (req, res) => {
           expiresIn: JWT_EXPIRES_IN,
         });
         
-        console.log("[ADMIN REGISTER] ========================================");
-        console.log("[ADMIN REGISTER] ✅ SUCCESS - Clinic created in Supabase!");
-        console.log("[ADMIN REGISTER] Clinic ID:", newClinic.id);
-        console.log("[ADMIN REGISTER] Clinic Code:", newClinic.clinic_code);
-        console.log("[ADMIN REGISTER] ========================================");
+
+
+
+
+
         
         return res.json({
           ok: true,
@@ -11384,13 +11384,13 @@ app.post("/api/admin/register", async (req, res) => {
         });
       } catch (supabaseError) {
         console.error("[ADMIN REGISTER] ❌ Supabase insert FAILED:", supabaseError.message);
-        console.error("[ADMIN REGISTER] Full error:", JSON.stringify(supabaseError));
+
         throw supabaseError;
       }
     }
     
     // FILE FALLBACK: Legacy storage
-    console.log("[ADMIN REGISTER] Using file storage (fallback)...");
+
     const clinics = readJson(CLINICS_FILE, {});
     
     // Check if email already exists
@@ -11447,7 +11447,7 @@ app.post("/api/admin/register", async (req, res) => {
       subscriptionStatus: clinic.subscriptionStatus,
     });
   } catch (err) {
-    console.error("[ADMIN REGISTER ERROR]", err);
+
     return res.status(400).json({
       error: "registration_failed",
       message: err?.message || "Registration failed",
@@ -11475,7 +11475,7 @@ app.post("/api/admin/login", async (req, res) => {
     
     // SUPABASE: Primary lookup
     if (isSupabaseEnabled()) {
-      console.log("[ADMIN LOGIN] Using Supabase for clinic:", code);
+
       
       const clinic = await getClinicByCode(code);
       
@@ -11526,7 +11526,7 @@ app.post("/api/admin/login", async (req, res) => {
               email: emailNormalized
             });
           } catch (emailError) {
-            console.error("[ADMIN LOGIN] OTP send failed:", emailError);
+
             return res.status(500).json({ 
               ok: false, 
               error: "otp_send_failed", 
@@ -11547,7 +11547,7 @@ app.post("/api/admin/login", async (req, res) => {
           { expiresIn: JWT_EXPIRES_IN }
         );
         
-        console.log("[ADMIN LOGIN] ✅ Supabase login successful for:", clinic.clinic_code);
+
         
         return res.json({
           ok: true,
@@ -11559,7 +11559,7 @@ app.post("/api/admin/login", async (req, res) => {
         });
       }
       
-      console.log("[ADMIN LOGIN] Clinic not found in Supabase, trying file fallback...");
+
     }
     
     // FILE FALLBACK: Legacy storage
@@ -11667,7 +11667,7 @@ app.post("/api/admin/login", async (req, res) => {
           email: emailNormalized
         });
       } catch (emailError) {
-        console.error("[ADMIN LOGIN] OTP send failed:", emailError);
+
         return res.status(500).json({ 
           ok: false, 
           error: "otp_send_failed", 
@@ -11686,7 +11686,7 @@ app.post("/api/admin/login", async (req, res) => {
       { expiresIn: JWT_EXPIRES_IN }
     );
     
-    console.log("[ADMIN LOGIN] ✅ File login successful for:", code);
+
     
     res.json({
       ok: true,
@@ -11697,7 +11697,7 @@ app.post("/api/admin/login", async (req, res) => {
       status: foundClinic.status || "PENDING",
     });
   } catch (error) {
-    console.error("Admin login error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11732,7 +11732,7 @@ app.post("/api/admin/forgot-password/verify", (req, res) => {
     
     res.json({ ok: true });
   } catch (error) {
-    console.error("Forgot password verify error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11781,7 +11781,7 @@ app.post("/api/admin/forgot-password/reset", async (req, res) => {
     
     res.json({ ok: true });
   } catch (error) {
-    console.error("Forgot password reset error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11802,7 +11802,7 @@ app.get("/api/admin/me", requireAdminAuth, (req, res) => {
     
     res.json({ ok: true, clinic: clinicInfo });
   } catch (error) {
-    console.error("Get admin me error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11823,7 +11823,7 @@ app.get("/api/admin/tokens", requireAdminAuth, (req, res) => {
     items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     res.json({ ok: true, items });
   } catch (error) {
-    console.error("Get admin tokens error:", error);
+
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -11853,7 +11853,7 @@ function superAdminGuard(req, res, next) {
       return res.status(401).json({ ok: false, error: "unauthorized", message: "Invalid or expired token" });
     }
   } catch (error) {
-    console.error("Super admin guard error:", error);
+
     return res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 }
@@ -11869,7 +11869,7 @@ app.post("/api/super-admin/login", (req, res) => {
     }
 
     if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
-      console.error("[SUPER_ADMIN] Super admin credentials not configured in ENV");
+
       return res.status(500).json({ ok: false, error: "configuration_error", message: "Super admin not configured" });
     }
 
@@ -11883,7 +11883,7 @@ app.post("/api/super-admin/login", (req, res) => {
       { expiresIn: "12h" }
     );
 
-    console.log("[SUPER_ADMIN] Login successful");
+
 
     res.json({
       ok: true,
@@ -11892,7 +11892,7 @@ app.post("/api/super-admin/login", (req, res) => {
       message: "Login successful",
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Login error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -11908,7 +11908,7 @@ app.get("/api/super-admin/me", superAdminGuard, (req, res) => {
       message: "Super admin authenticated",
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Me endpoint error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -11976,7 +11976,7 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
         }
         
       } catch (supabaseError) {
-        console.warn("[SUPER_ADMIN] Failed to load data from Supabase:", supabaseError);
+
       }
     }
     
@@ -12059,7 +12059,7 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
           }
         }
       } catch (supabaseError) {
-        console.warn("[SUPER_ADMIN] Failed to load clinics from Supabase:", supabaseError);
+
       }
     }
     
@@ -12169,7 +12169,7 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
             clinic.stats.oralHealthAverage = await calculateClinicOralHealthAverage(clinicData.id);
           }
         } catch (error) {
-          console.log("[SUPER_ADMIN] Could not find clinic UUID for single clinic:", error);
+
         }
       }
     }
@@ -12177,7 +12177,7 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
     // Sort by createdAt (newest first)
     clinicsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     
-    console.log(`[SUPER_ADMIN] Returning ${clinicsList.length} clinics with stats`);
+
     
     res.json({ 
       ok: true, 
@@ -12185,7 +12185,7 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
       count: clinicsList.length
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Get clinics error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12232,7 +12232,7 @@ app.patch("/api/super-admin/clinics/:clinicId/approve", superAdminGuard, (req, r
       writeJson(CLINICS_FILE, clinics);
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} approved (status: ${oldStatus} -> ACTIVE)`);
+
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
@@ -12241,7 +12241,7 @@ app.patch("/api/super-admin/clinics/:clinicId/approve", superAdminGuard, (req, r
       message: "Clinic approved successfully"
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Approve clinic error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12288,7 +12288,7 @@ app.patch("/api/super-admin/clinics/:clinicId/reject", superAdminGuard, (req, re
       writeJson(CLINICS_FILE, clinics);
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} rejected (status: ${oldStatus} -> REJECTED)`);
+
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
@@ -12297,7 +12297,7 @@ app.patch("/api/super-admin/clinics/:clinicId/reject", superAdminGuard, (req, re
       message: "Clinic rejected successfully"
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Reject clinic error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12332,7 +12332,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
       // Check Supabase
       if (isSupabaseEnabled) {
         try {
-          console.log(`[SUPER_ADMIN] Looking for clinic in Supabase: ${clinicId}`);
+
           const { data: supabaseClinic, error } = await supabase
             .from("clinics")
             .select("id, name, email, status")
@@ -12351,7 +12351,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
             isSupabaseClinic = true;
           }
         } catch (supabaseError) {
-          console.warn("[SUPER_ADMIN] Failed to check Supabase clinic:", supabaseError);
+
         }
       }
       
@@ -12380,11 +12380,11 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
         .eq("id", clinicId);
       
       if (error) {
-        console.error("[SUPER_ADMIN] Failed to suspend clinic in Supabase:", error);
+
         return res.status(500).json({ ok: false, error: "update_failed", message: "Failed to suspend clinic" });
       }
       
-      console.log(`[SUPER_ADMIN] Successfully updated clinic in Supabase: ${clinicId}`);
+
     } else {
       // Update in file
       clinic.status = "SUSPENDED";
@@ -12401,7 +12401,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
       }
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} suspended (status: ${oldStatus} -> SUSPENDED), reason: ${reason || "none"}, source: ${isSupabaseClinic ? "Supabase" : "File"}`);
+
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
@@ -12410,7 +12410,7 @@ app.patch("/api/super-admin/clinics/:clinicId/suspend", superAdminGuard, async (
       message: "Clinic suspended successfully"
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Suspend clinic error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12444,7 +12444,7 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
       // Check Supabase
       if (isSupabaseEnabled) {
         try {
-          console.log(`[SUPER_ADMIN] Looking for clinic in Supabase: ${clinicId}`);
+
           const { data: supabaseClinic, error } = await supabase
             .from("clinics")
             .select("id, name, email, status")
@@ -12463,7 +12463,7 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
             isSupabaseClinic = true;
           }
         } catch (supabaseError) {
-          console.warn("[SUPER_ADMIN] Failed to check Supabase clinic:", supabaseError);
+
         }
       }
       
@@ -12491,11 +12491,11 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
         .eq("id", clinicId);
       
       if (error) {
-        console.error("[SUPER_ADMIN] Failed to activate clinic in Supabase:", error);
+
         return res.status(500).json({ ok: false, error: "update_failed", message: "Failed to activate clinic" });
       }
       
-      console.log(`[SUPER_ADMIN] Successfully activated clinic in Supabase: ${clinicId}`);
+
     } else {
       // Update in file
       clinic.status = "ACTIVE";
@@ -12512,7 +12512,7 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
       }
     }
     
-    console.log(`[SUPER_ADMIN] Clinic ${clinicId} activated (status: ${oldStatus} -> ACTIVE), source: ${isSupabaseClinic ? "Supabase" : "File"}`);
+
     
     const { password, ...clinicWithoutPassword } = clinic;
     res.json({ 
@@ -12521,7 +12521,7 @@ app.patch("/api/super-admin/clinics/:clinicId/activate", superAdminGuard, async 
       message: "Clinic activated successfully"
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Activate clinic error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12758,7 +12758,7 @@ app.get("/api/super-admin/clinics/:clinicId/statistics", superAdminGuard, (req, 
       statistics: statistics
     });
   } catch (error) {
-    console.error("[SUPER_ADMIN] Get clinic statistics error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12868,10 +12868,10 @@ app.post("/api/admin/payment-success", requireAdminAuth, async (req, res) => {
         writeJson(CLINICS_FILE, clinics);
       }
     } catch (e) {
-      console.warn("[PAYMENT] File fallback persist failed (non-fatal):", e?.message || e);
+
     }
 
-    console.log(`[PAYMENT] Clinic ${clinicId} (${clinicCode}) payment successful: ${oldPlan} -> ${normalizedPlan}, status: ${oldStatus} -> ACTIVE, max_patients: ${maxPatients}`);
+
 
     const { password, password_hash, ...clinicWithoutPassword } = clinic;
     res.json({
@@ -12884,7 +12884,7 @@ app.post("/api/admin/payment-success", requireAdminAuth, async (req, res) => {
       max_patients: maxPatients,
     });
   } catch (error) {
-    console.error("[PAYMENT] Payment success error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12901,10 +12901,10 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
 
     // 🔒 FIX: Ensure clinicId is available
     const clinicId = req.clinicId || req.clinic?.id;
-    console.log("[PRICES GET] clinicId:", clinicId);
+
     
     if (!clinicId) {
-      console.error("[PRICES GET] Missing clinicId");
+
       return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
@@ -12953,7 +12953,7 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       clinicCode: req.clinicCode,
     });
   } catch (error) {
-    console.error("[TREATMENT_PRICES] Get error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -12968,10 +12968,10 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
 
     // 🔒 FIX: Ensure clinicId is available
     const clinicId = req.clinicId || req.clinic?.id;
-    console.log("[PRICES POST] clinicId:", clinicId);
+
     
     if (!clinicId) {
-      console.error("[PRICES POST] Missing clinicId");
+
       return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
@@ -13072,7 +13072,7 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       is_active: row.is_active !== undefined ? row.is_active !== false : (is_active !== false),
     };
 
-    console.log(`[TREATMENT_PRICES] Saved price for clinic ${req.clinicCode}: ${treatmentCode}`);
+
 
     res.json({
       ok: true,
@@ -13080,7 +13080,7 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       message: "Price saved",
     });
   } catch (error) {
-    console.error("[TREATMENT_PRICES] Create/Update error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -13095,10 +13095,10 @@ app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res)
 
     // 🔒 FIX: Ensure clinicId is available
     const clinicId = req.clinicId || req.clinic?.id;
-    console.log("[PRICES DELETE] clinicId:", clinicId);
+
     
     if (!clinicId) {
-      console.error("[PRICES DELETE] Missing clinicId");
+
       return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
@@ -13140,10 +13140,10 @@ app.delete("/api/admin/treatment-prices/:id", requireAdminAuth, async (req, res)
       return res.status(404).json({ ok: false, error: "price_not_found", message: "Price not found" });
     }
 
-    console.log(`[TREATMENT_PRICES] Deleted price ${id} for clinic ${req.clinicCode}`);
+
     res.json({ ok: true, message: "Price deleted" });
   } catch (error) {
-    console.error("[TREATMENT_PRICES] Delete error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -13207,7 +13207,7 @@ app.get("/api/patient/:patientId/payment-summary", requireToken, (req, res) => {
     
     res.json({ ok: true, summary });
   } catch (error) {
-    console.error("[PAYMENT_SUMMARY] Get error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -13267,7 +13267,7 @@ app.get("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req,
     
     res.json({ ok: true, summary });
   } catch (error) {
-    console.error("[PAYMENT_SUMMARY] Get error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -13342,14 +13342,14 @@ app.put("/api/admin/patient/:patientId/financial-snapshot", requireAdminAuth, (r
     patients[patientId] = patient;
     writeJson(PAT_FILE, patients);
 
-    console.log(`[FINANCIAL SNAPSHOT] Updated for patient ${patientId}:`, patient.financialSnapshot);
+
 
     res.json({
       ok: true,
       financialSnapshot: patient.financialSnapshot
     });
   } catch (error) {
-    console.error("[FINANCIAL SNAPSHOT] Update error:", error);
+
     res.status(500).json({
       ok: false,
       error: "internal_error",
@@ -13412,7 +13412,7 @@ app.post("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req
     
     writeJson(PAYMENTS_FILE, payments);
     
-    console.log(`[PAYMENT_SUMMARY] Updated payment summary for patient ${patientId}`);
+
     
     res.json({ 
       ok: true, 
@@ -13420,7 +13420,7 @@ app.post("/api/admin/patient/:patientId/payment-summary", requireAdminAuth, (req
       message: "Payment summary updated"
     });
   } catch (error) {
-    console.error("[PAYMENT_SUMMARY] Update error:", error);
+
     res.status(500).json({ ok: false, error: "internal_error", message: error?.message || "Internal server error" });
   }
 });
@@ -13438,24 +13438,24 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     const emailLower = String(email).trim().toLowerCase();
     const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
     
-    console.log("[ADMIN VERIFY REG OTP] ========================================");
-    console.log("[ADMIN VERIFY REG OTP] Verifying OTP for clinic registration");
-    console.log("[ADMIN VERIFY REG OTP] Email:", emailLower);
-    console.log("[ADMIN VERIFY REG OTP] Clinic Code:", clinicCodeTrimmed);
-    console.log("[ADMIN VERIFY REG OTP] ========================================");
-    console.log("[ADMIN VERIFY REG OTP] DEBUG: Querying 'otps' table for email:", emailLower);
+
+
+
+
+
+
     
     // Get OTP data
     const otpData = await getOTPsForEmail(emailLower);
-    console.log("[ADMIN VERIFY REG OTP] DEBUG: getOTPsForEmail returned:", otpData ? "object" : "null");
+
     if (otpData) {
-      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP data keys:", Object.keys(otpData));
-      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP email:", otpData.email);
-      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP has otp_hash:", !!otpData.otp_hash);
-      console.log("[ADMIN VERIFY REG OTP] DEBUG: OTP created_at:", otpData.created_at);
+
+
+
+
     }
     if (!otpData) {  // Fixed: otpData is now object, not array
-      console.log("[ADMIN VERIFY REG OTP] No OTP found for email");
+
       return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found or expired" });
     }
     
@@ -13464,7 +13464,7 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     // Check if already verified
     if (latestOTP.verified) {
-      console.log("[ADMIN VERIFY REG OTP] OTP already verified");
+
       return res.status(400).json({ ok: false, error: "otp_already_verified", message: "OTP already verified" });
     }
     
@@ -13473,34 +13473,34 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     const createdAt = new Date(latestOTP.created_at).getTime();
     const expiresAt = latestOTP.expires_at ? new Date(latestOTP.expires_at).getTime() : createdAt + (5 * 60 * 1000); // 5 minutes default
     
-    console.log("[ADMIN VERIFY REG OTP] Time debug:");
-    console.log("[ADMIN VERIFY REG OTP] Current time:", new Date(now).toISOString());
-    console.log("[ADMIN VERIFY REG OTP] Created at:", new Date(createdAt).toISOString());
-    console.log("[ADMIN VERIFY REG OTP] Expires at:", new Date(expiresAt).toISOString());
-    console.log("[ADMIN VERIFY REG OTP] Time elapsed (minutes):", (now - createdAt) / (1000 * 60));
+
+
+
+
+
     
     if (now > expiresAt) {
-      console.log("[ADMIN VERIFY REG OTP] OTP expired");
+
       return res.status(400).json({ ok: false, error: "otp_expired", message: "OTP has expired" });
     }
     
     // Verify OTP
     const isValidOTP = await bcrypt.compare(String(otp), latestOTP.hashedOTP || latestOTP.otp_hash);
     if (!isValidOTP) {
-      console.log("[ADMIN VERIFY REG OTP] Invalid OTP");
+
       return res.status(400).json({ ok: false, error: "invalid_otp", message: "Invalid OTP" });
     }
     
-    console.log("[ADMIN VERIFY REG OTP] OTP verified successfully");
+
     
     // Debug: Log the OTP object structure
-    console.log("[ADMIN VERIFY REG OTP] OTP object keys:", Object.keys(latestOTP));
-    console.log("[ADMIN VERIFY REG OTP] Full OTP object:", JSON.stringify(latestOTP, null, 2));
+
+
     
     // Get registration data
     const registrationData = latestOTP.registration_data;
     if (!registrationData) {
-      console.log("[ADMIN VERIFY REG OTP] No registration data found");
+
       return res.status(400).json({ ok: false, error: "registration_data_missing", message: "Registration data not found" });
     }
     
@@ -13510,23 +13510,23 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       registrationData?.clinic_code ||  // From registration data (snake_case)
       registrationData?.clinicCode;    // From registration data (camelCase)
     
-    console.log("[ADMIN VERIFY REG OTP] DEBUG: clinic_code resolved as:", resolvedClinicCode);
-    console.log("[ADMIN VERIFY REG OTP] DEBUG: sources - req.body:", clinicCodeTrimmed, "reg_data.snake:", registrationData?.clinic_code, "reg_data.camel:", registrationData?.clinicCode);
+
+
     
     if (!resolvedClinicCode) {
-      console.log("[ADMIN VERIFY REG OTP] ERROR: clinic_code is missing in verify step");
+
       return res.status(400).json({ ok: false, error: "clinic_code_missing", message: "Clinic code is missing" });
     }
     
     // Check if clinic code already exists (double check)
     const existingByCode = await getClinicByCode(resolvedClinicCode);
     if (existingByCode) {
-      console.log("[ADMIN VERIFY REG OTP] Clinic code already exists during verification");
+
       return res.status(400).json({ ok: false, error: "clinic_code_exists", message: "Clinic code already exists" });
     }
     
     // Create clinic in Supabase
-    console.log("[ADMIN VERIFY REG OTP] Creating clinic in Supabase...");
+
     
     // Map registration data to clinic format
     const clinicData = {
@@ -13541,15 +13541,15 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       password_hash: '$2b$10$placeholder.hash.for.registration' // Required field
     };
     
-    console.log("[ADMIN VERIFY REG OTP] Mapped clinic data:", clinicData);
+
     const newClinic = await createClinic(clinicData);
     
     if (!newClinic) {
-      console.log("[ADMIN VERIFY REG OTP] Failed to create clinic");
+
       return res.status(500).json({ ok: false, error: "clinic_creation_failed", message: "Failed to create clinic" });
     }
     
-    console.log("[ADMIN VERIFY REG OTP] Clinic created successfully:", newClinic.id);
+
     
     // Mark OTP as verified/used
     await markOTPUsed(latestOTP.id);
@@ -13566,7 +13566,7 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
       JWT_SECRET
     );
     
-    console.log("[ADMIN VERIFY REG OTP] Registration completed successfully");
+
     
     res.json({
       ok: true,
@@ -13581,7 +13581,7 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     });
     
   } catch (error) {
-    console.error("[ADMIN VERIFY REG OTP] Error:", error);
+
     res.status(500).json({ 
       ok: false, 
       error: "internal_error", 
@@ -13603,18 +13603,18 @@ app.post("/api/admin/resend-otp", async (req, res) => {
     const emailLower = String(email).trim().toLowerCase();
     const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
     
-    console.log("[ADMIN RESEND OTP] ========================================");
-    console.log("[ADMIN RESEND OTP] Resending OTP for clinic registration");
-    console.log("[ADMIN RESEND OTP] Email:", emailLower);
-    console.log("[ADMIN RESEND OTP] Clinic Code:", clinicCodeTrimmed);
-    console.log("[ADMIN RESEND OTP] ========================================");
+
+
+
+
+
     
     // Generate new OTP with standardization
     const otp = String(generateOTP()).trim();  // Standardize: String + trim
     const otpHash = await bcrypt.hash(otp, 10);  // Use same hash method
     
-    console.log("[ADMIN RESEND OTP] Generated OTP:", otp);
-    console.log("[ADMIN RESEND OTP] OTP hash generated:", otpHash.substring(0, 10) + "...");
+
+
     
     // Store OTP with registration data
     await storeOTPForEmail(emailLower, otpHash, clinicCodeTrimmed, {
@@ -13626,12 +13626,12 @@ app.post("/api/admin/resend-otp", async (req, res) => {
       clinicCode: clinicCodeTrimmed
     });
     
-    console.log("[ADMIN RESEND OTP] OTP stored in Supabase for:", emailLower);
+
     
     // Send OTP email
     await sendOTPEmail(emailLower, otp, "tr");
     
-    console.log("[ADMIN RESEND OTP] OTP resent successfully");
+
     
     res.json({
       ok: true,
@@ -13639,7 +13639,7 @@ app.post("/api/admin/resend-otp", async (req, res) => {
     });
     
   } catch (error) {
-    console.error("[ADMIN RESEND OTP] Error:", error);
+
     res.status(500).json({ 
       ok: false, 
       error: "internal_error", 
@@ -13698,7 +13698,7 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
         created_at: new Date().toISOString()
       };
       
-      console.log("[PATIENTS] Basic insert data:", basicInsertData);
+
       
       const { data, error } = await supabase
         .from('patients')
@@ -13707,11 +13707,11 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
         .single();
       
       if (error) {
-        console.error("[PATIENTS] Supabase basic insert error:", error);
+
         throw error;
       }
       
-      console.log("[PATIENTS] Manual patient created in Supabase (basic):", data.id);
+
       
       // If basic insert works, try to update with optional fields
       const updateData = {};
@@ -13726,7 +13726,7 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
       updateData.name = `${firstName} ${lastName}`;
       
       if (Object.keys(updateData).length > 0) {
-        console.log("[PATIENTS] Updating patient with optional fields:", updateData);
+
         
         const { data: updateResult, error: updateError } = await supabase
           .from('patients')
@@ -13736,10 +13736,10 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
           .single();
         
         if (updateError) {
-          console.warn("[PATIENTS] Update failed, but basic insert succeeded:", updateError);
+
           // Continue with basic data
         } else {
-          console.log("[PATIENTS] Patient updated successfully:", updateResult.id);
+
           return res.json({ ok: true, patient: updateResult });
         }
       }
@@ -13770,24 +13770,24 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
     patients[patientId] = newPatient;
     writeJson(PAT_FILE, patients);
     
-    console.log("[PATIENTS] Manual patient created (file):", patientId);
+
     res.json({ ok: true, patient: newPatient });
     
   } catch (error) {
-    console.error('[PATIENTS] Create error:', error);
+
     res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
   }
 });
 
 async function postBootInit() {
-  console.log("\n🧠 Post-boot init starting...");
+
   
   try {
     // Test Supabase connection
     if (isSupabaseEnabled()) {
       await testSupabaseConnection();
     } else {
-      console.log("[POST-BOOT] Supabase not configured - using file storage");
+
     }
     
     // Verify SMTP
@@ -13796,47 +13796,172 @@ async function postBootInit() {
         if (error) {
           console.error("[POST-BOOT] ❌ SMTP verify failed:", error.message);
         } else {
-          console.log("[POST-BOOT] ✅ SMTP ready to send emails");
+
         }
       });
     } else {
-      console.log("[POST-BOOT] ⚠️  SMTP not configured - emails disabled");
+
     }
     
   } catch (e) {
-    console.error("[POST-BOOT] Init error:", e.message);
+
   }
   
-  console.log("🧠 Post-boot init done\n");
+
 }
 
 // DEBUG: Test endpoint for PATCH requests
 app.patch("/debug/test-patch", (req, res) => {
-  console.log("[DEBUG] PATCH test endpoint hit!");
-  console.log("[DEBUG] Headers:", req.headers);
-  console.log("[DEBUG] Body:", req.body);
+
+
+
   res.json({ ok: true, message: "PATCH test successful" });
 });
 
+// ================== DOCTOR JWT AUTHENTICATION MIDDLEWARE ==================
+async function requireDoctorAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ ok: false, error: 'token_required' });
+  }
+
+  const token = authHeader.substring(7);
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    if (decoded.role !== 'DOCTOR') {
+      return res.status(403).json({ ok: false, error: 'invalid_role' });
+    }
+
+    // Fetch current doctor data
+    const { data: doctor, error } = await supabase
+      .from('doctors')
+      .select('*')
+      .eq('id', decoded.doctorId)
+      .single();
+
+    if (error || !doctor) {
+      return res.status(401).json({ ok: false, error: 'doctor_not_found' });
+    }
+
+    req.doctor = doctor;
+    req.doctorId = decoded.doctorId;
+    next();
+  } catch (error) {
+    return res.status(401).json({ ok: false, error: 'invalid_token' });
+  }
+}
+
+// ================== SUPABASE CONFIG ENDPOINT ==================
+app.get("/admin/supabase-config", requireAdminAuth, async (req, res) => {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return res.status(500).json({ ok: false, error: 'supabase_not_configured' });
+    }
+
+    res.json({
+      ok: true,
+      supabaseUrl,
+      supabaseAnonKey
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ================== DOCTOR API ROUTES ==================
+
+// Get current doctor profile
+app.get("/api/doctor/me", requireDoctorAuth, async (req, res) => {
+  try {
+    const doctor = req.doctor;
+    
+    res.json({
+      ok: true,
+      doctor: {
+        id: doctor.id,
+        doctorId: doctor.doctor_id,
+        name: doctor.name,
+        email: doctor.email,
+        phone: doctor.phone,
+        status: doctor.status,
+        clinicId: doctor.clinic_id,
+        department: doctor.department,
+        title: doctor.title,
+        specialties: doctor.specialties,
+        experienceYears: doctor.experience_years,
+        languages: doctor.languages,
+        licenseNumber: doctor.license_number,
+        createdAt: doctor.created_at
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error", 
+      message: error.message 
+    });
+  }
+});
+
+// Update current doctor profile  
+app.put("/api/doctor/me", requireDoctorAuth, async (req, res) => {
+  try {
+    const { name, phone, department, title, experience_years, languages, specialties } = req.body;
+    
+    const { data: doctor, error } = await supabase
+      .from('doctors')
+      .update({
+        name,
+        phone,
+        department,
+        title,
+        experience_years,
+        languages,
+        specialties,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', req.doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({ ok: false, error: 'update_failed' });
+    }
+
+    res.json({ ok: true, doctor });
+  } catch (error) {
+    res.status(500).json({ 
+      ok: false, 
+      error: "internal_error", 
+      message: error.message 
+    });
+  }
+});
+
 // ================== ADMIN ROUTE ALIASES ==================
-console.log("[INIT] Adding admin route aliases to correct entry point");
+
 
 // 🔥 ADMIN ALIAS ROUTES (MUTLAKA INDEX.CJS İÇİNDE)
 app.get(
   "/admin/doctor-applications",
   requireAdminAuth,
   async (req, res) => {
-    console.log("[ADMIN ALIAS] /admin/doctor-applications hit!");
-    console.log("[ADMIN ALIAS] req.admin:", req.admin);
-    console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
-    console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
-    console.log("[ADMIN ALIAS] req.clinicId:", req.clinicId);
-    console.log("[ADMIN ALIAS] Headers:", Object.keys(req.headers));
-    console.log("[ADMIN ALIAS] Authorization:", req.headers.authorization ? "present" : "missing");
+
+
+
+
+
+
+
     
     try {
       // Get all doctor applications from DOCTORS table scoped to this clinic
-      console.log("[ADMIN ALIAS] Querying doctor applications from DOCTORS table for clinic:", req.clinicCode);
+
       
       // Log the exact query being executed
       const query = supabase
@@ -13846,22 +13971,22 @@ app.get(
         .in("status", ["PENDING", "ACTIVE"]) // 🔥 STATUS FILTER
         .order("created_at", { ascending: false });
       
-      console.log("[ADMIN ALIAS] Supabase query built with clinic_code:", req.clinicCode);
+
       
       const { data: doctors, error } = await query;
 
-      console.log("[ADMIN ALIAS] Supabase query result:");
-      console.log("  - Doctors count:", doctors?.length || 0);
-      console.log("  - Error:", error);
-      console.log("  - Clinic codes in results:", doctors?.map(d => d.clinic_code) || []);
-      console.log("  - Sample doctor:", doctors?.[0] || "none");
+
+
+
+
+
 
       if (error) {
-        console.error("[ADMIN ALIAS] Supabase error:", error);
+
         return res.status(500).json({ ok: false, error: "fetch_failed", details: error });
       }
 
-      console.log("[ADMIN ALIAS] Sending success response with", doctors?.length, "doctors for clinic:", req.clinicCode);
+
       res.json({
         ok: true,
         doctors: doctors || [],
@@ -13874,8 +13999,8 @@ app.get(
         }
       });
     } catch (handlerError) {
-      console.error("[ADMIN ALIAS] Handler error:", handlerError);
-      console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
+
+
       res.status(500).json({ 
         ok: false, 
         error: "internal_error", 
@@ -13886,82 +14011,42 @@ app.get(
   }
 );
 
-app.post(
-  "/admin/approve-doctor",
-  requireAdminAuth,
-  async (req, res) => {
-    console.log("[ADMIN ALIAS] /admin/approve-doctor hit!");
-    console.log("[ADMIN ALIAS] req.admin:", req.admin);
-    console.log("[ADMIN ALIAS] req.clinic:", req.clinic);
-    console.log("[ADMIN ALIAS] req.clinicCode:", req.clinicCode);
-    console.log("[ADMIN ALIAS] req.clinicId:", req.clinicId);
-    console.log("[ADMIN ALIAS] req.body:", req.body);
-    
-    try {
-      const { doctorId } = req.body;
 
-      const { data, error } = await supabase
-        .from('doctors')
-        .update({ status: 'ACTIVE' })
-        .eq('id', doctorId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('[APPROVE] error:', error);
-        return res.status(500).json({ ok: false, error: 'update_failed' });
-      }
-
-      res.json({ ok: true, doctor: data });
-    } catch (handlerError) {
-      console.error("[ADMIN ALIAS] Handler error:", handlerError);
-      console.error("[ADMIN ALIAS] Stack trace:", handlerError.stack);
-      res.status(500).json({ 
-        ok: false, 
-        error: "internal_error", 
-        message: handlerError.message,
-        stack: handlerError.stack 
-      });
-    }
-  }
-);
-
-console.log("[INIT] Admin route aliases added to correct entry point");
 
 // ================== START ==================
 // Render uyumlu: Server HEMEN başlar, ağır işler sonra
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n========================================`);
+
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`========================================`);
-  console.log(`📍 Health:   http://0.0.0.0:${PORT}/health`);
-  console.log(`📍 Admin:    http://0.0.0.0:${PORT}/admin.html`);
-  console.log(`📍 Privacy:  http://0.0.0.0:${PORT}/privacy`);
-  console.log(`========================================`);
-  console.log(`🗄️  Database: ${isSupabaseEnabled() ? 'SUPABASE' : 'FILE SYSTEM'}`);
-  console.log(`📧 Email:    ${emailTransporter ? 'SMTP' : 'NOT CONFIGURED'}`);
-  console.log(`========================================`);
-  console.log(`[ENV DEBUG]`);
-  console.log(`  SUPABASE_URL: ${process.env.SUPABASE_URL ? process.env.SUPABASE_URL.substring(0, 40) + '...' : 'NOT SET'}`);
-  console.log(`  SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET (' + process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 10) + '...)' : 'NOT SET'}`);
-  console.log(`[SMTP DEBUG]`);
-  console.log(`  SMTP_HOST: ${SMTP_HOST || 'NOT SET'}`);
-  console.log(`  SMTP_PORT: ${SMTP_PORT}`);
-  console.log(`  SMTP_USER: ${SMTP_USER ? SMTP_USER.substring(0, 5) + '...' : 'NOT SET'}`);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   postBootInit();
 });
 
 // Global error handlers
 process.on('uncaughtException', (error) => {
-  console.error('[UNCAUGHT EXCEPTION] =====================================');
-  console.error('[UNCAUGHT EXCEPTION] Error:', error);
-  console.error('[UNCAUGHT EXCEPTION] Stack:', error.stack);
-  console.error('[UNCAUGHT EXCEPTION] =====================================');
+
+
+
+
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[UNHANDLED REJECTION] =====================================');
-  console.error('[UNHANDLED REJECTION] Reason:', reason);
-  console.error('[UNHANDLED REJECTION] Promise:', promise);
-  console.error('[UNHANDLED REJECTION] =====================================');
+
+
+
+
 });

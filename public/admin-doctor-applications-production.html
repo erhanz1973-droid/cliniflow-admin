@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Doktor Başvuruları - Clinifly Admin [2025-02-10-00-25]</title>
+  <title>Doktor Başvuruları - Clinifly Admin</title>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -517,11 +517,7 @@ Doctor ID: ${doctor.doctor_id}
     }
 
     // Load doctors on page load
-    document.addEventListener("DOMContentLoaded", function() {
-      console.log("[PRODUCTION DEBUG] Page loaded at:", new Date().toISOString());
-      console.log("[PRODUCTION DEBUG] Using direct Supabase connection");
-      loadDoctors();
-    });
+    document.addEventListener("DOMContentLoaded", loadDoctors);
   </script>
 </body>
 </html>
