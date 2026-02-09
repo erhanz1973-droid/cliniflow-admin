@@ -3049,6 +3049,8 @@ async function resolvePatientForOtp({ email, phone }) {
 // Request OTP: takes email, phone, role, finds user by role, sends OTP
 app.post("/auth/request-otp", async (req, res) => {
   try {
+    console.log("[AUTH REQUEST-OTP] FULL BODY:", JSON.stringify(req.body, null, 2));
+    
     const { email, phone, role } = req.body || {};
     
     console.log("[AUTH REQUEST-OTP] ROLE:", role);
