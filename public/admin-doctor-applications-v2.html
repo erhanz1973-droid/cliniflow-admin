@@ -264,21 +264,44 @@
       }
     })();
 
-    // Initialize Supabase directly with production credentials
-    const { createClient } = supabase;
-    const supabaseClient = createClient(
-      'https://dqjrqxqqjgqzayxjxqdv.supabase.co',
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxanJxeHFxamdxemF5eGp4cWR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0OTc3MDQsImV4cCI6MjA1MjA3MzcwNH0.8rFqLs8_4Fz6QWgKJhQxJQvNkDnZjD5JQhQxJQvNkDnZjD5JQ',
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        },
-        db: {
-          schema: 'public'
+    // Initialize Supabase with dynamic config from backend
+    let supabaseClient = null;
+    
+    async function initSupabase() {
+      try {
+        console.log("[SUPABASE] Getting config from backend...");
+        const response = await fetch("/public-supabase-config");
+        
+        if (!response.ok) {
+          throw new Error('Failed to get Supabase config');
         }
+        
+        const data = await response.json();
+        
+        if (!data.ok) {
+          throw new Error(data.error || 'Supabase not configured');
+        }
+        
+        const { createClient } = supabase;
+        supabaseClient = createClient(data.supabaseUrl, data.supabaseAnonKey, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          },
+          db: {
+            schema: 'public'
+          }
+        });
+        
+        console.log("[SUPABASE] Initialized successfully with backend config");
+        loadDoctors();
+        
+      } catch (error) {
+        console.error("[SUPABASE] Initialization failed:", error);
+        document.getElementById('error-container').innerHTML = 
+          `<div class="error">❌ Supabase bağlantı hatası: ${error.message}</div>`;
       }
-    );
+    }
 
     let allDoctors = [];
     let filteredDoctors = [];
@@ -528,8 +551,8 @@ Doctor ID: ${doctor.doctor_id}
     // Load doctors on page load
     document.addEventListener("DOMContentLoaded", function() {
       console.log("[PRODUCTION DEBUG] Page loaded at:", new Date().toISOString());
-      console.log("[PRODUCTION DEBUG] Using direct Supabase connection");
-      loadDoctors();
+      console.log("[PRODUCTION DEBUG] Initializing Supabase from backend...");
+      initSupabase();
     });
   </script>
 </body>

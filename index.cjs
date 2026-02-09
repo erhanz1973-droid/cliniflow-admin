@@ -13873,6 +13873,26 @@ app.get("/admin/supabase-config", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ================== PUBLIC SUPABASE CONFIG (NO AUTH) ==================
+app.get("/public-supabase-config", async (req, res) => {
+  try {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return res.status(500).json({ ok: false, error: 'supabase_not_configured' });
+    }
+
+    res.json({
+      ok: true,
+      supabaseUrl,
+      supabaseAnonKey
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 // ================== DOCTOR API ROUTES ==================
 
 // Get current doctor profile
