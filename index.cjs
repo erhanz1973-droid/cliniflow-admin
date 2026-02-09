@@ -3948,6 +3948,13 @@ app.post("/auth/verify-otp-doctor", async (req, res) => {
   try {
     const { email, phone, otp, sessionId } = req.body || {};
 
+    console.log("[VERIFY-OTP-DOCTOR] Request received:", {
+      email: email || '(none)',
+      phone: phone || '(none)',
+      otp: otp ? otp.substring(0, 3) + '***' : '(none)',
+      sessionId: sessionId || '(none)'
+    });
+
     // Strict parameter validation
     if (!otp || typeof otp !== 'string' || !otp.trim()) {
       return res.status(400).json({ ok: false, error: "otp_required", message: "OTP kodu gereklidir." });
