@@ -3046,29 +3046,30 @@ async function resolvePatientForOtp({ email, phone }) {
 }
 
 // POST /auth/request-otp
-// Request OTP: takes email, finds patient, sends OTP to that email
+// Request OTP: takes email, phone, role, finds user by role, sends OTP
 app.post("/auth/request-otp", async (req, res) => {
-
-
-
-
-  
   try {
-    const { email, phone } = req.body || {};
+    const { email, phone, role } = req.body || {};
+    
+    console.log("[AUTH REQUEST-OTP] ROLE:", role);
+    console.log("[AUTH REQUEST-OTP] PHONE:", phone);
+    console.log("[AUTH REQUEST-OTP] EMAIL:", email);
+    
+    // 🔥 CRITICAL: Role is REQUIRED
+    if (!role || (role !== "DOCTOR" && role !== "PATIENT")) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "role_required", 
+        message: "Role parameter is required (DOCTOR or PATIENT)." 
+      });
+    }
     
     if ((!email || !String(email).trim()) && (!phone || !String(phone).trim())) {
-
       return res.status(400).json({ ok: false, error: "email_or_phone_required", message: "Email veya telefon gereklidir." });
     }
 
     const emailNormalized = email ? String(email).trim().toLowerCase() : "";
     const phoneNormalized = phone ? normalizePhone(String(phone)) : "";
-    
-    // Basic email validation (disabled for testing)
-    // const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    // if (!emailRegex.test(emailNormalized)) {
-    //   return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
-    // }
     
     // Check rate limit (email-based)
     if (!checkRateLimit(emailNormalized)) {
@@ -3079,17 +3080,36 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
 
-    const resolved = await resolvePatientForOtp({ email: emailNormalized, phone: phoneNormalized });
-    const foundPatientId = resolved.patientId;
-    const foundLanguage = resolved.language;
-    const foundPhone = resolved.phone;
-    const resolvedEmail = resolved.email;
+    let resolved;
+    let foundUserId;
+    let foundLanguage;
+    let foundPhone;
+    let resolvedEmail;
+    let errorMessage;
 
-    if (!foundPatientId) {
+    if (role === "DOCTOR") {
+      // 🔥 DOCTOR LOOKUP
+      resolved = await resolveDoctorForOtp({ email: emailNormalized, phone: phoneNormalized });
+      foundUserId = resolved.doctorId;
+      foundLanguage = resolved.language;
+      foundPhone = resolved.phone;
+      resolvedEmail = resolved.email;
+      errorMessage = "Bu telefon numarası ile kayıtlı doktor bulunamadı. Lütfen kayıt olun.";
+    } else {
+      // 🔥 PATIENT LOOKUP
+      resolved = await resolvePatientForOtp({ email: emailNormalized, phone: phoneNormalized });
+      foundUserId = resolved.patientId;
+      foundLanguage = resolved.language;
+      foundPhone = resolved.phone;
+      resolvedEmail = resolved.email;
+      errorMessage = "Bu telefon numarası ile kayıtlı hasta bulunamadı. Lütfen kayıt olun.";
+    }
+
+    if (!foundUserId) {
       return res.status(404).json({
         ok: false,
-        error: "patient_not_found",
-        message: "Bu email ile kayıtlı hasta bulunamadı. Lütfen email adresinizi kontrol edin veya kayıt olun.",
+        error: role === "DOCTOR" ? "doctor_not_found" : "patient_not_found",
+        message: errorMessage,
       });
     }
 
