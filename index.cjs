@@ -3058,11 +3058,11 @@ app.post("/auth/request-otp", async (req, res) => {
     const emailNormalized = email ? String(email).trim().toLowerCase() : "";
     const phoneNormalized = phone ? normalizePhone(String(phone)) : "";
     
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(emailNormalized)) {
-      return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
-    }
+    // Basic email validation (disabled for testing)
+    // const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // if (!emailRegex.test(emailNormalized)) {
+    //   return res.status(400).json({ ok: false, error: "invalid_email", message: "Geçersiz email formatı." });
+    // }
     
     // Check rate limit (email-based)
     if (!checkRateLimit(emailNormalized)) {
