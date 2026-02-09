@@ -2866,6 +2866,12 @@ async function resolveDoctorForOtp({ email, phone }) {
   const phoneTrimmed = phone ? String(phone).trim() : "";
   const phoneNormalized = phoneTrimmed ? normalizePhone(phoneTrimmed) : "";
 
+  console.log("[DOCTOR OTP] Looking up doctor with:", {
+    email: emailNormalized || '(none)',
+    phone: phoneNormalized || '(none)',
+    originalPhone: phone || '(none)'
+  });
+
 
 
   let foundDoctor = null;
