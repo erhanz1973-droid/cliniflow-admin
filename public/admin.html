@@ -6,34 +6,183 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
-  <title>Doktor Başvuruları - Clinifly Admin (FIXED v20260209)</title>
-  <script>
-    // Token check - redirect to login if not authenticated
-    (function() {
-      const token = localStorage.getItem("admin_token");
-      if (!token) {
-        window.location.href = "/admin-login.html";
-      }
-    })();
-  </script>
-  <script src="/admin-i18n.js"></script>
+  <title id="pageTitle">Clinifly Admin – Dashboard</title>
+  <script src="/admin-i18n.js?v=202502011445"></script>
   <style>
-    :root {
-      --bg:#111827;
-      --card:#1f2937;
-      --b:#374151;
-      --p:#2563eb;
-      --g:#16a34a;
+    :root { 
+      --bg:#111827; 
+      --card:#1f2937; 
+      --b:#374151; 
+      --p:#2563eb; 
+      --g:#16a34a; 
       --r:#dc2626;
-      --y:#f59e0b;
+      --warn:#f59e0b;
       --muted:#a7b2c8;
       --link:#6aa6ff;
     }
-    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+    }
     .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
-    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
     h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
-
+    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
+    .card{ 
+      background:var(--card); 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:16px; 
+      padding:24px; 
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
+      margin-bottom:16px;
+    }
+    .banner{
+      background:#7f1d1d;
+      border:1px solid var(--r);
+      border-left:4px solid var(--r);
+      border-radius:8px;
+      padding:12px 16px;
+      margin-bottom:16px;
+      color:#fca5a5;
+    }
+    .banner h3{
+      margin:0 0 8px 0;
+      color:#fca5a5;
+      font-size:16px;
+      font-weight:700;
+    }
+    .banner.empty{
+      background:#0b1220;
+      border-color:#334155;
+      border-left-color:var(--warn);
+      color:#fef3c7;
+    }
+    .banner.empty h3{
+      color:#fef3c7;
+    }
+    .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .list{ margin-top:12px; display:flex; flex-direction:column; gap:10px; }
+    .item{ 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:12px; 
+      padding:16px; 
+      display:flex; 
+      justify-content:space-between; 
+      gap:16px; 
+      align-items:start; 
+      background:rgba(31, 41, 55, 0.5);
+      transition:all 0.2s;
+      margin-bottom:8px;
+    }
+    .item:hover{
+      background:rgba(31, 41, 55, 0.8);
+      border-color:rgba(59, 130, 246, 0.3);
+      transform:translateY(-1px);
+    }
+    .item[onclick]:hover{
+      box-shadow:0 4px 12px rgba(37,99,235,0.2);
+      border-color:var(--p);
+      cursor:pointer;
+    }
+    .item.overdue{
+      background:#3a0a0a !important;
+      border-color:#991b1b !important;
+      border-left:4px solid #ef4444 !important;
+      box-shadow:0 0 0 1px rgba(239,68,68,0.3) !important;
+    }
+    .item.overdue .item-title{
+      color:#fca5a5 !important;
+    }
+    .item.overdue .item-meta{
+      color:#fca5a5 !important;
+      opacity:0.9;
+    }
+    .item.overdue .item-date{
+      color:#fca5a5 !important;
+    }
+    .item.overdue:hover{
+      background:#4a0f0f !important;
+      box-shadow:0 2px 8px rgba(239,68,68,0.5) !important;
+      border-color:#ef4444 !important;
+    }
+    .item.overdue[onclick]:hover{
+      box-shadow:0 4px 12px rgba(239,68,68,0.6) !important;
+      border-color:#ef4444 !important;
+      transform:translateY(-1px);
+    }
+    .item-left{ flex:1; }
+    .item-title{ 
+      font-size:15px; 
+      font-weight:600; 
+      margin-bottom:4px;
+      color:#e6eaf2;
+    }
+    .item-meta{ 
+      color:var(--muted); 
+      font-size:13px; 
+      margin-top:4px;
+    }
+    .item-date{
+      font-weight:600;
+      color:#e6eaf2;
+    }
+    .status{ 
+      font-weight:700; 
+      font-size:11px; 
+      padding:4px 10px; 
+      border-radius:999px; 
+      border:1px solid var(--b);
+      text-transform:uppercase;
+      white-space:nowrap;
+    }
+    .status-planned{ 
+      background:linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.15)); 
+      border-color:rgba(59, 130, 246, 0.4); 
+      color:#93c5fd;
+      box-shadow:0 1px 3px rgba(59, 130, 246, 0.2);
+    }
+    .status.planned{ 
+      background:linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.15)); 
+      border-color:rgba(59, 130, 246, 0.4); 
+      color:#93c5fd;
+      box-shadow:0 1px 3px rgba(59, 130, 246, 0.2);
+    }
+    .status-pill{
+      display:inline-block;
+      padding:4px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:700;
+      text-transform:uppercase;
+      border:1px solid;
+    }
+    .status.done{ background:#dcfce7; border-color:#86efac; color:#166534; }
+    .status.overdue{ background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .muted{ color:var(--muted); font-size:13px; }
+    .empty-state{
+      text-align:center;
+      padding:40px 20px;
+      color:#9ca3af;
+    }
+    .empty-state-icon{
+      font-size:48px;
+      margin-bottom:12px;
+    }
+    button{ 
+      cursor:pointer; 
+      border:none; 
+      background:var(--p); 
+      color:#fff; 
+      font-weight:600; 
+      padding:10px 16px;
+      border-radius:8px;
+      font-size:14px;
+      transition:background 0.2s;
+    }
+    button:hover{ background:#1d4ed8; }
+    button.secondary{ background:#6b7280; }
+    button.secondary:hover{ background:#4b5563; }
     .navbar {
       display: flex;
       justify-content: space-between;
@@ -53,321 +202,1586 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      font-weight: 700;
-      font-size: 20px;
-      color: #fff;
     }
-    .navbar-links {
+    .navbar-logo img {
+      height: 24px;
+      width: auto;
+      opacity: 0.8;
+    }
+    .navbar-logo-text {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--muted);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .navbar-center {
       display: flex;
-      gap: 16px;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
       align-items: center;
     }
-    .navbar-link {
+    .nav-link {
       color: var(--muted);
       text-decoration: none;
+      font-weight: 500;
       padding: 8px 12px;
-      border-radius: 6px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
       transition: all 0.2s;
     }
-    .navbar-link:hover {
-      background: var(--card);
-      color: #fff;
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
     }
-    .navbar-link.active {
+    .nav-link.active {
+      color: #fff;
       background: var(--p);
-      color: #fff;
+      font-weight: 600;
     }
-
-    .stats-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:16px; margin-bottom:24px; }
-    .stat-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; text-align:center; }
-    .stat-number{ font-size:32px; font-weight:700; color:#fff; margin-bottom:4px; }
-    .stat-label{ color:var(--muted); font-size:14px; }
-
-    .search-filter{ display:flex; gap:12px; margin-bottom:20px; flex-wrap:wrap; }
-    .search-input{ flex:1; min-width:200px; background:var(--card); border:1px solid var(--b); color:#fff; padding:12px 16px; border-radius:8px; font-size:14px; }
-    .search-input::placeholder{ color:var(--muted); }
-    .filter-btn{ background:var(--card); border:1px solid var(--b); color:var(--muted); padding:12px 20px; border-radius:8px; font-size:14px; cursor:pointer; transition:all 0.2s; }
-    .filter-btn:hover{ background:var(--b); color:#fff; }
-    .filter-btn.active{ background:var(--p); color:#fff; border-color:var(--p); }
-
-    .doctor-grid{ display:grid; gap:16px; }
-    .doctor-card{ background:var(--card); border:1px solid var(--b); border-radius:12px; padding:20px; display:flex; justify-content:space-between; align-items:center; transition:all 0.2s; }
-    .doctor-card:hover{ border-color:var(--p); transform:translateY(-1px); }
-    .doctor-info{ flex:1; }
-    .doctor-name{ font-size:18px; font-weight:600; color:#fff; margin-bottom:8px; }
-    .doctor-details{ color:var(--muted); font-size:14px; line-height:1.5; }
-    .doctor-details span{ display:block; margin-bottom:2px; }
-    .doctor-meta{ display:flex; align-items:center; gap:8px; margin-top:8px; }
-    .status-badge{ padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; text-transform:uppercase; }
-    .status-pending{ background:var(--y); color:#000; }
-    .status-approved{ background:var(--g); color:#fff; }
-    .status-rejected{ background:var(--r); color:#fff; }
-    .role-badge{ background:var(--p); color:#fff; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; }
-    .doctor-actions{ display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
-    .btn{ padding:8px 16px; border-radius:6px; font-size:14px; font-weight:600; text-decoration:none; text-align:center; cursor:pointer; transition:all 0.2s; border:none; }
-    .btn-primary{ background:var(--p); color:#fff; }
-    .btn-primary:hover{ background:#1d4ed8; }
-    .btn-success{ background:var(--g); color:#fff; }
-    .btn-success:hover{ background:#15803d; }
-    .btn-danger{ background:var(--r); color:#fff; }
-    .btn-danger:hover{ background:#b91c1c; }
-    .btn-secondary{ background:var(--card); color:var(--muted); border:1px solid var(--b); }
-    .btn-secondary:hover{ background:var(--b); color:#fff; }
-    .btn:disabled{ opacity:0.5; cursor:not-allowed; }
-
-    .empty-state{ text-align:center; padding:60px 20px; color:var(--muted); }
-    .empty-icon{ font-size:48px; margin-bottom:16px; opacity:0.5; }
-    .loading{ text-align:center; padding:40px; color:var(--muted); }
-    .error{ background:#3a1620; border:1px solid #5a2232; color:#ffd7df; padding:16px; border-radius:8px; margin-bottom:20px; }
-
-    @media (max-width:768px){
-      .wrap{ padding:12px; }
-      .doctor-card{ flex-direction:column; align-items:flex-start; gap:16px; }
-      .doctor-actions{ width:100%; flex-direction:row; justify-content:flex-end; }
-      .navbar{ flex-direction:column; align-items:flex-start; }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .loading{
+      text-align:center;
+      padding:20px;
+      color:var(--muted);
+    }
+    .nav-badge{
+      position:absolute;
+      top:-6px;
+      right:-6px;
+      background:var(--r);
+      color:#fff;
+      border-radius:10px;
+      min-width:18px;
+      height:18px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      font-weight:700;
+      padding:0 4px;
+      border:2px solid var(--bg);
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <div class="navbar">
-        <div class="navbar-left">
-          <div class="navbar-logo">
-            🏥 Clinifly Admin
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+      <!-- Inline SVG Logo - No External File -->
+      <svg width="32" height="32" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" style="opacity: 0.9;">
+        <defs>
+          <linearGradient id="toothGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" style="stop-color:#374151;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#6b7280;stop-opacity:1" />
+          </linearGradient>
+        </defs>
+        <g transform="translate(2, 2)">
+          <path d="M 6 8 C 6 5, 7.5 3, 10 2 C 12.5 1, 16 1, 18 2 C 18.5 2.5, 19 3, 19.5 4 L 19.5 14 C 19.5 15.5, 20 16.5, 21 17 C 22 17.5, 23 17.5, 24 17 C 25 16.5, 25.5 15.5, 25.5 14 L 25.5 4 C 25.5 3, 26 2.5, 26.5 2 C 28 1, 30 1, 32 2 C 34 3, 35.5 5, 35.5 8 L 35.5 26 C 35.5 27.5, 34.5 28.5, 33 29.5 C 31.5 30.5, 29.5 31.5, 27.5 32.5 C 25.5 33.5, 23.5 34, 21.5 34 C 19.5 34, 17.5 33.5, 15.5 32.5 C 13.5 31.5, 11.5 30.5, 9.5 29.5 C 8 28.5, 7 27.5, 7 26 Z" fill="none" stroke="url(#toothGradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 11 12 C 14 11, 18 11, 21 12" fill="none" stroke="url(#toothGradient)" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+        </g>
+      </svg>
+      <h1 id="pageHeading" data-i18n="dashboard.title" style="margin: 0;">Clinifly Admin – Dashboard</h1>
+    </div>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <!-- New Modern Clinifly Logo -->
+          <svg width="24" height="24" viewBox="0 0 120 40" xmlns="http://www.w3.org/2000/svg" style="opacity: 0.8;">
+            <defs>
+              <linearGradient id="newLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#1E40AF;stop-opacity:1" />
+                <stop offset="50%" style="stop-color:#3B82F6;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#06B6D4;stop-opacity:1" />
+              </linearGradient>
+            </defs>
+            
+            <!-- Ana diş şekli -->
+            <path d="M20 25 C20 18, 25 13, 32 13 L38 13 C45 13, 50 18, 50 25 L50 30 C50 33, 48 35, 45 35 L25 35 C22 35, 20 33, 20 30 Z" 
+                  fill="url(#newLogoGradient)" />
+            
+            <!-- Diş iç detayı -->
+            <rect x="30" y="18" width="8" height="10" rx="2" fill="white" opacity="0.9" />
+            <circle cx="34" cy="23" r="1" fill="#1E40AF" />
+            
+            <!-- Alt dalga -->
+            <path d="M15 32 Q35 28, 55 32" stroke="url(#newLogoGradient)" stroke-width="2.5" fill="none" opacity="0.7" />
+            
+            <!-- CLINIFLOW text -->
+            <text x="60" y="28" font-family="Arial, sans-serif" font-size="9" fill="#1E40AF" font-weight="bold">CLINIFLOW</text>
+          </svg>
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+    </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link active" data-i18n="dashboard.nav.dashboard">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" id="patientsNavLink" data-i18n="dashboard.nav.patients">
+          Patients
+          <span id="patientsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-doctor-applications-v2.html" class="nav-link" id="doctorApplicationsNavLink">
+          Doctor Applications
+          <span id="doctorApplicationsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" id="chatNavLink" data-i18n="dashboard.nav.chat">
+          Chat
+          <span id="chatBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+        <a href="/admin-referrals.html" class="nav-link" id="referralsNavLink" data-i18n="dashboard.nav.referrals">
+          Referrals
+          <span id="referralsBadge" class="nav-badge" style="display:none;"></span>
+        </a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary" data-i18n="dashboard.nav.settings">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="#" onclick="logout(); return false;" class="nav-link secondary" data-i18n="dashboard.nav.logout" style="cursor: pointer;">Logout</a>
+      </div>
+    </nav>
+    
+    <!-- Suspended Clinic Notice -->
+    <div id="suspendedNotice" style="display: none; margin: 20px 0; padding: 24px; background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(251, 191, 36, 0.05)); border: 1px solid rgba(245, 158, 11, 0.3); border-left: 4px solid var(--warn); border-radius: 16px; position: relative; overflow: hidden;">
+      <!-- Background Pattern -->
+      <div style="position: absolute; top: 0; right: 0; width: 200px; height: 200px; background: radial-gradient(circle, rgba(245, 158, 11, 0.1) 0%, transparent 70%); opacity: 0.5;"></div>
+      
+      <div style="position: relative; z-index: 1;">
+        <!-- Header -->
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+          <div style="width: 48px; height: 48px; background: rgba(245, 158, 11, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px;">
+            ⚠️
+          </div>
+          <div>
+            <h2 style="margin: 0; font-size: 20px; font-weight: 700; color: #fbbf24;" data-i18n="clinicSuspended.title">Hesabınız Geçici Olarak Askıya Alındı</h2>
+            <p style="margin: 4px 0 0 0; font-size: 14px; color: var(--muted);" data-i18n="clinicSuspended.description">Klinik hesabınız şu anda aktif değildir.</p>
           </div>
         </div>
-        <div class="navbar-links">
-          <a href="/admin-doctor-applications-v2.html" class="navbar-link active">Doctor Applications</a>
-          <a href="#" onclick="logout()" class="navbar-link">Logout</a>
+        
+        <!-- Content Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 20px;">
+          <!-- Left Column -->
+          <div>
+            <h3 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 600; color: #fbbf24;" data-i18n="clinicSuspended.reasonTitle">Askıya Alma Nedeni</h3>
+            <p style="margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted);" data-i18n="clinicSuspended.reasonGeneric">Hesabınız sistem ve güvenlik kontrolleri kapsamında incelenmektedir.</p>
+          </div>
+          
+          <!-- Right Column -->
+          <div>
+            <h3 style="margin: 0 0 12px 0; font-size: 16px; font-weight: 600; color: #fbbf24;" data-i18n="clinicSuspended.whatToDoTitle">Nasıl Tekrar Aktif Olur?</h3>
+            <ul style="margin: 0; padding-left: 16px; font-size: 14px; line-height: 1.5; color: var(--muted);">
+              <li data-i18n="clinicSuspended.steps[0]">Destek ekibimiz hesabınızı inceliyor</li>
+              <li data-i18n="clinicSuspended.steps[1]">Gerekli olması halinde sizinle iletişime geçilecektir</li>
+              <li data-i18n="clinicSuspended.steps[2]">Sorularınız için bizimle iletişime geçebilirsiniz</li>
+            </ul>
+          </div>
+        </div>
+        
+        <!-- Actions -->
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <button onclick="window.open('mailto:support@clinifly.net', '_blank')" style="padding: 10px 20px; background: var(--warn); color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='#d97706'" onmouseout="this.style.background='var(--warn)'">
+            📧 <span data-i18n="clinicSuspended.contactSupport">Destek ile İletişime Geç</span>
+          </button>
+          <button onclick="showSuspendedDetails()" style="padding: 10px 20px; background: transparent; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(245, 158, 11, 0.1)'" onmouseout="this.style.background='transparent'">
+            <span data-i18n="clinicSuspended.learnMore">Daha Fazla Bilgi</span>
+          </button>
         </div>
       </div>
-      <h1>👨‍⚕️ Doktor Başvuruları</h1>
-    </header>
-
-    <div class="stats-grid">
-      <div class="stat-card">
-        <div class="stat-number" id="pending-count">-</div>
-        <div class="stat-label">Bekleyen Başvuru</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number" id="approved-count">-</div>
-        <div class="stat-label">Onaylanan Doktor</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number" id="rejected-count">-</div>
-        <div class="stat-label">Reddedilen Başvuru</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-number" id="total-count">-</div>
-        <div class="stat-label">Toplam Başvuru</div>
+    </div>
+    
+    <!-- Status Badge (Top Right) -->
+    <div id="suspendedStatusBadge" style="display: none; position: fixed; top: 20px; right: 20px; z-index: 1000; padding: 8px 16px; background: rgba(245, 158, 11, 0.2); border: 1px solid var(--warn); border-radius: 20px; font-size: 12px; font-weight: 600; color: #fbbf24; backdrop-filter: blur(10px);">
+      <span data-i18n="clinicSuspended.statusBadge">Durum: Askıda</span>
+    </div>
+    
+    <!-- Blur Overlay for Main Content -->
+    <div id="mainContentBlur" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.3); backdrop-filter: blur(2px); z-index: 10; pointer-events: none;"></div>
+    
+    <div id="clinicInfo" style="margin-bottom:20px; padding:16px; background:var(--card); border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:12px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05);">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div id="clinicName" style="font-weight:700; font-size:18px; color:#ffffff;">—</div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <span id="clinicStatus" class="status-pill" style="display:none;"></span>
+          <span id="clinicCode" style="font-size:11px; color:var(--muted); font-weight:500; letter-spacing:0.5px;">—</span>
+        </div>
       </div>
     </div>
 
-    <div class="search-filter">
-      <input type="text" class="search-input" id="search-input" placeholder="Doktor adı, email veya telefon ile ara...">
-      <select class="filter-btn" id="status-filter">
-        <option value="">Tüm Durumlar</option>
-        <option value="PENDING">Bekleyen</option>
-        <option value="ACTIVE">Onaylanan</option>
-        <option value="REJECTED">Reddedilen</option>
-      </select>
-      <button class="filter-btn" onclick="loadApplications()">🔄 Yenile</button>
+    <div id="overdueBanner" style="display:none;"></div>
+
+    <!-- Compact Metrics Row -->
+    <div class="metrics-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
+      
+      <!-- Monthly Active Patients - Compact -->
+      <div class="card" style="padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px; font-weight:600;">📊 <span id="activePatientsTitle"></span>Active Patients</span></h3>
+          <div id="activePatientsGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+            Loading...
+          </div>
+        </div>
+        
+        <!-- Mini Chart -->
+        <div style="position:relative; height:120px; margin-bottom:8px;">
+          <canvas id="activePatientsChart"></canvas>
+        </div>
+        
+        <!-- Summary -->
+        <div style="text-align:center; color:var(--muted); font-size:10px;">
+          <div id="activePatientsSummary">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Monthly Procedures - Compact -->
+      <div class="card" style="padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="margin:0; font-size:14px; font-weight:600;">🦷 <span id="proceduresTitle"></span>Procedures</span></h3>
+          <div id="monthlyProceduresGrowth" style="padding:2px 8px; border-radius:8px; font-size:10px; font-weight:600; background:#f3f4f6; color:#6b7280;">
+            Loading...
+          </div>
+        </div>
+        
+        <!-- Mini Chart -->
+        <div style="position:relative; height:120px; margin-bottom:8px;">
+          <canvas id="monthlyProceduresChart"></canvas>
+        </div>
+        
+        <!-- Summary -->
+        <div style="text-align:center; color:var(--muted); font-size:10px;">
+          <div id="monthlyProceduresSummary">Loading...</div>
+        </div>
+      </div>
+      
     </div>
 
-    <div id="error-container"></div>
-    <div id="loading-container" class="loading" style="display:none;">
-      <div>🔄 Yükleniyor...</div>
-    </div>
-    <div id="doctors-container" class="doctor-grid"></div>
-    <div id="empty-container" class="empty-state" style="display:none;">
-      <div class="empty-icon">📋</div>
-      <div>Henüz doktor başvurusu bulunmuyor</div>
+    <!-- Responsive CSS for mobile -->
+    <style>
+      @media (max-width: 768px) {
+        .metrics-grid {
+          grid-template-columns: 1fr !important;
+        }
+      }
+    </style>
+
+    <div class="card">
+      <h2 id="upcomingTitle" data-i18n="dashboard.upcoming.title">📅 Upcoming / Next Actions</h2>
+      <div id="timelineSummary" style="display:none; margin-bottom:20px;">
+        <div style="display:flex; gap:12px; flex-wrap:wrap;">
+          <div class="summary-badge summary-badge-overdue" style="padding:8px 14px; background:rgba(220, 38, 38, 0.15); border:1px solid rgba(220, 38, 38, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">⚠️</span>
+            <span style="font-size:13px; font-weight:600; color:#fca5a5;" data-i18n="dashboard.upcoming.summary.overdue">Gecikmiş:</span>
+            <span id="overdueCount" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+          </div>
+          <div class="summary-badge summary-badge-today" style="padding:8px 14px; background:rgba(37, 99, 235, 0.15); border:1px solid rgba(37, 99, 235, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">📅</span>
+            <span style="font-size:13px; font-weight:600; color:#93c5fd;" data-i18n="dashboard.upcoming.summary.today">Bugün:</span>
+            <span id="todayPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.patients">hasta</span>
+            <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
+            <span id="todayEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);" data-i18n="dashboard.upcoming.summary.events">etkinlik</span>
+          </div>
+          <div class="summary-badge summary-badge-tomorrow" style="padding:8px 14px; background:rgba(139, 92, 246, 0.15); border:1px solid rgba(139, 92, 246, 0.3); border-radius:8px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:14px;">📅</span>
+            <span style="font-size:13px; font-weight:600; color:#c4b5fd;">Tomorrow:</span>
+            <span id="tomorrowPatients" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">patients</span>
+            <span style="font-size:11px; color:var(--muted); margin:0 2px;">•</span>
+            <span id="tomorrowEvents" style="font-size:13px; font-weight:700; color:#fff;">0</span>
+            <span style="font-size:11px; color:var(--muted);">events</span>
+          </div>
+        </div>
+      </div>
+      <div id="upcomingSubtitle" class="muted" style="margin-bottom:12px;" data-i18n="dashboard.upcoming.subtitle">
+        Önümüzdeki 14 gün içindeki event'ler (bugün hariç)
+      </div>
+      <div id="upcomingList" class="loading" data-i18n="common.loading">Yükleniyor...</div>
     </div>
   </div>
 
-  <script>
-    let allDoctors = [];
-    let filteredDoctors = [];
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+  // If a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
 
-    async function loadApplications() {
-      const token = localStorage.getItem("admin_token");
-      const loadingContainer = document.getElementById("loading-container");
-      const errorContainer = document.getElementById("error-container");
-      const doctorsContainer = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
+  // Global logout function - accessible from onclick handlers
+  function logout() {
+    try {
+      localStorage.removeItem("admin_token");
+      console.log("[LOGOUT] Admin token cleared");
+    } catch (e) {
+      console.error("[LOGOUT] Error clearing token:", e);
+    }
+    window.location.href = window.location.origin + "/admin-login.html";
+  }
 
-      loadingContainer.style.display = "block";
-      errorContainer.innerHTML = "";
-      doctorsContainer.innerHTML = "";
-      emptyContainer.style.display = "none";
+  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+  function applyTokenFromUrl() {
+    try {
+      const url = new URL(location.href);
+      const token = (url.searchParams.get("token") || "").trim();
+      if (!token) return;
+      localStorage.setItem("admin_token", token);
+      url.searchParams.delete("token");
+      history.replaceState({}, "", url.toString());
+    } catch {}
+  }
+  function getAdminToken() {
+    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+  }
+  // Check token on page load - redirect to login if missing
+  function checkAuth() {
+    const token = getAdminToken();
+    if (!token) {
+      // No token - redirect to login page
+      window.location.href = window.location.origin + "/admin-login.html";
+      return false;
+    }
+    return true;
+  }
+  function adminHeaders(extra = {}) {
+    const token = getAdminToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...extra,
+    };
+  }
 
-      try {
-        const response = await fetch("/api/admin/doctor-applications", {
-          headers: {
-            "Authorization": "Bearer " + token
+  // Safari-compatible fetch wrapper
+  async function safariFetch(url, options = {}) {
+    const token = getAdminToken();
+    
+    const defaultOptions = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers
+      },
+      credentials: 'include', // Safari için kritik
+      mode: 'cors',
+      cache: 'no-cache',
+      ...options
+    };
+
+    // Safari-specific timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+    
+    try {
+      console.log('[SAFARI FETCH] Request:', { url, method: defaultOptions.method, hasAuth: !!token });
+      
+      const response = await fetch(url, {
+        ...defaultOptions,
+        signal: controller.signal,
+        ...options
+      });
+      
+      clearTimeout(timeoutId);
+      console.log('[SAFARI FETCH] Response:', response.status, response.statusText);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      // Safari-specific error handling
+      if (error.name === 'AbortError') {
+        console.error('[SAFARI FETCH] Request timeout');
+        throw new Error('Request timeout - please try again');
+      }
+      
+      console.error('[SAFARI FETCH] Error:', error);
+      throw error;
+    }
+  }
+  // Load clinic info
+  async function loadClinicInfo() {
+    const el = document.getElementById("clinicInfo");
+    if (!el) return;
+    const token = getAdminToken();
+    if (!token) {
+      el.style.display = "none";
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const code = (data.clinicCode || data.code || "-").toString();
+      const name = (data.name || "-").toString();
+      const status = (data.status || "-").toString();
+      
+      // Update clinic name
+      const clinicNameEl = document.getElementById("clinicName");
+      if (clinicNameEl) clinicNameEl.textContent = name || "—";
+      
+      // Update clinic code
+      const clinicCodeEl = document.getElementById("clinicCode");
+      if (clinicCodeEl) clinicCodeEl.textContent = code || "—";
+      
+      // Update clinic status
+      const clinicStatusEl = document.getElementById("clinicStatus");
+      if (clinicStatusEl && status) {
+        clinicStatusEl.textContent = status;
+        clinicStatusEl.style.display = "inline-block";
+      }
+      
+      // Update navbar clinic name
+      const navbarClinicName = document.getElementById("navbarClinicName");
+      if (navbarClinicName) {
+        navbarClinicName.textContent = name || "Clinic";
+      }
+    } catch (e) {
+      console.error("Load clinic info error:", e);
+    }
+  }
+
+  function formatDate(dateStr, timeStr) {
+    if (!dateStr) return "—";
+    const date = new Date(dateStr + (timeStr ? `T${timeStr}:00` : "T00:00:00"));
+    if (isNaN(date.getTime())) return dateStr;
+    
+    const lang = i18n.getLang();
+    const locale = lang === 'tr' ? 'tr-TR' : 'en-US';
+    const options = { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      weekday: 'short'
+    };
+    const dateFormatted = date.toLocaleDateString(locale, options);
+    return timeStr ? `${dateFormatted} ${timeStr}` : dateFormatted;
+  }
+
+  function formatRelativeDate(dateStr) {
+    if (!dateStr) return "—";
+    const date = new Date(dateStr + "T00:00:00");
+    if (isNaN(date.getTime())) return dateStr;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const eventDate = new Date(date);
+    eventDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = eventDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.today") : "Today";
+    if (diffDays === 1) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.tomorrow") : "Tomorrow";
+    if (diffDays === 2) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.dayAfterTomorrow") : "Day after tomorrow";
+    if (diffDays > 0 && diffDays <= 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.daysLater", { count: diffDays }) : `${diffDays} days later`;
+    if (diffDays > 7) return (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.weeksLater", { count: Math.ceil(diffDays / 7) }) : `${Math.ceil(diffDays / 7)} weeks later`;
+    return formatDate(dateStr);
+  }
+
+  function getEventIcon(type, eventType) {
+    const t = String(type || "").toUpperCase();
+    const et = String(eventType || "").toUpperCase();
+    
+    if (t === "FLIGHT" || et === "FLIGHT") return "✈️";
+    if (t === "HOTEL" || et === "HOTEL") return "🏨";
+    if (t === "AIRPORT_PICKUP" || et === "AIRPORT_PICKUP") return "🚗";
+    if (t === "TREATMENT" || et === "TREATMENT") return "🦷";
+    if (t === "CONSULT" || et === "CONSULT") return "💬";
+    if (t === "FOLLOWUP" || et === "FOLLOWUP") return "📋";
+    if (t === "LAB" || et === "LAB") return "🔬";
+    if (t === "HEALTH" || t === "HEALTH_FORM" || et === "HEALTH") return "";
+    return "📅";
+  }
+
+  function getEventTypeLabel(type) {
+    if (!type) return type || "";
+    const typeUpper = String(type).toUpperCase();
+    const key = `dashboard.upcoming.eventTypes.${typeUpper}`;
+    
+    // Try to get translation from i18n system
+    const translated = window.i18n ? window.i18n.t(key) : null;
+    
+    // If translation found and it's not the key itself, return it
+    if (translated && translated !== key) {
+      return translated;
+    }
+    
+    // Fallback to English labels if i18n is not working
+    const fallbackLabels = {
+      "TRAVEL_EVENT": "Travel Event",
+      "FLIGHT": "Flight",
+      "HOTEL": "Hotel",
+      "AIRPORT_PICKUP": "Airport Pickup",
+      "TREATMENT": "Treatment",
+      "CONSULT": "Consultation",
+      "FOLLOWUP": "Follow-up",
+      "LAB": "Lab / Scan",
+      "HEALTH": "Health Form",
+      "APPOINTMENT": "Appointment",
+      "PAYMENT": "Payment",
+      "SURGERY": "Surgery",
+      "CHECKUP": "Checkup"
+    };
+    
+    return fallbackLabels[typeUpper] || type;
+  }
+
+  function renderOverdueBanner(overdue) {
+    const bannerEl = document.getElementById("overdueBanner");
+    if (!bannerEl) return;
+    
+    // Filter out completed, cancelled, or past events that are actually completed
+    const activeOverdue = Array.isArray(overdue) 
+      ? overdue.filter(evt => {
+          const status = String(evt.status || "").toUpperCase();
+          const isCompleted = status === "DONE" || status === "COMPLETED";
+          const isCancelled = status === "CANCELLED";
+          
+          // Also check if date is in the past (double check)
+          let isPast = false;
+          if (evt.timelineAt || evt.date || evt.timestamp) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const eventDate = evt.timelineAt
+              ? new Date(evt.timelineAt)
+              : (evt.timestamp ? new Date(evt.timestamp) : new Date(evt.date));
+            if (!isNaN(eventDate.getTime())) {
+              eventDate.setHours(0, 0, 0, 0);
+              isPast = eventDate < today;
+            }
           }
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.ok) {
-          allDoctors = data.doctors || [];
-          filteredDoctors = [...allDoctors];
-          updateStats();
-          renderDoctors();
-        } else {
-          throw new Error(data.error || "Başvurular yüklenemedi");
-        }
-      } catch (error) {
-        console.error("Load applications error:", error);
-        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
-      } finally {
-        loadingContainer.style.display = "none";
-      }
+          
+          // Only show if not completed, not cancelled, and actually past
+          return !isCompleted && !isCancelled && isPast;
+        })
+      : [];
+    
+    // Hide banner if no overdue items or all are completed
+    if (!activeOverdue || activeOverdue.length === 0) {
+      bannerEl.style.display = "none";
+      return;
     }
 
-    function updateStats() {
-      const pending = allDoctors.filter(d => d.status === "PENDING").length;
-      const approved = allDoctors.filter(d => d.status === "ACTIVE").length;
-      const rejected = allDoctors.filter(d => d.status === "REJECTED").length;
-      const total = allDoctors.length;
+    bannerEl.className = "banner";
+    bannerEl.innerHTML = `
+      <h3>${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.overdue", { count: activeOverdue.length }) : `${activeOverdue.length} Overdue`}</h3>
+      <div style="font-size:14px; color:#7f1d1d;">
+        ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.overdueDesc", { count: activeOverdue.length }) : `You have ${activeOverdue.length} overdue item(s) that need attention.`}
+      </div>
+    `;
+    bannerEl.style.display = "block";
+  }
 
-      document.getElementById("pending-count").textContent = pending;
-      document.getElementById("approved-count").textContent = approved;
-      document.getElementById("rejected-count").textContent = rejected;
-      document.getElementById("total-count").textContent = total;
+  function getEventTargetUrl(evt) {
+    if (!evt.patientId) return null;
+    
+    const type = String(evt.type || "").toUpperCase();
+    const eventType = String(evt.eventType || "").toUpperCase();
+    const patientId = evt.patientId;
+    
+    // Travel-related events
+    if (type === "FLIGHT" || type === "HOTEL" || type === "AIRPORT_PICKUP" || type === "TRAVEL_EVENT") {
+      return `/admin-travel.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+    
+    // Treatment-related events
+    if (type === "TREATMENT" || type === "CONSULT" || type === "FOLLOWUP" || type === "LAB" || 
+        eventType === "TREATMENT" || eventType === "CONSULT" || eventType === "FOLLOWUP" || eventType === "LAB") {
+      let url = `/admin-treatment.html?patientId=${encodeURIComponent(patientId)}`;
+      // Add toothId to URL if available
+      if (evt.toothId) {
+        url += `&toothId=${encodeURIComponent(evt.toothId)}`;
+      }
+      // Add procedureId to URL if available (for direct navigation to specific procedure)
+      if (evt.procedureId) {
+        url += `&procedureId=${encodeURIComponent(evt.procedureId)}`;
+      }
+      return url;
+    }
+    
+    // Health form events
+    if (type === "HEALTH" || type === "HEALTH_FORM") {
+      return `/admin-health.html?patientId=${encodeURIComponent(patientId)}`;
+    }
+    
+    return null;
+  }
+
+  // Cache for patient names
+  let patientNameCache = {};
+
+  async function loadPatientNames(patientIds) {
+    if (!patientIds || patientIds.length === 0) return;
+    
+    // Filter out already cached patient IDs
+    const uncachedIds = [...new Set(patientIds)].filter(id => id && !patientNameCache[id]);
+    if (uncachedIds.length === 0) return;
+
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      
+      const r = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      if (!r.ok) return;
+      
+      const data = await r.json();
+      if (!data.ok || !Array.isArray(data.patients)) return;
+      
+      // Cache patient names
+      data.patients.forEach(patient => {
+        const pid = patient.patientId || patient.patient_id;
+        if (pid) {
+          patientNameCache[pid] = patient.fullName || patient.name || pid;
+        }
+      });
+    } catch (error) {
+      console.error("Load patient names error:", error);
+    }
+  }
+
+  function getPatientDisplayName(patientId) {
+    if (!patientId) return "";
+    const name = patientNameCache[patientId] || null;
+    if (name && name !== patientId) {
+      return `${name} • ${patientId}`;
+    }
+    return patientId;
+  }
+
+  async function renderUpcomingList(upcoming, patientMap = {}) {
+    const listEl = document.getElementById("upcomingList");
+    
+    if (!listEl) {
+      console.error("[renderUpcomingList] upcomingList element not found");
+      return;
+    }
+    
+    if (!upcoming || upcoming.length === 0) {
+      listEl.className = "empty-state";
+      listEl.innerHTML = `
+        <div class="empty-state-icon">📭</div>
+        <div>${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.empty") : "No upcoming events"}</div>
+      `;
+      return;
     }
 
-    function renderDoctors() {
-      const container = document.getElementById("doctors-container");
-      const emptyContainer = document.getElementById("empty-container");
+    console.log("[renderUpcomingList] Rendering", upcoming.length, "events");
 
-      if (filteredDoctors.length === 0) {
-        container.innerHTML = "";
-        emptyContainer.style.display = "block";
-        return;
+    // Load patient names if needed
+    const patientIds = [...new Set(upcoming.map(evt => evt.patientId).filter(Boolean))];
+    await loadPatientNames(patientIds);
+
+    listEl.className = "list";
+    listEl.innerHTML = upcoming.map((evt, index) => {
+      const isCompleted = evt.status === "DONE" || evt.status === "COMPLETED";
+      const statusClass = isCompleted ? "done" : "planned";
+      const statusText = isCompleted 
+        ? ((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.status.done") : "Done")
+        : ((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.status.planned") : "Planned");
+      
+      // Check if overdue (date is in the past and not completed)
+      let isOverdue = false;
+      if (!isCompleted) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let eventDate = null;
+        
+        // Use timelineAt as single source of truth
+        if (evt.timelineAt) {
+          eventDate = new Date(evt.timelineAt);
+        } else if (evt.timestamp) {
+          eventDate = new Date(evt.timestamp);
+        } else if (evt.date) {
+          eventDate = new Date(evt.date);
+        }
+        
+        if (eventDate && !isNaN(eventDate.getTime())) {
+          eventDate.setHours(0, 0, 0, 0);
+          isOverdue = eventDate < today;
+        }
       }
-
-      container.innerHTML = filteredDoctors.map(doctor => `
-        <div class="doctor-card">
-          <div class="doctor-info">
-            <div class="doctor-name">${doctor.name}</div>
-            <div class="doctor-details">
-              <span>📱 ${doctor.phone}</span>
-              ${doctor.email ? `<span>📧 ${doctor.email}</span>` : ""}
-              <span>🏥 Klinik: ${doctor.clinic_code}</span>
-              <span>📅 ${new Date(doctor.created_at).toLocaleDateString("tr-TR")}</span>
+      
+      const baseDate = evt.timelineAt || evt.timestamp || evt.date;
+      const relativeDate = formatRelativeDate(baseDate);
+      const fullDate = formatDate(baseDate, evt.time);
+      const targetUrl = getEventTargetUrl(evt);
+      const isClickable = targetUrl !== null;
+      // Escape single quotes in URL for onclick attribute
+      const escapedUrl = isClickable ? targetUrl.replace(/'/g, "\\'") : '';
+      
+      const itemClasses = `item${isOverdue ? ' overdue' : ''}`;
+      
+      // Add inline styles for overdue items to ensure visibility
+      let itemStyle = '';
+      if (isClickable) itemStyle += 'cursor: pointer;';
+      if (isOverdue) {
+        itemStyle += 'background-color: #3a0a0a !important; border-color: #dc2626 !important; border-left: 5px solid #ef4444 !important; border: 1px solid #dc2626 !important;';
+      }
+      
+      const titleStyle = isOverdue ? 'style="color: #fca5a5 !important;"' : '';
+      const metaStyle = isOverdue ? 'style="color: #fca5a5 !important; opacity: 0.9;"' : '';
+      
+      const eventIcon = getEventIcon(evt.type, evt.eventType);
+      const patientName = evt.patientId ? getPatientDisplayName(evt.patientId).split(' • ')[0] : '';
+      const priceText = evt.price ? `💰 ${Number(evt.price).toLocaleString()} ${evt.currency || ""}`.trim() : "";
+      const descriptionText = [
+        evt.description ? evt.description : "",
+        priceText
+      ].filter(Boolean).join(" • ");
+      
+      return `
+        <div class="${itemClasses}" data-event-index="${index}" style="${itemStyle}" ${isClickable ? `onclick="window.location.href='${escapedUrl}'"` : ''}>
+          <div style="display:flex; gap:12px; width:100%;">
+            <div style="min-width:90px; text-align:right; padding-top:2px;">
+              <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">${relativeDate}</div>
             </div>
-            <div class="doctor-meta">
-              <span class="status-badge status-${doctor.status.toLowerCase()}">${getStatusText(doctor.status)}</span>
-              <span class="role-badge">DOCTOR</span>
+            <div style="flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="font-size:18px;">${eventIcon}</span>
+                <div class="item-title" ${titleStyle}>${getEventTypeLabel(evt.type) || evt.title}</div>
+              </div>
+              <div class="item-meta" ${metaStyle}>
+                ${patientName || ''}
+              ${descriptionText ? ` • ${descriptionText}` : ""}
             </div>
           </div>
-          <div class="doctor-actions">
-            ${doctor.status === "PENDING" ? `
-              <button class="btn btn-success" onclick="approveDoctor('${doctor.doctor_id}')">✅ Onayla</button>
-              <button class="btn btn-danger" onclick="rejectDoctor('${doctor.doctor_id}')">❌ Reddet</button>
-            ` : ""}
-            <button class="btn btn-secondary" onclick="viewDetails('${doctor.doctor_id}')">👁️ Detaylar</button>
+          <div>
+            <span class="status ${statusClass}">${statusText}</span>
+            </div>
           </div>
         </div>
-      `).join("");
-    }
+      `;
+    }).join("");
+  }
 
-    function getStatusText(status) {
-      const statusMap = {
-        "PENDING": "Bekleyen",
-        "ACTIVE": "Onaylı",
-        "REJECTED": "Reddedildi"
-      };
-      return statusMap[status] || status;
-    }
+  // Add loading flag to prevent race conditions
+  let eventsLoading = false;
 
-    async function approveDoctor(doctorId) {
-      console.log("[DEBUG] approveDoctor called with doctorId:", doctorId);
-      const token = localStorage.getItem("admin_token");
-      
-      if (!confirm("Bu doktor başvurusunu onaylamak istediğinizden emin misiniz?")) {
+  async function loadEvents() {
+    if (eventsLoading) {
+      console.log("[loadEvents] Already loading, skipping...");
+      return;
+    }
+    
+    eventsLoading = true;
+    
+    try {
+      const upcomingEl = document.getElementById("upcomingList");
+      if (!upcomingEl) {
+        console.error("upcomingList element not found");
         return;
       }
+      
+      upcomingEl.className = "loading";
+      upcomingEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("common.loading") : "Loading...";
 
-      try {
-        const requestBody = { doctorId: doctorId };
-        console.log("[DEBUG] Request body:", requestBody);
+      const token = getAdminToken();
+      if (!token) {
+        throw new Error((window.i18n && window.i18n.t) ? window.i18n.t("dashboard.clinicBadge.noToken") : "No authentication token");
+      }
+    
+      console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
+      const r = await fetch(`${API}/api/admin/events`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      
+      console.log("[loadEvents] Response status:", r.status, r.statusText);
+      
+      if (!r.ok) {
+        const errorText = await r.text().catch(() => `HTTP ${r.status}`);
+        console.error("[loadEvents] HTTP error:", errorText);
+        throw new Error(`HTTP ${r.status}: ${errorText.substring(0, 100)}`);
+      }
+      
+      const contentType = r.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await r.text();
+        console.error("[loadEvents] Non-JSON response:", text.substring(0, 200));
+        throw new Error(`Server returned non-JSON response: ${contentType}`);
+      }
+      
+      const data = await r.json();
+      console.log("[loadEvents] Response data:", data);
+    
+      if (!data.ok) {
+        throw new Error(data.error || data.message || "Unknown error");
+      }
+
+      // Hide overdue banner (now shown in timeline)
+      const bannerEl = document.getElementById("overdueBanner");
+      if (bannerEl) bannerEl.style.display = "none";
+
+      // Calculate summary statistics
+      const overdueCount = (data.overdue || []).length;
+
+      // Get today and tomorrow events from API response
+      const todayEvents = data.today || [];
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      const tomorrowStart = tomorrow.getTime();
+      const tomorrowEnd = tomorrow.getTime() + (24 * 60 * 60 * 1000) - 1;
+      
+      // Get all events (overdue + today + upcoming) for timeline
+      const allEvents = [...(data.overdue || []), ...(data.today || []), ...(data.upcoming || [])];
+      
+      // Filter events for tomorrow
+      const tomorrowEvents = allEvents.filter(evt => {
+        const ts = evt.timelineAt ? Date.parse(evt.timelineAt) : (evt.timestamp || 0);
+        return ts >= tomorrowStart && ts <= tomorrowEnd;
+      });
+      
+      // Count unique patients for today and tomorrow
+      const todayPatients = new Set(todayEvents.map(evt => evt.patientId).filter(Boolean));
+      const tomorrowPatients = new Set(tomorrowEvents.map(evt => evt.patientId).filter(Boolean));
+      
+      // Update summary display
+      const summaryEl = document.getElementById("timelineSummary");
+      if (summaryEl) {
+        const overdueEl = document.getElementById("overdueCount");
+        const todayPatientsEl = document.getElementById("todayPatients");
+        const todayEventsEl = document.getElementById("todayEvents");
+        const tomorrowPatientsEl = document.getElementById("tomorrowPatients");
+        const tomorrowEventsEl = document.getElementById("tomorrowEvents");
         
-        const response = await fetch("/admin/approve-doctor", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + token
-          },
-          body: JSON.stringify(requestBody)
-        });
-
-        const data = await response.json();
-
-        if (data.ok) {
-          alert("✅ Doktor başarıyla onaylandı!");
-          loadApplications();
-        } else {
-          throw new Error(data.error || "Onaylama başarısız");
-        }
-      } catch (error) {
-        console.error("Approve doctor error:", error);
-        alert("❌ " + error.message);
+        if (overdueEl) overdueEl.textContent = overdueCount;
+        if (todayPatientsEl) todayPatientsEl.textContent = todayPatients.size;
+        if (todayEventsEl) todayEventsEl.textContent = todayEvents.length;
+        if (tomorrowPatientsEl) tomorrowPatientsEl.textContent = tomorrowPatients.size;
+        if (tomorrowEventsEl) tomorrowEventsEl.textContent = tomorrowEvents.length;
+        summaryEl.style.display = "block";
       }
-    }
 
-    async function rejectDoctor(doctorId) {
-      if (!confirm("Bu doktor başvurusunu reddetmek istediğinizden emin misiniz?")) {
-        return;
-      }
-      
-      // TODO: Implement reject endpoint
-      alert("🔧 Reddetme özelliği yakında eklenecek");
-    }
-
-    function viewDetails(doctorId) {
-      const doctor = allDoctors.find(d => d.doctor_id === doctorId);
-      if (!doctor) return;
-
-      alert(`👨‍⚕️ Doktor Detayları\n\nAd: ${doctor.name}\nTelefon: ${doctor.phone}\nEmail: ${doctor.email || "-"}\nKlinik: ${doctor.clinic_code}\nDurum: ${getStatusText(doctor.status)}\nKayıt: ${new Date(doctor.created_at).toLocaleString("tr-TR")}`);
-    }
-
-    function filterDoctors() {
-      const searchTerm = document.getElementById("search-input").value.toLowerCase();
-      const statusFilter = document.getElementById("status-filter").value;
-
-      filteredDoctors = allDoctors.filter(doctor => {
-        const matchesSearch = !searchTerm || 
-          doctor.name.toLowerCase().includes(searchTerm) ||
-          (doctor.email && doctor.email.toLowerCase().includes(searchTerm)) ||
-          doctor.phone.includes(searchTerm);
-
-        const matchesStatus = !statusFilter || doctor.status === statusFilter;
-
-        return matchesSearch && matchesStatus;
+      // Sort by timelineAt (oldest first)
+      allEvents.sort((a, b) => {
+        const tsA = a.timelineAt ? Date.parse(a.timelineAt) : (a.timestamp || 0);
+        const tsB = b.timelineAt ? Date.parse(b.timelineAt) : (b.timestamp || 0);
+        return tsA - tsB;
       });
 
-      renderDoctors();
+      // Render timeline (will load patient names if needed)
+      await renderUpcomingList(allEvents);
+
+    } catch (error) {
+      console.error("[loadEvents] Error:", error);
+      const upcomingEl = document.getElementById("upcomingList");
+      if (!upcomingEl) {
+        console.error("[loadEvents] upcomingList element not found in error handler");
+        return;
+      }
+      upcomingEl.className = "empty-state";
+      upcomingEl.innerHTML = `
+        <div class="empty-state-icon">⚠️</div>
+        <div style="color:var(--r);">
+          <strong>${(window.i18n && window.i18n.t) ? window.i18n.t("common.error") : "Error"}:</strong> ${error.message || ((window.i18n && window.i18n.t) ? window.i18n.t("common.loading") : "Loading...")}
+        </div>
+        <div style="margin-top: 8px; font-size: 12px; color: var(--muted);">
+          Check browser console (F12) for details
+        </div>
+      `;
+    } finally {
+      eventsLoading = false;
+    }
+  }
+  
+  // Language change handler
+  window.onI18nUpdated = function(lang) {
+    // Update page title
+    const titleEl = document.getElementById("pageTitle");
+    const headingEl = document.getElementById("pageHeading");
+    const upcomingTitleEl = document.getElementById("upcomingTitle");
+    const upcomingSubtitleEl = document.getElementById("upcomingSubtitle");
+    const activePatientsTitleEl = document.getElementById("activePatientsTitle");
+    const proceduresTitleEl = document.getElementById("proceduresTitle");
+    
+    if (titleEl) titleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
+    if (headingEl) headingEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.title") : "Dashboard";
+    if (upcomingTitleEl) upcomingTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.title") : "Upcoming Events";
+    if (upcomingSubtitleEl) upcomingSubtitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.upcoming.subtitle") : "Timeline of upcoming events";
+    if (activePatientsTitleEl) activePatientsTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : "Active Patients";
+    if (proceduresTitleEl) proceduresTitleEl.textContent = (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : "Procedures";
+    
+    // Reload clinic info and events (this will re-render timeline with new language)
+    loadClinicInfo();
+    loadEvents();
+    // Reload badges after i18n update (in case badges were removed during translation)
+    setTimeout(() => {
+      loadAllBadges();
+    }, 100);
+    
+    // Reload charts with new language
+    setTimeout(() => {
+      loadMonthlyActivePatients();
+      loadMonthlyProcedures();
+    }, 200);
+  };
+
+  // Apply token from URL if provided (helps switching clinics)
+  applyTokenFromUrl();
+  
+  // Check authentication after page loads (wait for DOM and localStorage to be ready)
+  // Use DOMContentLoaded to ensure localStorage is accessible
+  function initializeDashboard() {
+    if (!checkAuth()) {
+      // Redirect will happen in checkAuth
+      return;
+    }
+    
+    // Load clinic info and events
+    loadClinicInfo();
+    // Load events after clinic info to ensure proper initialization
+    setTimeout(() => {
+      loadEvents();
+    }, 100);
+  }
+  
+  // Check authentication after page loads (wait for DOM and localStorage to be ready)
+  // Use DOMContentLoaded to ensure localStorage is accessible
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeDashboard);
+  } else {
+    // DOM already loaded, check immediately
+    initializeDashboard();
+  }
+  
+  // Wait for i18n to be ready and DOM to be fully loaded
+  function initializeDashboardBadges() {
+    // Wait a bit for i18n to finish updating DOM (badges might be removed during translation)
+    setTimeout(() => {
+      loadClinicInfo();
+      // Load badges after i18n update
+      loadAllBadges();
+      // Note: loadEvents() is already called in initializeDashboard()
+    }, 200);
+  }
+
+  // Single initialization entry point
+  function initializeApp() {
+    // First, initialize dashboard (auth + clinic info + events)
+    initializeDashboard();
+    
+    // Then initialize badges after i18n is ready
+    if (typeof i18n !== 'undefined') {
+      initializeDashboardBadges();
+    } else {
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          initializeDashboardBadges();
+        }, 100);
+      });
+    }
+  }
+
+  // Start initialization
+  initializeApp();
+
+  // Load monthly active patients metrics
+  async function loadMonthlyActivePatients() {
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      
+      const res = await fetch(`${API}/api/admin/metrics/monthly-active-patients?months=6`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      
+      if (!data.ok || !Array.isArray(data.data)) {
+        console.warn('[METRICS] No data available');
+        updateActivePatientsUI(null);
+        return;
+      }
+      
+      console.log('[METRICS] Monthly active patients data:', data);
+      updateActivePatientsUI(data);
+      
+    } catch (error) {
+      console.error('[METRICS] Error loading monthly active patients:', error);
+      updateActivePatientsUI(null);
+    }
+  }
+
+// Create Chart.js line chart
+  function createActivePatientsChart(data) {
+    const ctx = document.getElementById('activePatientsChart');
+    if (!ctx) return;
+    
+    // Destroy existing chart if it exists
+    if (window.activePatientsChartInstance) {
+      window.activePatientsChartInstance.destroy();
+    }
+    
+    // Prepare data for Chart.js
+    const labels = data.map(d => d.monthLabel);
+    const values = data.map(d => d.activePatients);
+    
+    window.activePatientsChartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'Active Patients',
+          data: values,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          borderWidth: 2,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 4,
+          pointBackgroundColor: '#3b82f6',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointHoverRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            padding: 12,
+            displayColors: false,
+            callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
+              label: function(context) {
+                return `${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'Active Patients'}: ${context.parsed.y}`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 1,
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            ticks: {
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+  }
+
+// Update UI with chart and growth data
+function updateActivePatientsUI(data) {
+  const growthEl = document.getElementById('activePatientsGrowth');
+  const summaryEl = document.getElementById('activePatientsSummary');
+  
+  if (!data || data.data.length === 0) {
+    if (growthEl) {
+      growthEl.textContent = 'No data';
+      growthEl.style.background = '#f3f4f6';
+      growthEl.style.color = '#6b7280';
+    }
+    if (summaryEl) {
+      summaryEl.textContent = 'Trend will improve as more data is collected';
+    }
+    return;
+  }
+  
+  const monthlyData = data.data;
+  const latestMonth = monthlyData[monthlyData.length - 1];
+  const previousMonth = monthlyData[monthlyData.length - 2];
+  
+  // Update growth badge
+  if (growthEl && latestMonth.growthPercent !== null) {
+    const growth = latestMonth.growthPercent;
+    const sign = growth >= 0 ? '+' : '';
+    growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
+    growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
+    growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+  } else if (growthEl) {
+    growthEl.textContent = 'No previous data';
+    growthEl.style.background = '#f3f4f6';
+    growthEl.style.color = '#6b7280';
+  }
+  
+  // Update summary
+  if (summaryEl) {
+    const totalPatients = latestMonth.activePatients;
+    summaryEl.textContent = `${totalPatients} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.activePatients") : 'active patients'} in ${latestMonth.monthLabel}`;
+  }
+  
+  // Create or update chart
+  createActivePatientsChart(monthlyData);
+}
+
+  // Load monthly procedures metrics
+  async function loadMonthlyProcedures() {
+    try {
+      const token = getAdminToken();
+      if (!token) return;
+      
+      const res = await fetch(`${API}/api/admin/metrics/monthly-procedures?months=6`, {
+        headers: adminHeaders({ Accept: "application/json" })
+      });
+      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      
+      if (!data.ok || !Array.isArray(data.data)) {
+        console.warn('[METRICS] No procedures data available');
+        updateMonthlyProceduresUI(null);
+        return;
+      }
+      
+      console.log('[METRICS] Monthly procedures data:', data);
+      updateMonthlyProceduresUI(data);
+      
+    } catch (error) {
+      console.error('[METRICS] Error loading monthly procedures:', error);
+      updateMonthlyProceduresUI(null);
+    }
+  }
+  
+  // Update UI with procedures chart and growth data
+  function updateMonthlyProceduresUI(data) {
+    const growthEl = document.getElementById('monthlyProceduresGrowth');
+    const summaryEl = document.getElementById('monthlyProceduresSummary');
+    
+    if (!data || data.data.length === 0) {
+      if (growthEl) {
+        growthEl.textContent = 'No data';
+        growthEl.style.background = '#f3f4f6';
+        growthEl.style.color = '#6b7280';
+      }
+      if (summaryEl) {
+        summaryEl.textContent = 'Trend will improve as more data is collected';
+      }
+      return;
+    }
+    
+    const monthlyData = data.data;
+    const latestMonth = monthlyData[monthlyData.length - 1];
+    
+    // Update growth badge
+    if (growthEl && latestMonth.growthPercent !== null) {
+      const growth = latestMonth.growthPercent;
+      const sign = growth >= 0 ? '+' : '';
+      growthEl.textContent = `${sign}${growth}% ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.vsPreviousMonth") : 'vs previous month'}`;
+      growthEl.style.background = growth >= 0 ? 'rgba(22, 163, 74, 0.15)' : 'rgba(220, 38, 38, 0.15)';
+      growthEl.style.color = growth >= 0 ? '#16a34a' : '#dc2626';
+    } else if (growthEl) {
+      growthEl.textContent = 'No previous data';
+      growthEl.style.background = '#f3f4f6';
+      growthEl.style.color = '#6b7280';
+    }
+    
+    // Update summary
+    if (summaryEl) {
+      const totalProcedures = latestMonth.procedures;
+      summaryEl.textContent = `${totalProcedures} ${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'procedures'} in ${latestMonth.monthLabel}`;
+    }
+    
+    // Create or update chart
+    createMonthlyProceduresChart(monthlyData);
+  }
+  
+  // Create Chart.js bar chart for procedures
+  function createMonthlyProceduresChart(data) {
+    const ctx = document.getElementById('monthlyProceduresChart');
+    if (!ctx) return;
+    
+    // Destroy existing chart if it exists
+    if (window.monthlyProceduresChartInstance) {
+      window.monthlyProceduresChartInstance.destroy();
+    }
+    
+    // Prepare data for Chart.js
+    const labels = data.map(d => d.monthLabel);
+    const values = data.map(d => d.procedures);
+    
+    window.monthlyProceduresChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: (window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'Procedures',
+          data: values,
+          backgroundColor: 'rgba(34, 197, 94, 0.8)',
+          borderColor: 'rgba(34, 197, 94, 1)',
+          borderWidth: 2,
+          borderRadius: 4,
+          hoverBackgroundColor: 'rgba(34, 197, 94, 1)'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            padding: 12,
+            displayColors: false,
+            callbacks: {
+              title: function(context) {
+                return context[0].label;
+              },
+              label: function(context) {
+                return `${(window.i18n && window.i18n.t) ? window.i18n.t("dashboard.charts.procedures") : 'Procedures'}: ${context.parsed.y}`;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 1,
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            ticks: {
+              color: '#6b7280',
+              font: {
+                size: 11
+              }
+            },
+            grid: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Load monthly active patients on page load and refresh periodically
+  if (typeof i18n !== 'undefined') {
+    loadMonthlyActivePatients();
+    loadMonthlyProcedures();
+  } else {
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        loadMonthlyActivePatients();
+        loadMonthlyProcedures();
+      }, 100);
+    });
+  }
+  setInterval(loadMonthlyActivePatients, 60000); // Refresh every minute
+  setInterval(loadMonthlyProcedures, 60000); // Refresh every minute
+
+  // Store previous counts to detect new messages
+  let previousUnreadCount = 0;
+  let previousPendingPatients = 0;
+  let previousPendingReferrals = 0;
+
+  // Play notification sound
+  function playNotificationSound() {
+    try {
+      // Create audio context and play a simple beep sound
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800; // Frequency in Hz
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (e) {
+      console.warn("Could not play notification sound:", e);
+    }
+  }
+
+  function ensureNavBadge(linkId, badgeId) {
+    const link = document.getElementById(linkId);
+    if (!link) return null;
+
+    let badgeEl = document.getElementById(badgeId);
+    if (!badgeEl) {
+      badgeEl = link.querySelector(`#${badgeId}`) || link.querySelector(".nav-badge");
     }
 
-    function logout() {
-      localStorage.removeItem("admin_token");
-      window.location.href = "/admin-login.html";
+    if (!badgeEl) {
+      badgeEl = document.createElement("span");
+      badgeEl.id = badgeId;
+      badgeEl.className = "nav-badge";
+      badgeEl.style.display = "none";
+      link.appendChild(badgeEl);
+      return badgeEl;
     }
 
-    // Event listeners
-    document.getElementById("search-input").addEventListener("input", filterDoctors);
-    document.getElementById("status-filter").addEventListener("change", filterDoctors);
+    // Ensure expected id/class in case DOM got re-rendered
+    if (badgeEl.id !== badgeId) badgeEl.id = badgeId;
+    if (!badgeEl.classList.contains("nav-badge")) badgeEl.classList.add("nav-badge");
+    return badgeEl;
+  }
 
-    // Load on page load
-    document.addEventListener("DOMContentLoaded", loadApplications);
-  </script>
+  // Load unread message count for badge
+  async function loadUnreadMessageCount() {
+    const token = getAdminToken();
+    if (!token) {
+      console.log("[DASHBOARD] No admin token, skipping unread message count");
+      return;
+    }
+
+    console.log("[DASHBOARD] Loading unread message count...");
+    try {
+      // Get last seen timestamp from localStorage
+      let lastSeenTimestamp = 0;
+      const saved = localStorage.getItem("adminLastSeenTimestamp");
+      if (saved) lastSeenTimestamp = parseInt(saved, 10) || 0;
+
+      const patientsRes = await safariFetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!patientsRes.ok) return;
+      const patientsData = await patientsRes.json();
+      if (!patientsData.ok) return;
+
+      const patients = Array.isArray(patientsData.patients) ? patientsData.patients : [];
+      console.log("[DASHBOARD] Found", patients.length, "patients to check for unread messages");
+      let totalUnread = 0;
+
+      // Check unread messages for each patient
+      for (const patient of patients) {
+        const patientId = patient.patientId || patient.id;
+        if (!patientId) continue;
+
+        try {
+          const messagesRes = await safariFetch(`${API}/api/patient/${encodeURIComponent(patientId)}/messages`, {
+            headers: adminHeaders({ Accept: "application/json" }),
+          });
+          if (!messagesRes.ok) continue;
+          const messagesData = await messagesRes.json();
+          if (!messagesData.ok) continue;
+
+          const messages = Array.isArray(messagesData.messages) ? messagesData.messages : [];
+          // Count unread messages (from PATIENT) that were created AFTER last seen timestamp
+          const unread = messages.filter((m) => {
+            if (!m || m.from !== "PATIENT") return false;
+            // If message has createdAt, check if it's after last seen time
+            if (m.createdAt) {
+              const msgTimestamp = new Date(m.createdAt).getTime();
+              if (isNaN(msgTimestamp)) return true; // If invalid date, count as unread
+              return msgTimestamp > lastSeenTimestamp;
+            }
+            // If no createdAt, count it as unread (backward compatibility)
+            return true;
+          }).length;
+          totalUnread += unread;
+        } catch (e) {
+          // Skip this patient if error
+          continue;
+        }
+      }
+
+      // Check if new messages arrived (count increased)
+      if (totalUnread > previousUnreadCount && previousUnreadCount > 0) {
+        playNotificationSound();
+      }
+      previousUnreadCount = totalUnread;
+
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("chatNavLink", "chatBadge");
+      if (badgeEl) {
+        if (totalUnread > 0) {
+          badgeEl.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+          badgeEl.style.display = "flex";
+          console.log("[DASHBOARD] Chat badge updated:", totalUnread);
+        } else {
+          badgeEl.style.display = "none";
+          console.log("[DASHBOARD] Chat badge hidden (no unread messages)");
+        }
+      }
+    } catch (error) {
+      console.error("Load unread count error:", error);
+    }
+  }
+
+  // Load pending patients count for badge
+  async function loadPendingPatientsCount() {
+    const token = getAdminToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+
+      const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+      const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
+
+      // Check if new pending patients arrived
+      if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
+        playNotificationSound();
+      }
+      previousPendingPatients = pendingCount;
+
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("patientsNavLink", "patientsBadge");
+      if (badgeEl) {
+        if (pendingCount > 0) {
+          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          badgeEl.style.display = "flex";
+        } else {
+          badgeEl.style.display = "none";
+        }
+      }
+    } catch (error) {
+      console.error("Load pending patients count error:", error);
+    }
+  }
+
+  // Load pending referrals count for badge
+  async function loadPendingReferralsCount() {
+    const token = getAdminToken();
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      // Support both data.items and data.referrals
+      const items = Array.isArray(data.items) ? data.items : (Array.isArray(data.referrals) ? data.referrals : []);
+      const pendingCount = items.length;
+
+      // Check if new pending referrals arrived
+      if (pendingCount > previousPendingReferrals && previousPendingReferrals > 0) {
+        playNotificationSound();
+      }
+      previousPendingReferrals = pendingCount;
+
+      // Update badge (ensure it exists even after i18n DOM updates)
+      const badgeEl = ensureNavBadge("referralsNavLink", "referralsBadge");
+      if (badgeEl) {
+        if (pendingCount > 0) {
+          badgeEl.textContent = pendingCount > 99 ? "99+" : String(pendingCount);
+          badgeEl.style.display = "flex";
+        } else {
+          badgeEl.style.display = "none";
+        }
+      }
+    } catch (error) {
+      console.error("Load pending referrals count error:", error);
+    }
+  }
+
+  // Load all badges
+  async function loadAllBadges() {
+    console.log("[DASHBOARD] Loading all badges...");
+    // Ensure badges exist (i18n may re-render nav DOM)
+    ensureNavBadge("chatNavLink", "chatBadge");
+    ensureNavBadge("patientsNavLink", "patientsBadge");
+    ensureNavBadge("referralsNavLink", "referralsBadge");
+    // Use allSettled to ensure all badges load even if one fails
+    await Promise.allSettled([
+      loadUnreadMessageCount().catch(err => {
+        console.error("[DASHBOARD] Failed to load unread message count:", err);
+      }),
+      loadPendingPatientsCount().catch(err => {
+        console.error("[DASHBOARD] Failed to load pending patients count:", err);
+      }),
+      loadPendingReferralsCount().catch(err => {
+        console.error("[DASHBOARD] Failed to load pending referrals count:", err);
+      })
+    ]);
+    console.log("[DASHBOARD] All badges loaded");
+  }
+
+  // Badges are loaded before events (see above)
+  // Refresh badges every 30 seconds (independent of events)
+  setInterval(loadAllBadges, 30000);
+</script>
 </body>
 </html>
