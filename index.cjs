@@ -4489,8 +4489,12 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
       
       // Get patient data
+      console.log("[PATIENT VERIFY] Resolved object:", resolved);
       const foundPatient = resolved.patient;
       const foundPatientId = resolved.patientId;
+      
+      console.log("[PATIENT VERIFY] foundPatient:", foundPatient);
+      console.log("[PATIENT VERIFY] foundPatientId:", foundPatientId);
       
       if (!foundPatientId) {
         return res.status(404).json({
