@@ -57,7 +57,7 @@ const {
 const app = express();
 
 const server = http.createServer(app);
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
 const JWT_SECRET = process.env.JWT_SECRET || "clinifly-secret-key-change-in-production";
 const JWT_EXPIRES_IN = "30d"; // 30 days
@@ -286,8 +286,7 @@ const corsOptions = {
     "http://localhost:8083", 
     "https://clinic.clinifly.net", 
     "https://cliniflow-admin.onrender.com", 
-    "http://localhost:3000", 
-    "http://localhost:5050", 
+    "http://localhost:10000", 
     "http://localhost:8081", 
     "http://localhost:8082"
   ],
