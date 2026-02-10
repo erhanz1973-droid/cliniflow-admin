@@ -3010,12 +3010,15 @@ async function resolvePatientForOtp({ email, phone }) {
   }
 
   if (!foundPatient) {
+    console.log("[PATIENT OTP] No patient found in Supabase, checking file...");
     const patients = readJson(PAT_FILE, {});
+    console.log("[PATIENT OTP] File patients count:", Object.keys(patients).length);
     for (const pid in patients) {
       const p = patients[pid];
       const em = String(p?.email || "").trim().toLowerCase();
       const ph = normalizePhone(String(p?.phone || ""));
       if ((emailNormalized && em === emailNormalized) || (phoneNormalized && ph === phoneNormalized)) {
+        console.log("[PATIENT OTP] Found patient in file:", pid);
         foundPatient = p;
         foundPatientId = pid;
         foundPhone = p?.phone || foundPhone;
