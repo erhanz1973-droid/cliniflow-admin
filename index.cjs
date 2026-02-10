@@ -3059,6 +3059,12 @@ app.post("/auth/request-otp", async (req, res) => {
     console.log("[AUTH REQUEST-OTP] PHONE:", phone);
     console.log("[AUTH REQUEST-OTP] EMAIL:", email);
     
+    if (role === "DOCTOR") {
+      console.log("[AUTH REQUEST-OTP] 🔥 DOCTOR LOOKUP PATH");
+    } else {
+      console.log("[AUTH REQUEST-OTP] 🔥 PATIENT LOOKUP PATH");
+    }
+    
     // 🔥 CRITICAL: Role is REQUIRED
     if (!role || (role !== "DOCTOR" && role !== "PATIENT")) {
       return res.status(400).json({ 
