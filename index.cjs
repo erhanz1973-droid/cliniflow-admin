@@ -2961,6 +2961,9 @@ async function resolvePatientForOtp({ email, phone }) {
   let foundLanguage = "en";
   let resolvedEmail = emailNormalized || "";
 
+  // Initialize foundPatientId to prevent undefined errors
+  foundPatientId = null;
+
   const selectColumns = "id, patient_id, email, phone, status, name, language, role"; // 🔥 ADD ROLE COLUMN
 
   if (isSupabaseEnabled()) {
