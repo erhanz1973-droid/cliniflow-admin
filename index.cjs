@@ -14183,6 +14183,17 @@ app.get(
 
 
 
+// ================== GLOBAL ERROR HANDLING ==================
+process.on('uncaughtException', (error) => {
+  console.error('[UNCAUGHT EXCEPTION]', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+  console.error('[PROMISE]', promise);
+});
+
 // ================== START ==================
 // Render uyumlu: Server HEMEN başlar, ağır işler sonra
 app.listen(PORT, "0.0.0.0", () => {
