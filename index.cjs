@@ -282,6 +282,8 @@ const SUPER_ADMIN_JWT_SECRET =
 // ================== MIDDLEWARE ==================
 const corsOptions = {
   origin: [
+    "http://localhost:8082", 
+    "http://localhost:8083", 
     "https://clinic.clinifly.net", 
     "https://cliniflow-admin.onrender.com", 
     "http://localhost:3000", 
