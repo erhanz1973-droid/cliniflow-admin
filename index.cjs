@@ -4294,14 +4294,14 @@ app.post("/api/admin/verify-otp", async (req, res) => {
 // UNIFIED OTP ENDPOINT - Single server, type-based separation
 app.post("/auth/verify-otp", async (req, res) => {
   try {
-    const { otp, email, phone, type, sessionId } = req.body || {};
+    const { otp, email, phone, role, sessionId } = req.body || {};
 
-    // 🔥 CRITICAL: Type is REQUIRED for routing
-    if (!type || (type !== "doctor" && type !== "patient")) {
+    // 🔥 CRITICAL: Role is REQUIRED for routing
+    if (!role || (role !== "DOCTOR" && role !== "PATIENT")) {
       return res.status(400).json({ 
         ok: false, 
-        error: "type_required", 
-        message: "Type parameter is required (doctor or patient)." 
+        error: "role_required", 
+        message: "Role parameter is required (DOCTOR or PATIENT)." 
       });
     }
 
@@ -4324,8 +4324,8 @@ app.post("/auth/verify-otp", async (req, res) => {
 
 
 
-    // 🔥 UNIFIED LOGIC: Route based on type
-    if (type === "doctor") {
+    // 🔥 UNIFIED LOGIC: Route based on role
+    if (role === "DOCTOR") {
       // DOCTOR FLOW
       const resolved = await resolveDoctorForOtp({ email: emailNormalized, phone });
 
