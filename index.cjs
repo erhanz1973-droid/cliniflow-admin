@@ -3192,9 +3192,13 @@ app.post("/auth/request-otp", async (req, res) => {
     res.json({
       ok: true,
       message: "OTP email adresinize gönderildi",
-      // For UI convenience (not secret): return email + patientId
+      // For UI convenience (not secret): return email + userId
       email: resolvedEmail,
-      patientId: String(foundPatientId || ""),
+      ...(role === "DOCTOR" ? {
+        doctorId: String(foundUserId || ""),
+      } : {
+        patientId: String(foundUserId || ""),
+      }),
       language: foundLanguage,
       ...(foundPhone ? { phone: foundPhone } : {}),
     });
