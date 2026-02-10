@@ -3053,6 +3053,7 @@ async function resolvePatientForOtp({ email, phone }) {
 // POST /auth/request-otp
 // Request OTP: takes email, phone, role, finds user by role, sends OTP
 app.post("/auth/request-otp", async (req, res) => {
+  console.log("[AUTH REQUEST-OTP] 🔥 ENDPOINT HIT");
   try {
     console.log("[AUTH REQUEST-OTP] FULL BODY:", JSON.stringify(req.body, null, 2));
     
