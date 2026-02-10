@@ -3162,33 +3162,20 @@ app.post("/auth/request-otp", async (req, res) => {
     // Generate OTP
     const otpCode = generateOTP();
 
-    
     // Save OTP under email key (file-based store)
     await saveOTP(resolvedEmail, otpCode, 0);
     
-    // FIRE-AND-FORGET: Send email WITHOUT waiting (Brevo REST API)
-    // This prevents API timeout from blocking the response
-
-
-
-
-
-
-
-    
-
-    sendOTPEmail(resolvedEmail, otpCode, foundLanguage)
-      .then(() => {
-
-
-      })
-      .catch((emailError) => {
-        console.error("[OTP] ❌ Failed to send email:", emailError.message);
-        // Email failed but OTP is saved - user can request again
-      });
+    // FIRE-AND-FORGET: Send email WITHOUT waiting or error handling
+    // SMTP timeout should NOT block OTP request
+    setImmediate(() => {
+      sendOTPEmail(resolvedEmail, otpCode, foundLanguage)
+        .catch((emailError) => {
+          console.error("[OTP] ❌ Failed to send email:", emailError.message);
+          // Email failed but OTP is saved - user can request again
+        });
+    });
     
     // Return success IMMEDIATELY - don't wait for email
-
     res.json({
       ok: true,
       message: "OTP email adresinize gönderildi",
