@@ -4986,6 +4986,73 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   }
 });
 
+// ⚠️ Admin architecture uses UUID id only.
+// patient_id (string) is legacy and not used in admin logic.
+
+/* ================= ADMIN PATIENT DETAIL ================= */
+app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+
+    if (!req.clinicId) {
+      return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
+    }
+
+    // Fetch patient with nested treatment groups and doctors using UUID id
+    const { data: patient, error } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        name,
+        email,
+        phone,
+        created_at,
+        updated_at,
+        status,
+        treatment_groups (
+          id,
+          group_name,
+          description,
+          status,
+          created_at,
+          treatment_group_doctors (
+            doctor_id,
+            is_primary,
+            doctors (
+              id,
+              name,
+              email
+            )
+          )
+        )
+      `)
+      .eq("id", patientId)
+      .eq("clinic_id", req.admin.clinicId)
+      .single();
+
+    if (error || !patient) {
+      console.error("[ADMIN PATIENT DETAIL] Error:", error);
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    res.json({ 
+      ok: true, 
+      patient: patient
+    });
+  } catch (error) {
+    console.error("[ADMIN PATIENT DETAIL] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // ================== ADMIN APPROVE ==================
 // Supabase is the single source of truth in production.
 // IMPORTANT:
@@ -5014,7 +5081,7 @@ app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
         status: "APPROVED",
         updated_at: new Date().toISOString(),
       })
-      .eq("patient_id", patientId)
+      .eq("id", patientId)
       .eq("clinic_id", req.clinicId);
 
     if (error) {
