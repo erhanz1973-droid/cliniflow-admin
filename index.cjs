@@ -14206,6 +14206,101 @@ app.put("/api/doctor/me", requireDoctorAuth, async (req, res) => {
   }
 });
 
+// Get doctor's assigned patients (multi-doctor model)
+app.get("/api/doctor/patients", requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = req.doctorId;
+    const clinicId = req.doctor.clinic_id;
+
+    console.log("[DOCTOR PATIENTS] Request:", {
+      doctorId,
+      clinicId
+    });
+
+    // 🔥 MULTI-DOCTOR MODEL: Get treatment groups where this doctor is assigned
+    const { data: treatmentGroups, error: groupsError } = await supabase
+      .from("treatment_groups")
+      .select("patient_id")
+      .eq("clinic_id", clinicId)
+      .contains("doctor_ids", [doctorId])
+      .eq("status", "ACTIVE");
+
+    if (groupsError) {
+      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_treatment_groups",
+        message: "Failed to fetch treatment groups"
+      });
+    }
+
+    // Handle empty result safely
+    if (!treatmentGroups || treatmentGroups.length === 0) {
+      console.log(`[DOCTOR PATIENTS] No treatment groups found for doctor ${doctorId}`);
+      return res.json({
+        ok: true,
+        patients: []
+      });
+    }
+
+    // Extract patient IDs from treatment groups
+    const patientIds = treatmentGroups.map(group => group.patient_id);
+    console.log(`[DOCTOR PATIENTS] Found ${patientIds.length} patient IDs for doctor ${doctorId}`);
+
+    // 🔥 Fetch patients using the extracted patient IDs
+    const { data: patients, error: patientsError } = await supabase
+      .from("patients")
+      .select(`
+        id,
+        name,
+        phone,
+        email,
+        status,
+        department,
+        created_at
+      `)
+      .in("id", patientIds)
+      .eq("clinic_id", clinicId)
+      .eq("status", "ACTIVE")
+      .order("created_at", { ascending: false });
+
+    if (patientsError) {
+      console.error("[DOCTOR PATIENTS] Patients error:", patientsError);
+      return res.status(500).json({ 
+        ok: false, 
+        error: "failed_to_fetch_patients",
+        message: "Failed to fetch assigned patients"
+      });
+    }
+
+    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for doctor ${doctorId}`);
+
+    const formattedPatients = (patients || []).map(patient => ({
+      id: patient.id,
+      patientId: patient.id,
+      name: patient.name,
+      phone: patient.phone,
+      email: patient.email,
+      status: patient.status,
+      department: patient.department,
+      createdAt: new Date(patient.created_at).getTime(),
+    }));
+
+    return res.json({
+      ok: true,
+      patients: formattedPatients
+    });
+
+  } catch (error) {
+    console.error("[DOCTOR PATIENTS] Fatal error:", error);
+    return res.status(500).json({ 
+      ok: false, 
+      error: "internal_error",
+      message: "Unexpected server error"
+    });
+  }
+});
+
 // ================== ADMIN ROUTE ALIASES ==================
 
 
