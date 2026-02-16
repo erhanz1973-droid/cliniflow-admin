@@ -3333,9 +3333,11 @@ app.post("/api/admin/verify-otp", async (req, res) => {
       // Generate JWT token
       const token = jwt.sign(
         { 
+          type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+          clinicId: clinic.id, // 🔥 REQUIRED: clinicId (UUID)
           clinicCode: clinic.clinic_code,
           email: emailNormalized,
-          role: "admin",
+          role: "ADMIN", // 🔥 REQUIRED: role
           otpVerified: true,
           reviewMode: true
         },
@@ -3386,9 +3388,11 @@ app.post("/api/admin/verify-otp", async (req, res) => {
     // Generate JWT token
     const token = jwt.sign(
       { 
+        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+        clinicId: clinic.id, // 🔥 REQUIRED: clinicId (UUID)
         clinicCode: clinic.clinic_code,
         email: emailNormalized,
-        role: "admin",
+        role: "ADMIN", // 🔥 REQUIRED: role
         otpVerified: true
       },
       JWT_SECRET,
@@ -11474,8 +11478,15 @@ app.post("/api/admin/register", async (req, res) => {
           throw new Error("Failed to create clinic - no data returned");
         }
         
-        // Generate JWT token - ONLY clinicCode
-        const token = jwt.sign({ clinicCode: newClinic.clinic_code, role: "admin" }, JWT_SECRET, {
+        // Generate JWT token with proper structure
+        const token = jwt.sign({ 
+          type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+          clinicId: newClinic.id, // 🔥 REQUIRED: clinicId (UUID)
+          clinicCode: newClinic.clinic_code,
+          email: emailLower,
+          role: "ADMIN", // 🔥 REQUIRED: role
+          otpVerified: true
+        }, JWT_SECRET, {
           expiresIn: JWT_EXPIRES_IN,
         });
         
@@ -11544,8 +11555,15 @@ app.post("/api/admin/register", async (req, res) => {
     clinics[clinicId] = clinic;
     writeJson(CLINICS_FILE, clinics);
     
-    // Generate JWT token - ONLY clinicCode
-    const token = jwt.sign({ clinicCode: clinic.clinicCode, role: "admin" }, JWT_SECRET, {
+    // Generate JWT token with proper structure
+    const token = jwt.sign({ 
+      type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+      clinicId: clinicId, // 🔥 REQUIRED: clinicId (UUID)
+      clinicCode: clinic.clinicCode,
+      email: clinic.email,
+      role: "ADMIN", // 🔥 REQUIRED: role
+      otpVerified: true
+    }, JWT_SECRET, {
       expiresIn: JWT_EXPIRES_IN,
     });
     
@@ -11646,12 +11664,15 @@ app.post("/api/admin/login", async (req, res) => {
           }
         }
         
-        // Generate JWT token - ONLY clinicCode, NO clinicId
+        // Generate JWT token with proper structure
         // UUID will be fetched from Supabase at runtime
         const token = jwt.sign(
           { 
+            type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+            clinicId: clinic.id, // 🔥 REQUIRED: clinicId (UUID)
             clinicCode: clinic.clinic_code,
-            role: "admin",
+            email: clinic.email,
+            role: "ADMIN", // 🔥 REQUIRED: role
             otpVerified: !otpRequired
           },
           JWT_SECRET,
@@ -11787,11 +11808,15 @@ app.post("/api/admin/login", async (req, res) => {
       }
     }
     
-    // Generate JWT token - ONLY clinicCode, NO clinicId
+    // Generate JWT token with proper structure
     const token = jwt.sign(
       { 
+        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
+        clinicId: foundClinicId, // 🔥 REQUIRED: clinicId (UUID)
         clinicCode: code,
-        role: "admin" 
+        email: foundClinic.email || email,
+        role: "ADMIN", // 🔥 REQUIRED: role
+        otpVerified: true
       },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
@@ -13665,12 +13690,15 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     // Mark OTP as verified/used
     await markOTPUsed(latestOTP.id);
     
-    // Generate admin token
+    // Generate admin token with proper structure
     const token = jwt.sign(
       { 
+        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
         clinicCode: clinicCodeTrimmed,
-        clinicId: newClinic.id,
-        role: "admin",
+        clinicId: newClinic.id, // 🔥 REQUIRED: clinicId (UUID)
+        email: registrationData.email,
+        role: "ADMIN", // 🔥 REQUIRED: role
+        otpVerified: true,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30 days
       },
