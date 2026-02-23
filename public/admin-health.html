@@ -369,7 +369,7 @@
       }
     })();
 
-    const API_BASE = window.API_BASE || window.location.origin || 'https://cliniflow-admin.onrender.com';
+    const API_BASE = ""; // Production: Use same domain (admin service)
 
     // Get patientId from URL params
     const urlParams = new URLSearchParams(window.location.search);

@@ -568,7 +568,7 @@
     window.location.href = window.location.origin + "/admin-login.html";
   }
 
-  const API = "http://localhost:10000"; // Development: Force localhost backend
+  const API = ""; // Production: Use same domain (admin service)
   function applyTokenFromUrl() {
     try {
       const url = new URL(location.href);

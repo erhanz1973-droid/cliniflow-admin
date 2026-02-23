@@ -426,7 +426,7 @@
     } catch {}
   })();
 
-  const API_BASE = "http://localhost:10000"; // Development: Force localhost backend
+  const API_BASE = ""; // Production: Use same domain (admin service)
   const $ = (id) => document.getElementById(id);
 
   let clinicPlan = "";

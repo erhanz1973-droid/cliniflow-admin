@@ -244,9 +244,7 @@
   </div>
 
 <script>
-  const API = window.location.hostname === "localhost"
-    ? "http://localhost:10000"
-    : "https://cliniflow-backend.onrender.com";
+  const API = ""; // Production: Use same domain (admin service)
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");

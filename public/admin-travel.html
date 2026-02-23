@@ -420,7 +420,7 @@
     } catch {}
   })();
 
-  const DEFAULT_API_BASE = "http://localhost:10000"; // Development: Force localhost backend
+  const DEFAULT_API_BASE = ""; // Production: Use same domain (admin service)
 
   let state = { hotel: null, flights: [], notes: "", airportPickup: null, editPolicy: { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" } };
   const $ = (id) => document.getElementById(id);
