@@ -420,9 +420,7 @@
     } catch {}
   })();
 
-  const DEFAULT_API_BASE = (location.origin && location.origin.startsWith("http"))
-    ? location.origin
-    : "https://cliniflow-admin.onrender.com";
+  const DEFAULT_API_BASE = "http://localhost:10000"; // Development: Force localhost backend
 
   let state = { hotel: null, flights: [], notes: "", airportPickup: null, editPolicy: { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" } };
   const $ = (id) => document.getElementById(id);

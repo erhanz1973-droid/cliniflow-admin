@@ -57,19 +57,19 @@
             updated_at
           `)
           .eq('clinic_code', 'SAVSAT')
-          .order('created_at', { ascending: false })
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[SUPABASE] Failed to load doctors:', error);
-              throw new Error(error.message);
-            }
+          .order('created_at', { ascending: false });
 
-            console.log("[SUPABASE] Doctors loaded successfully:", data);
-            
-            allDoctors = data || [];
-            filteredDoctors = [...allDoctors];
-            updateStats();
-            renderDoctors();
+        if (error) {
+          console.error('[SUPABASE] Failed to load doctors:', error);
+          throw new Error(error.message);
+        }
+
+        console.log("[SUPABASE] Doctors loaded successfully:", data);
+        
+        allDoctors = data || [];
+        filteredDoctors = [...allDoctors];
+        updateStats();
+        renderDoctors();
             
           } catch (error) {
             console.error("Load doctors error:", error);
@@ -101,7 +101,26 @@
         return;
       }
 
-      doctorsContainer.innerHTML = filteredDoctors.map(doctor => `
+      doctorsContainer.innerHTML = filteredDoctors.map(doctor => {
+        // 🔥 CONDITIONAL BUTTONS BASED ON STATUS
+        let actionButtons = '';
+        if (doctor.status === 'PENDING') {
+          actionButtons = `
+            <div class="doctor-actions">
+              <button class="btn btn-success" onclick="approveDoctor('${doctor.id}')">✅ Approve</button>
+              <button class="btn btn-danger" onclick="rejectDoctor('${doctor.id}')">❌ Reject</button>
+            </div>
+          `;
+        } else {
+          // For APPROVED and REJECTED, only show status badge
+          actionButtons = `
+            <div class="doctor-actions">
+              <span class="status-badge ${doctor.status.toLowerCase()}">${getStatusText(doctor.status)}</span>
+            </div>
+          `;
+        }
+
+        return `
         <div class="doctor-card ${doctor.status.toLowerCase()}" data-doctor-id="${doctor.id}">
           <div class="doctor-header">
             <h3 class="doctor-name">${doctor.name}</h3>
@@ -114,12 +133,10 @@
             <div>📋 ${doctor.specialties || '-'}</div>
             <div>📅 ${formatDate(doctor.created_at)}</div>
           </div>
-          <div class="doctor-actions">
-            <button class="btn btn-success" onclick="approveDoctor('${doctor.id}')">✅ Approve</button>
-            <button class="btn btn-danger" onclick="rejectDoctor('${doctor.id}')">❌ Reject</button>
-          </div>
+          ${actionButtons}
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     function formatDate(dateString) {
@@ -138,7 +155,7 @@
       return statusMap[status] || status;
     }
 
-    function approveDoctor(doctorId) {
+    async function approveDoctor(doctorId) {
       if (!confirm("Bu doktoru onaylamak istediğinizden emin misiniz?")) {
         return;
       }
@@ -171,7 +188,7 @@
       }
     }
 
-    function rejectDoctor(doctorId) {
+    async function rejectDoctor(doctorId) {
       if (!confirm("Bu doktoru reddetmek istediğinizden emin misiniz?")) {
         return;
       }
@@ -221,8 +238,16 @@
     }
 
     // Event listeners
-    document.getElementById("search-input").addEventListener("input", filterDoctors);
-    document.getElementById("status-filter").addEventListener("change", filterDoctors);
+    const searchInput = document.getElementById("search-input");
+    const statusFilter = document.getElementById("status-filter");
+    
+    if (searchInput) {
+      searchInput.addEventListener("input", filterDoctors);
+    }
+    
+    if (statusFilter) {
+      statusFilter.addEventListener("change", filterDoctors);
+    }
 
     // Load on page load
     document.addEventListener("DOMContentLoaded", loadDoctors);
@@ -481,6 +506,14 @@
     .status.APPROVED { background: var(--g); color: #fff; }
     .status.REJECTED { background: var(--r); color: #fff; }
     .status.ACTIVE { background: var(--g); color: #fff; }
+    
+    .status-badge {
+      padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; 
+      display: inline-block; text-align: center; min-width: 80px;
+    }
+    .status-badge.pending { background: var(--y); color: #000; }
+    .status-badge.approved { background: var(--g); color: #fff; }
+    .status-badge.rejected { background: var(--r); color: #fff; }
   </style>
 </head>
 <body>

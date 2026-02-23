@@ -1,15 +1,39 @@
-<!DOCTYPE html>
+<!-- REAL ACTIVE FILE --><!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Hasta Listesi - Clinifly Admin</title>
   <script>
-    // Token check - redirect to login if not authenticated
+    // Token and role check - redirect to login if not authenticated or not admin
     (function() {
-      const token = localStorage.getItem("admin_token");
+      const token = localStorage.getItem("token") || localStorage.getItem("admin_token");
+      const userStr = localStorage.getItem("user");
+      
       if (!token) {
+        console.log("[AUTH] No token found, redirecting to login");
         window.location.href = "/admin-login.html";
+        return;
+      }
+      
+      if (!userStr) {
+        console.log("[AUTH] No user data found, redirecting to login");
+        window.location.href = "/admin-login.html";
+        return;
+      }
+      
+      try {
+        const user = JSON.parse(userStr);
+        if (!user || user.role !== "ADMIN") {
+          console.log("[AUTH] Invalid role, redirecting to login:", user?.role);
+          window.location.href = "/admin-login.html";
+          return;
+        }
+        console.log("[AUTH] Admin access confirmed for user:", user.email);
+      } catch (error) {
+        console.error("[AUTH] Error parsing user data:", error);
+        window.location.href = "/admin-login.html";
+        return;
       }
     })();
   </script>
@@ -207,6 +231,18 @@
       font-weight: 600;
       color: #93c5fd;
       margin-left: 8px;
+    }
+    .doctor-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #3b82f6;
+      margin-left: 8px;
+      transition: all 0.2s ease;
     }
     .patient-meta {
       font-size: 13px;
@@ -584,20 +620,32 @@
       } catch {}
     })();
 
-    const API_BASE = "https://cliniflow-admin.onrender.com";
+    const API_BASE = ""; // Production: Use same domain
     let ALL_PATIENTS = [];
     let CLINIC_PLAN = "";
     let CLINIC_MAX_PATIENTS = null;
+    let DOCTORS_CACHE = [];
+    
+    // Clean protection for doctor select
+    document.addEventListener('click', function(e) {
+      if (e.target.closest('.doctor-select')) {
+        e.stopPropagation();
+      }
+    }, true);
     
     function getAdminToken() {
       return localStorage.getItem('admin_token') || '';
     }
     function logout() {
       try {
+        localStorage.removeItem("token");
         localStorage.removeItem("admin_token");
-        console.log("[LOGOUT] Admin token cleared");
+        localStorage.removeItem("user");
+        localStorage.removeItem("clinic_code");
+        localStorage.removeItem("clinic_name");
+        console.log("[LOGOUT] All admin data cleared");
       } catch (e) {
-        console.error("[LOGOUT] Error clearing token:", e);
+        console.error("[LOGOUT] Error clearing data:", e);
       }
       window.location.href = "/admin-login.html";
     }
@@ -805,11 +853,20 @@
         }
 
         const json = await res.json();
-        if (!json.ok) {
-          throw new Error(json.error || 'Bilinmeyen hata');
-        }
 
-        const patients = Array.isArray(json.patients) ? json.patients : (Array.isArray(json.list) ? json.list : []);
+let patients = [];
+
+if (Array.isArray(json)) {
+  // Backend düz array dönüyor
+  patients = json;
+} else if (json.ok && Array.isArray(json.patients)) {
+  // { ok:true, patients:[...] }
+  patients = json.patients;
+} else if (json.ok && Array.isArray(json.list)) {
+  patients = json.list;
+} else {
+  throw new Error(json.error || 'Invalid patients response');
+}
         console.log('[PATIENTS] API Response:', patients.slice(0, 3)); // Debug first 3 patients
         ALL_PATIENTS = patients;
         applyFilters();
@@ -894,6 +951,11 @@
         const afterPercent = formatScore(afterScore);
         const clinicCode = p.clinicCode || p.clinic_code || '';
         
+        // 🎯 1️⃣ Find assigned doctor
+        const assignedDoctor = DOCTORS_CACHE.find(
+          d => d.id === p.primary_doctor_id
+        );
+        
         return `
           <div class="patient-card ${isSelected ? 'selected' : ''}" onclick="setSelectedPatient('${escapeHtml(patientId)}', '${escapeHtml(displayName)}')">
             <div class="patient-card-header">
@@ -940,9 +1002,72 @@
               <button class="btn-travel" onclick="openTravel('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.travel') : t('patients.travel')}</button>
               <button class="btn-health" onclick="openHealth('${escapeHtml(patientId)}')">${window.i18n ? window.i18n.t('patients.health') : t('patients.health')}</button>
             </div>
+            
+            ${assignedDoctor ? `
+              <div class="doctor-badge" style="
+                margin-top:12px;
+                padding:8px 10px;
+                background:rgba(16,185,129,0.12);
+                border:1px solid rgba(16,185,129,0.3);
+                border-radius:8px;
+                font-size:12px;
+                font-weight:600;
+                color:#10b981;
+                display:flex;
+                align-items:center;
+                gap:6px;
+              ">
+                👨‍⚕️ ${escapeHtml(
+                  assignedDoctor.name ||
+                  assignedDoctor.full_name ||
+                  assignedDoctor.email ||
+                  "Doctor"
+                )}
+              </div>
+            ` : ` 
+              <div class="doctor-badge" style="
+                margin-top:12px;
+                padding:8px 10px;
+                background:rgba(59,130,246,0.08);
+                border:1px dashed rgba(59,130,246,0.4);
+                border-radius:8px;
+                font-size:12px;
+                font-weight:600;
+                color:#3b82f6;
+              ">
+                No doctor assigned
+              </div>
+            `}
+            
+            <!-- Doctor Assignment Section -->
+            <div class="doctor-assignment" style="margin-top: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="font-size: 12px; color: #9ca3af;">Assign Doctor:</label>
+                <select 
+                  id="doctor-${escapeHtml(patientId)}"
+                  class="doctor-select"
+                  onchange="assignDoctor('${escapeHtml(patientId)}', this.value)"
+                  style="flex:1; padding:6px 8px; background:var(--b); border:1px solid #4b5563; border-radius:6px; color:#e6eaf2; font-size:12px;">
+                  ${!p.primary_doctor_id ? `<option value="" selected disabled>Select Doctor</option>` : ''}
+                  ${DOCTORS_CACHE.map(doctor => {
+                    const name = doctor.name || doctor.full_name || doctor.email || "Doctor";
+                    const selected = String(p.primary_doctor_id) === String(doctor.id) ? "selected" : "";
+                    return `<option value="${escapeHtml(doctor.id)}" ${selected}>
+                              ${escapeHtml(name)}
+                            </option>`;
+                  }).join('')}
+                </select>
+                <button 
+                  onclick="assignDoctor('${escapeHtml(patientId)}', this.closest('.doctor-assignment').querySelector('.doctor-select').value)"
+                  style="padding: 4px 12px; background: var(--p); border: none; border-radius: 4px; color: white; font-size: 12px; cursor: pointer;">
+                  Assign
+                </button>
+              </div>
+            </div>
           </div>
         `;
       }).join('');
+      
     }
 
     function escapeHtml(text) {
@@ -1226,7 +1351,7 @@
     }
 
     // Badge loading functions
-    const API = "https://cliniflow-admin.onrender.com";
+    const API = "http://localhost:10000"; // Development: Force localhost backend
     function adminHeaders(extra = {}) {
       const token = getAdminToken();
       return {
@@ -1323,8 +1448,16 @@
         });
         if (!res.ok) return;
         const data = await res.json();
-        if (!data.ok) return;
-        const patients = Array.isArray(data.patients) ? data.patients : (Array.isArray(data.list) ? data.list : []);
+
+let patients = [];
+
+if (Array.isArray(data)) {
+  patients = data;
+} else if (data.ok && Array.isArray(data.patients)) {
+  patients = data.patients;
+} else {
+  return;
+}
         const pendingCount = patients.filter(p => (p.status || "PENDING") === "PENDING").length;
         if (pendingCount > previousPendingPatients && previousPendingPatients > 0) {
           playNotificationSound();
@@ -1442,7 +1575,7 @@
     }
 
     // Load on page load
-    window.addEventListener('load', () => {
+    window.addEventListener('load', async () => {
       // Wait for i18n to be ready
       if (window.i18n) {
         updateLangToggle();
@@ -1450,18 +1583,150 @@
         window.i18n.updatePage();
         updateNavbar();
       }
+      
+      // ✅ STEP 3 — Ensure correct load order
+      await loadDoctorsCache();
+      await loadPatients();
       loadClinicBadge();
       renderSelectedBar();
       const s = document.getElementById('searchInput');
       const f = document.getElementById('statusFilter');
       if (s) s.addEventListener('input', () => applyFilters());
       if (f) f.addEventListener('change', () => applyFilters());
-      loadPatients();
       loadAllBadges();
     });
 
     // Auto-refresh badges every 30 seconds
     setInterval(loadAllBadges, 30000);
+
+    // Load doctors for assignment dropdown
+    async function loadDoctors() {
+      const token = getAdminToken();
+
+      if (!token) return [];
+
+      try {
+        const res = await fetch('/api/admin/doctors', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!res.ok) {
+          console.error("Doctors fetch failed:", res.status);
+          return [];
+        }
+
+        const data = await res.json();
+
+        if (Array.isArray(data.items)) return data.items;
+        if (Array.isArray(data.doctors)) return data.doctors;
+        if (Array.isArray(data)) return data;
+
+        return [];
+      } catch (e) {
+        console.error("Doctor load error:", e);
+        return [];
+      }
+    }
+
+    // ✅ STEP 2 — Fix loadDoctorsCache function
+    async function loadDoctorsCache() {
+      if (DOCTORS_CACHE.length > 0) {
+        return DOCTORS_CACHE;
+      }
+
+      const doctors = await loadDoctors();
+      DOCTORS_CACHE = doctors;   // IMPORTANT: no let/const here
+      return doctors;
+    }
+
+    // Assign doctor to patient
+    async function assignDoctor(patientId) {
+      const token = getAdminToken();
+      if (!token) {
+        alert('Admin token required');
+        return;
+      }
+
+      const doctorId = document.getElementById(`doctor-${patientId}`).value;
+      
+      // ✅ 1️⃣ Assign Butonunu Akıllı Yap
+      if (!doctorId) {
+        alert("Please select a doctor");
+        return;
+      }
+
+      const btn = event?.target;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Assigning...";
+      }
+
+      try {
+        const res = await fetch('/api/admin/patients/assign-doctor', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ patientId, doctorId })
+        });
+
+        if (!res.ok) {
+          const error = await res.json();
+          alert(`Failed to assign doctor: ${error.message || 'Unknown error'}`);
+          return;
+        }
+
+        const result = await res.json();
+        if (result.ok) {
+          // ✅ 2️⃣ Assign Sonrası Sessiz Güncelleme
+          await loadPatients();
+        }
+      } catch (error) {
+        console.error('Error assigning doctor:', error);
+        alert('Failed to assign doctor');
+      } finally {
+        // ✅ 1️⃣ Assign Butonunu Akıllı Yap - Reset
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Assign";
+        }
+      }
+    }
+
+    // Initialize doctor dropdowns when patients are loaded
+    async function initializeDoctorDropdowns() {
+      const doctors = await loadDoctors();
+      const dropdowns = document.querySelectorAll('select[id^="doctor-"]');
+      
+      dropdowns.forEach(dropdown => {
+        // Clear existing options except the first one
+        dropdown.innerHTML = '<option value="">Select Doctor</option>';
+        
+        // Add doctor options
+        doctors.forEach(doctor => {
+          const option = document.createElement('option');
+          option.value = doctor.id;
+          const name = doctor.full_name || doctor.email || "Doctor";
+          option.textContent = name;
+          dropdown.appendChild(option);
+        });
+      });
+
+      // Fix dropdown styling for visibility
+      document.querySelectorAll("select[id^='doctor-']").forEach(s => {
+        s.style.background = "white";
+        s.style.color = "black";
+        s.style.zIndex = "9999";
+      });
+    }
+
+    // Modify loadPatients function to initialize dropdowns after loading
+    const originalLoadPatients = loadPatients;
+    loadPatients = async function() {
+      await originalLoadPatients();
+      await initializeDoctorDropdowns();
+    };
   </script>
 </body>
 </html>

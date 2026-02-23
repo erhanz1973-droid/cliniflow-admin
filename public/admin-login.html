@@ -180,7 +180,7 @@
     <div id="alert-container"></div>
 
     <div id="form-container" class="form-container">
-      <form id="login-form">
+      <form id="login-form" onsubmit="return false;">
         <div class="form-group">
           <label>
             <span data-i18n="login.email">Email</span> <span class="required" data-i18n="login.emailRequired">*</span>
@@ -189,12 +189,10 @@
             type="email"
             id="email"
             name="email"
-            data-i18n-placeholder="login.emailPlaceholder"
-            placeholder="admin@clinifly.net"
+            placeholder="Enter your email address"
             required
-            autofocus
+            autocomplete="email"
           />
-          <div class="help-text" data-i18n="login.emailHelp">Admin email adresinizi giriniz</div>
         </div>
 
         <div class="form-group">
@@ -205,12 +203,10 @@
             type="text"
             id="clinicCode"
             name="clinicCode"
-            data-i18n-placeholder="login.clinicCodePlaceholder"
-            placeholder="ERHANCAN"
-            style="text-transform: uppercase;"
+            placeholder="Enter your clinic code"
             required
+            autocomplete="organization"
           />
-          <div class="help-text" data-i18n="login.clinicCodeHelp">Klinik kodunuzu giriniz (örn: ERHANCAN, TEST)</div>
         </div>
 
         <div class="form-group">
@@ -221,24 +217,24 @@
             type="password"
             id="password"
             name="password"
-            autocomplete="off"
+            placeholder="Enter your password"
             required
+            autocomplete="current-password"
           />
-          <div class="help-text" data-i18n="login.passwordHelp">Klinik şifrenizi giriniz</div>
         </div>
 
-        <button type="submit" class="btn btn-primary" id="submit-btn" data-i18n="login.submit">
-          Login
-        </button>
-
-        <button
-          type="button"
+        <button type="button" id="loginBtn" class="btn btn-primary" data-i18n="login.submit">Login</button>
+        
+        <button 
+          type="button" 
           class="btn btn-secondary"
-          onclick="window.location.href='/admin-register.html'"
+          onclick="location.href='/admin-register.html'"
           data-i18n="login.registerLink"
         >
           Yeni Klinik Kaydı
         </button>
+        
+        <div id="message" style="margin-top: 16px;"></div>
       </form>
     </div>
 
@@ -248,7 +244,9 @@
   </div>
 
 <script>
-  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+  const API = window.location.hostname === "localhost"
+    ? "http://localhost:10000"
+    : "https://cliniflow-backend.onrender.com";
   
   function showAlert(message, type = "error") {
     const container = document.getElementById("alert-container");
@@ -271,116 +269,82 @@
     if (headingEl) headingEl.textContent = i18n.t("login.title");
     if (subtitleEl) subtitleEl.textContent = i18n.t("login.subtitle");
     
-    // Update button texts
-    const submitBtn = document.getElementById("submit-btn");
+    // Update button texts only if not disabled (prevents double binding)
+    const submitBtn = document.getElementById("loginBtn");
     if (submitBtn && !submitBtn.disabled) {
       submitBtn.textContent = i18n.t("login.submit");
     }
   }
   
+  // Global submit guard
+  let isSubmitting = false;
+
   window.onI18nUpdated = updateUI;
 
-  document.getElementById("login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    
-    // Clear any existing admin token before login
+  // Button click handler instead of form submit
+  document.getElementById("loginBtn").onclick = async function () {
+    if (isSubmitting) return;
+    isSubmitting = true;
+
+    console.log("LOGIN BUTTON CLICKED");
+
     try {
-      localStorage.removeItem("admin_token");
-      console.log("[LOGIN] Cleared existing admin token before login");
-    } catch (e) {
-      console.error("[LOGIN] Error clearing token:", e);
-    }
-    
-    const submitBtn = document.getElementById("submit-btn");
-    const email = document.getElementById("email").value.trim().toLowerCase();
-    const clinicCode = document.getElementById("clinicCode").value.trim().toUpperCase();
-    const password = document.getElementById("password").value;
-    
-    if (!email) {
-      setMsg(i18n.t("login.errors.emailRequired"), "err");
-      return;
-    }
-    
-    if (!clinicCode) {
-      setMsg(i18n.t("login.errors.clinicCodeRequired"), "err");
-      return;
-    }
-    
-    if (!password) {
-      setMsg(i18n.t("login.errors.passwordRequired"), "err");
-      return;
-    }
-    
-    submitBtn.disabled = true;
-    submitBtn.textContent = i18n.t("login.submitLoading");
-    
-    console.log("[LOGIN] Sending login request:", { email, clinicCode, password: "***" });
-    
-    try {
-      // Try production API first, fallback to localhost
-      const apiToUse = API;
-      console.log("[LOGIN] Using API:", apiToUse);
-      
+      const email = document.getElementById("email").value.trim().toLowerCase();
+      const clinicCode = document.getElementById("clinicCode").value.trim().toUpperCase();
+      const password = document.getElementById("password").value;
+
       const res = await fetch(`${API}/api/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, clinicCode, password }),
       });
-      
-      const json = await res.json();
-      
-      if (!res.ok) {
-        let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
-        if (json.error === "invalid_admin_credentials") {
-          errorMsg = i18n.t("login.errors.invalidCredentials");
-        } else if (json.error === "email_required") {
-          errorMsg = i18n.t("login.errors.emailRequired");
-        } else if (json.error === "clinic_code_required") {
-          errorMsg = i18n.t("login.errors.clinicCodeRequired");
-        } else if (json.error === "password_required") {
-          errorMsg = i18n.t("login.errors.passwordRequired");
-        }
-        setMsg(errorMsg, "err");
-        submitBtn.disabled = false;
-        submitBtn.textContent = i18n.t("login.submit");
-        return;
-      }
-      
-      if (json.ok && json.requiresOTP) {
-        // OTP required - show OTP input form
-        showOTPForm(json.clinicCode, json.email);
-        return;
-      }
-      
-      if (json.ok && json.token) {
-        // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
-        localStorage.setItem("admin_token", json.token);
-        localStorage.setItem("clinic_code", json.admin?.clinicCode || clinicCode);
-        localStorage.setItem("clinic_name", json.admin?.clinicCode || clinicCode);
-        
-        console.log("[LOGIN] Token saved to localStorage:", json.token.substring(0, 20) + "...");
-        console.log("[LOGIN] Admin data:", json.admin);
-        
-        setMsg(i18n.t("login.success", { name: json.admin?.clinicCode || clinicCode }), "ok");
-        
-        console.log("[LOGIN] Login successful, redirecting to dashboard...");
-        
-        // Redirect immediately to correct port
-        window.location.href = window.location.origin + "/admin-dashboard.html";
-      } else {
-        setMsg(i18n.t("login.errors.loginFailed"), "err");
-        submitBtn.disabled = false;
-        submitBtn.textContent = i18n.t("login.submit");
-      }
-    } catch (error) {
-      console.error("Login error:", error);
-      setMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
-      submitBtn.disabled = false;
-      submitBtn.textContent = i18n.t("login.submit");
-    }
-  });
 
-  // Show OTP verification form
+      const json = await res.json();
+
+      if (!res.ok || !json.ok) {
+        showAlert("Login failed", "error");
+        return;
+      }
+
+      // ✅ TOKEN SAVE
+      localStorage.setItem("admin_token", json.token);
+      localStorage.setItem("clinic_code", json.clinicCode);
+      localStorage.setItem("clinic_name", json.clinicName || "");
+      
+      // ✅ USER DATA SAVE - Use real user data from API response
+      if (json.user) {
+        localStorage.setItem("user", JSON.stringify(json.user));
+        console.log("[LOGIN] User data saved:", json.user);
+      } else {
+        // Fallback for backward compatibility
+        const userData = {
+          id: json.clinicId || 'admin',
+          email: json.email || "",
+          role: "ADMIN",
+          clinicCode: json.clinicCode,
+          clinicName: json.clinicName || ""
+        };
+        localStorage.setItem("user", JSON.stringify(userData));
+        console.log("[LOGIN] Fallback user data saved:", userData);
+      }
+
+      showAlert("Login successful", "success");
+
+      // ✅ REDIRECT
+      setTimeout(() => {
+        window.location.href = window.location.origin + "/admin.html";
+      }, 800);
+
+    } catch (err) {
+      console.error("LOGIN ERROR:", err);
+      showAlert("Server error", "error");
+    } finally {
+      isSubmitting = false;
+    }
+  };
+  
+  // Auto-focus on clinic code input
+  document.getElementById("clinicCode").focus();
   function showOTPForm(clinicCode, email) {
     const formContainer = document.querySelector('.form-container');
     
@@ -449,86 +413,123 @@
     }
     
     // Handle OTP form submission
-    document.getElementById('otp-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      
-      const submitBtn = document.getElementById('otp-submit-btn');
-      const email = document.getElementById('otp-email').value.trim();
-      const otpCode = document.getElementById('otp-code').value.trim();
-      
-      if (!email) {
-        setOTPMsg(i18n.t("login.errors.emailRequired"), "err");
-        return;
-      }
-      
-      if (!otpCode || otpCode.length !== 6) {
-        setOTPMsg(i18n.t("login.errors.otpRequired"), "err");
-        return;
-      }
-      
-      submitBtn.disabled = true;
-      submitBtn.textContent = i18n.t("login.verifying") + "...";
-      
-      try {
-        const res = await fetch(`${API}/api/admin/verify-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            clinicCode: clinicCode,
-            email: email,
-            otp: otpCode 
-          }),
-        });
+    let isSubmittingOTP = false;
+    const otpForm = document.getElementById('otp-form');
+    if (otpForm) {
+      otpForm.onsubmit = async function(e) {
+        e.preventDefault();
         
-        const json = await res.json();
+        // Prevent multiple submissions
+        if (isSubmittingOTP) {
+          console.log("[OTP] Already submitting, ignoring...");
+          return;
+        }
+        isSubmittingOTP = true;
         
-        if (!res.ok) {
-          let errorMsg = json.message || json.error || i18n.t("login.errors.otpFailed");
-          if (json.error === "invalid_otp") {
-            errorMsg = i18n.t("login.errors.invalidOTP");
-          } else if (json.error === "otp_not_found") {
-            errorMsg = i18n.t("login.errors.otpNotFound");
-          } else if (json.error === "otp_expired") {
-            errorMsg = i18n.t("login.errors.otpExpired");
-          }
-          setOTPMsg(errorMsg, "err");
-          submitBtn.disabled = false;
-          submitBtn.textContent = i18n.t("login.verifyOTP");
+        const submitBtn = document.getElementById('otp-submit-btn');
+        const email = document.getElementById('otp-email').value.trim();
+        const otpCode = document.getElementById('otp-code').value.trim();
+        
+        if (!email) {
+          setOTPMsg(i18n.t("login.errors.emailRequired"), "err");
+          isSubmittingOTP = false;
           return;
         }
         
-        if (json.ok && json.token) {
-          // Save token and redirect
-          localStorage.setItem("admin_token", json.token);
-          localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
-          localStorage.setItem("clinic_name", json.clinicName || "");
+        if (!otpCode) {
+          setOTPMsg(i18n.t("login.errors.otpRequired"), "err");
+          isSubmittingOTP = false;
+          return;
+        }
+        
+        if (!/^\d{6}$/.test(otpCode)) {
+          setOTPMsg(i18n.t("login.errors.otpInvalid"), "err");
+          isSubmittingOTP = false;
+          return;
+        }
+        
+        submitBtn.disabled = true;
+        submitBtn.textContent = i18n.t("login.verifying") + "...";
+        
+        try {
+          const res = await fetch(`${API}/api/admin/verify-otp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              clinicCode: clinicCode,
+              email: email,
+              otp: otpCode 
+            }),
+          });
           
-          setOTPMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
+          const json = await res.json();
           
-          // Redirect to dashboard
-          setTimeout(() => {
-            window.location.href = window.location.origin + "/admin.html";
-          }, 1000);
-        } else {
-          setOTPMsg(i18n.t("login.errors.otpFailed"), "err");
+          if (!res.ok) {
+            let errorMsg = i18n.t("login.errors.otpFailed");
+            if (json.error === "otp_not_found") {
+              errorMsg = i18n.t("login.errors.otpNotFound");
+            } else if (json.error === "otp_expired") {
+              errorMsg = i18n.t("login.errors.otpExpired");
+            }
+            setOTPMsg(errorMsg, "err");
+            submitBtn.disabled = false;
+            submitBtn.textContent = i18n.t("login.verifyOTP");
+            isSubmittingOTP = false;
+            return;
+          }
+          
+          if (json.ok && json.token) {
+            // Save token and redirect
+            localStorage.setItem("admin_token", json.token);
+            localStorage.setItem("clinic_code", json.clinicCode);
+            localStorage.setItem("clinic_name", json.clinicName || "");
+            
+            // ✅ USER DATA SAVE - Use real user data from API response
+            if (json.user) {
+              localStorage.setItem("user", JSON.stringify(json.user));
+              console.log("[OTP LOGIN] User data saved:", json.user);
+            } else {
+              // Fallback for backward compatibility
+              const userData = {
+                id: json.clinicId || 'admin',
+                email: json.email || "",
+                role: "ADMIN",
+                clinicCode: json.clinicCode,
+                clinicName: json.clinicName || ""
+              };
+              localStorage.setItem("user", JSON.stringify(userData));
+              console.log("[OTP LOGIN] Fallback user data saved:", userData);
+            }
+            
+            setOTPMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
+            
+            // Redirect to dashboard
+            setTimeout(() => {
+              window.location.href = window.location.origin + "/admin.html";
+            }, 1000);
+          } else {
+            setOTPMsg(i18n.t("login.errors.otpFailed"), "err");
+            submitBtn.disabled = false;
+            submitBtn.textContent = i18n.t("login.verifyOTP");
+            isSubmittingOTP = false;
+          }
+        } catch (error) {
+          console.error("OTP verification error:", error);
+          setOTPMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
           submitBtn.disabled = false;
           submitBtn.textContent = i18n.t("login.verifyOTP");
+          isSubmittingOTP = false;
         }
-      } catch (error) {
-        console.error("OTP verification error:", error);
-        setOTPMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
-        submitBtn.disabled = false;
-        submitBtn.textContent = i18n.t("login.verifyOTP");
-      }
-    });
-    
-    // Auto-focus on OTP code input with delay
-    setTimeout(() => {
-      const otpInput = document.getElementById('otp-code');
-      if (otpInput) {
-        otpInput.focus();
-      }
-    }, 100);
+        
+        // Auto-focus on OTP code input with delay
+        setTimeout(() => {
+          const otpInput = document.getElementById('otp-code');
+          if (otpInput) {
+            otpInput.focus();
+          }
+        }, 100);
+      };
+    }
   }
   
   function setOTPMsg(message, type) {
@@ -548,9 +549,6 @@
       setTimeout(updateUI, 100);
     });
   }
-
-  // Auto-focus on clinic code input
-  document.getElementById("clinicCode").focus();
 </script>
 </body>
 </html>

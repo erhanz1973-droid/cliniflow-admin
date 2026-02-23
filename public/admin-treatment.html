@@ -528,7 +528,7 @@
     } catch {}
   })();
 
-  const API = "https://cliniflow-admin.onrender.com";
+  const API = "http://localhost:10000"; // Development: Force localhost backend
   const STATUS_ORDER = ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"];
   let PROCEDURE_DEFS = []; // from /api/procedures
   let TYPE_TO_CATEGORY = {}; // { [type]: category }

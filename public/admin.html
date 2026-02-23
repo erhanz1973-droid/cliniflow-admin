@@ -556,15 +556,19 @@
   // Global logout function - accessible from onclick handlers
   function logout() {
     try {
+      localStorage.removeItem("token");
       localStorage.removeItem("admin_token");
-      console.log("[LOGOUT] Admin token cleared");
+      localStorage.removeItem("user");
+      localStorage.removeItem("clinic_code");
+      localStorage.removeItem("clinic_name");
+      console.log("[LOGOUT] All admin data cleared");
     } catch (e) {
-      console.error("[LOGOUT] Error clearing token:", e);
+      console.error("[LOGOUT] Error clearing data:", e);
     }
     window.location.href = window.location.origin + "/admin-login.html";
   }
 
-  const API = window.location.origin; // Production: https://clinic.clinifly.net, Local: http://localhost:5050
+  const API = "http://localhost:10000"; // Development: Force localhost backend
   function applyTokenFromUrl() {
     try {
       const url = new URL(location.href);
@@ -576,17 +580,43 @@
     } catch {}
   }
   function getAdminToken() {
-    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+    try { 
+      return localStorage.getItem("token") || localStorage.getItem("admin_token") || ""; 
+    } catch { 
+      return ""; 
+    }
   }
-  // Check token on page load - redirect to login if missing
+  // Check token and role on page load - redirect to login if missing or invalid
   function checkAuth() {
-    const token = getAdminToken();
+    const token = localStorage.getItem("token") || localStorage.getItem("admin_token");
+    const userStr = localStorage.getItem("user");
+    
     if (!token) {
-      // No token - redirect to login page
+      console.log("[AUTH] No token found, redirecting to login");
       window.location.href = window.location.origin + "/admin-login.html";
       return false;
     }
-    return true;
+    
+    if (!userStr) {
+      console.log("[AUTH] No user data found, redirecting to login");
+      window.location.href = window.location.origin + "/admin-login.html";
+      return false;
+    }
+    
+    try {
+      const user = JSON.parse(userStr);
+      if (!user || user.role !== "ADMIN") {
+        console.log("[AUTH] Invalid role, redirecting to login:", user?.role);
+        window.location.href = window.location.origin + "/admin-login.html";
+        return false;
+      }
+      console.log("[AUTH] Admin access confirmed for user:", user.email);
+      return true;
+    } catch (error) {
+      console.error("[AUTH] Error parsing user data:", error);
+      window.location.href = window.location.origin + "/admin-login.html";
+      return false;
+    }
   }
   function adminHeaders(extra = {}) {
     const token = getAdminToken();
@@ -598,51 +628,19 @@
 
   // Safari-compatible fetch wrapper
   async function safariFetch(url, options = {}) {
-    const token = getAdminToken();
-    
-    const defaultOptions = {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...options.headers
-      },
-      credentials: 'include', // Safari için kritik
-      mode: 'cors',
-      cache: 'no-cache',
-      ...options
-    };
+    const token = localStorage.getItem("admin_token");
+    console.log("TOKEN BEING SENT:", token);
 
-    // Safari-specific timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-    
-    try {
-      console.log('[SAFARI FETCH] Request:', { url, method: defaultOptions.method, hasAuth: !!token });
-      
-      const response = await fetch(url, {
-        ...defaultOptions,
-        signal: controller.signal,
-        ...options
-      });
-      
-      clearTimeout(timeoutId);
-      console.log('[SAFARI FETCH] Response:', response.status, response.statusText);
-      return response;
-    } catch (error) {
-      clearTimeout(timeoutId);
-      
-      // Safari-specific error handling
-      if (error.name === 'AbortError') {
-        console.error('[SAFARI FETCH] Request timeout');
-        throw new Error('Request timeout - please try again');
+    return fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...(options.headers || {})
       }
-      
-      console.error('[SAFARI FETCH] Error:', error);
-      throw error;
-    }
+    });
   }
+
   // Load clinic info
   async function loadClinicInfo() {
     const el = document.getElementById("clinicInfo");
@@ -653,8 +651,8 @@
       return;
     }
     try {
-      const res = await fetch(`${API}/api/admin/clinic`, {
-        headers: adminHeaders({ Accept: "application/json" }),
+      const res = await safariFetch(`${API}/api/admin/clinic`, {
+        headers: { Accept: "application/json" },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -868,8 +866,8 @@
       const token = getAdminToken();
       if (!token) return;
       
-      const r = await fetch(`${API}/api/admin/patients`, {
-        headers: adminHeaders({ Accept: "application/json" })
+      const r = await safariFetch(`${API}/api/admin/patients`, {
+        headers: { Accept: "application/json" }
       });
       if (!r.ok) return;
       
@@ -1030,8 +1028,8 @@
       }
     
       console.log("[loadEvents] Fetching events from:", `${API}/api/admin/events`);
-      const r = await fetch(`${API}/api/admin/events`, {
-        headers: adminHeaders({ Accept: "application/json" })
+      const r = await safariFetch(`${API}/api/admin/events`, {
+        headers: { Accept: "application/json" }
       });
       
       console.log("[loadEvents] Response status:", r.status, r.statusText);
@@ -1230,8 +1228,8 @@
       const token = getAdminToken();
       if (!token) return;
       
-      const res = await fetch(`${API}/api/admin/metrics/monthly-active-patients?months=6`, {
-        headers: adminHeaders({ Accept: "application/json" })
+      const res = await safariFetch(`${API}/api/admin/metrics/monthly-active-patients?months=6`, {
+        headers: { Accept: "application/json" }
       });
       
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1388,8 +1386,8 @@ function updateActivePatientsUI(data) {
       const token = getAdminToken();
       if (!token) return;
       
-      const res = await fetch(`${API}/api/admin/metrics/monthly-procedures?months=6`, {
-        headers: adminHeaders({ Accept: "application/json" })
+      const res = await safariFetch(`${API}/api/admin/metrics/monthly-procedures?months=6`, {
+        headers: { Accept: "application/json" }
       });
       
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1727,8 +1725,8 @@ function updateActivePatientsUI(data) {
     if (!token) return;
 
     try {
-      const res = await fetch(`${API}/api/admin/referrals?status=PENDING`, {
-        headers: adminHeaders({ Accept: "application/json" }),
+      const res = await safariFetch(`${API}/api/admin/referrals?status=PENDING`, {
+        headers: { Accept: "application/json" }
       });
       if (!res.ok) return;
       const data = await res.json();

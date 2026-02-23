@@ -4959,7 +4959,13 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
     const normalized = (patients || []).map((p) => {
       const createdAt = p.created_at ? new Date(p.created_at).getTime() : (p.createdAt || 0);
       return {
-        ...p,
+        id: p.id,
+        patient_id: p.patient_id,
+        name: p.name || "",
+        phone: p.phone || "",
+        status: p.status,
+        created_at: p.created_at,
+        primary_doctor_id: p.primary_doctor_id || null,
         // Prefer legacy app id (p_xxx) if present
         patientId: p.patient_id || p.patientId || p.id,
         createdAt,
@@ -4987,6 +4993,43 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   } catch (error) {
 
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+});
+
+// GET /api/admin/doctors - List doctors for admin
+app.get("/api/admin/doctors", requireAdminAuth, async (req, res) => {
+  try {
+    const clinicId = req.clinicId;
+
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_missing" });
+    }
+
+    const { data, error } = await supabase
+      .from("doctors")
+      .select("id, full_name, phone, email, status, created_at")
+      .eq("clinic_id", clinicId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[ADMIN DOCTORS] Error:", error);
+      return res.status(500).json({ ok: false, error: "fetch_failed", details: error.message });
+    }
+
+    const normalized = (data || []).map(d => ({
+      id: d.id,
+      name: d.full_name,
+      phone: d.phone,
+      email: d.email,
+      status: d.status,
+      createdAt: d.created_at
+    }));
+
+    res.json({ ok: true, items: normalized });
+
+  } catch (err) {
+    console.error("[ADMIN DOCTORS] Exception:", err);
+    res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
@@ -5039,7 +5082,7 @@ app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => 
         )
       `)
       .eq("id", patientId)
-      .eq("clinic_id", req.admin.clinicId)
+      .eq("clinic_id", req.clinicId)
       .single();
 
     if (error || !patient) {
@@ -5098,6 +5141,47 @@ app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
   } catch (e) {
 
     return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// PUT /api/admin/patients/assign-doctor
+// Assign doctor to patient
+app.put('/api/admin/patients/assign-doctor', requireAdminAuth, async (req, res) => {
+  try {
+    console.log("🔥 ASSIGN ROUTE HIT");
+    console.log("🔥 BODY:", req.body);
+
+    const { patientId, doctorId } = req.body;
+
+    console.log("PATIENT ID USED:", patientId);
+
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: 'patientId missing' });
+    }
+
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: 'doctorId missing' });
+    }
+
+    // 🔥 Tam Doğru Kod - Always use patient_id column
+    const { data, error } = await supabase
+      .from('patients')
+      .update({ primary_doctor_id: doctorId })
+      .eq('patient_id', patientId)
+      .select();
+
+    console.log("UPDATE RESULT:", data, error);
+
+    if (error) {
+      console.error("SUPABASE ERROR:", error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    return res.json({ ok: true, data });
+
+  } catch (err) {
+    console.error("ASSIGN ROUTE CRASH:", err);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
@@ -11491,10 +11575,6 @@ app.post("/api/admin/register", async (req, res) => {
         });
         
 
-
-
-
-
         
         return res.json({
           ok: true,
@@ -11695,6 +11775,7 @@ app.post("/api/admin/login", async (req, res) => {
     }
     
     // FILE FALLBACK: Legacy storage
+
     let foundClinic = null;
     let foundClinicId = null;
     let isFromClinicsFile = false;
