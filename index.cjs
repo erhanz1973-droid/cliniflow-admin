@@ -772,6 +772,7 @@ const corsOptions = {
     "http://localhost:8083", 
     "https://clinic.clinifly.net", 
     "https://cliniflow-admin.onrender.com", 
+    "https://cliniflow-backend-dg8a.onrender.com",
     "http://localhost:10000", 
     "http://localhost:8081", 
     "http://localhost:8082"
