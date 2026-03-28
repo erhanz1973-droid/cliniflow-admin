@@ -1671,7 +1671,7 @@ async function getOTPsForEmail(email) {
       if (error) {
         console.error('[OTP] Supabase query failed:', error);
       } else if (data && data.length > 0) {
-        return data;
+        return data[0];
       }
     } catch (error) {
       console.error('[OTP] Supabase getOTPsForEmail failed:', error);
@@ -1680,8 +1680,8 @@ async function getOTPsForEmail(email) {
 
   const otps = readJson(OTP_FILE, {});
   const otp = otps[emailKey];
-  if (!otp) return [];
-  return [otp];
+  if (!otp) return null;
+  return otp;
 }
 
 /**
@@ -19643,15 +19643,11 @@ app.post("/api/admin/register", async (req, res) => {
             name: String(name).trim(),
             phone: String(phone || "").trim(),
             address: String(address || "").trim(),
+            email: emailLower,
+            clinic_code: clinicCodeTrimmed,
             password_hash: hashedPassword,
-            registration_data: {
-              clinic_code: clinicCodeTrimmed,
-              email: emailLower,
-              phone: String(phone || "").trim(),
-              address: String(address || "").trim(),
-              plan: "FREE",
-              max_patients: 3
-            }
+            plan: "FREE",
+            max_patients: 3,
           });
           
 
@@ -21860,34 +21856,17 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     
     const emailLower = String(email).trim().toLowerCase();
     const clinicCodeTrimmed = String(clinicCode).trim().toUpperCase();
-    
 
+    // getOTPsForEmail returns a single row object (or null); normalize defensively
+    const otpData = normalizeOtpRowFromStore(await getOTPsForEmail(emailLower));
 
-
-
-
-
-    
-    // Get OTP data
-    const otpData = await getOTPsForEmail(emailLower);
-
-    if (otpData) {
-
-
-
-
-    }
-    if (!otpData) {  // Fixed: otpData is now object, not array
-
+    if (!otpData) {
       return res.status(400).json({ ok: false, error: "otp_not_found", message: "OTP not found or expired" });
     }
-    
-    // otpData is now the OTP object directly (not array)
-    const latestOTP = otpData;
-    
-    // Check if already verified
-    if (latestOTP.verified) {
 
+    const latestOTP = otpData;
+
+    if (latestOTP.verified || latestOTP.used) {
       return res.status(400).json({ ok: false, error: "otp_already_verified", message: "OTP already verified" });
     }
     
@@ -21920,74 +21899,100 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
 
 
     
-    // Get registration data
-    const registrationData = latestOTP.registration_data;
-    if (!registrationData) {
-
+    // Get registration data (storeOTPForEmail may nest payload under registration_data)
+    const rawReg = latestOTP.registration_data;
+    if (!rawReg || typeof rawReg !== "object") {
       return res.status(400).json({ ok: false, error: "registration_data_missing", message: "Registration data not found" });
     }
-    
-    // Resolve clinic_code from multiple sources
-    const resolvedClinicCode = 
-      clinicCodeTrimmed ||  // From request body
-      registrationData?.clinic_code ||  // From registration data (snake_case)
-      registrationData?.clinicCode;    // From registration data (camelCase)
-    
+    const inner = rawReg.registration_data && typeof rawReg.registration_data === "object" ? rawReg.registration_data : {};
+    const registrationData = {
+      ...inner,
+      name: rawReg.name ?? inner.name,
+      phone: rawReg.phone ?? inner.phone ?? "",
+      address: rawReg.address ?? inner.address ?? "",
+      website: rawReg.website ?? inner.website ?? "",
+      email: rawReg.email ?? inner.email ?? emailLower,
+      password_hash: rawReg.password_hash ?? inner.password_hash,
+      clinic_code: rawReg.clinic_code ?? inner.clinic_code ?? rawReg.clinicCode ?? inner.clinicCode,
+      plan: rawReg.plan ?? inner.plan,
+      max_patients: rawReg.max_patients ?? inner.max_patients,
+    };
 
+    const resolvedClinicCode =
+      clinicCodeTrimmed ||
+      String(registrationData.clinic_code || registrationData.clinicCode || "").trim().toUpperCase();
 
-    
     if (!resolvedClinicCode) {
-
       return res.status(400).json({ ok: false, error: "clinic_code_missing", message: "Clinic code is missing" });
     }
-    
-    // Check if clinic code already exists (double check)
+
+    const regEmail = String(registrationData.email || emailLower).trim().toLowerCase();
+
     const existingByCode = await getClinicByCode(resolvedClinicCode);
     if (existingByCode) {
-
       return res.status(400).json({ ok: false, error: "clinic_code_exists", message: "Clinic code already exists" });
     }
-    
-    // Create clinic in Supabase
 
-    
-    // Map registration data to clinic format
+    const clinicName = String(registrationData.name || "").trim();
+    if (!clinicName) {
+      return res.status(400).json({ ok: false, error: "name_required", message: "Clinic name is missing from registration" });
+    }
+
+    const pwdHashRaw = registrationData.password_hash && String(registrationData.password_hash).trim();
+    const pwdHash =
+      pwdHashRaw && pwdHashRaw.startsWith("$2")
+        ? pwdHashRaw
+        : registrationData.password && String(registrationData.password).length >= 6
+          ? await bcrypt.hash(String(registrationData.password), 10)
+          : null;
+    if (!pwdHash) {
+      return res.status(400).json({
+        ok: false,
+        error: "registration_data_incomplete",
+        message: "Kayıt verisi eksik; lütfen kayıt formunu yeniden gönderin.",
+      });
+    }
+
     const clinicData = {
-      name: registrationData.name,
-      email: registrationData.email,
-      phone: registrationData.phone || '',
-      address: registrationData.address || '',
-      website: registrationData.website || '',
-      clinic_code: resolvedClinicCode,  // Use resolved clinic code
-      plan: registrationData.plan || 'FREE',
-      max_patients: registrationData.max_patients || 50,
-      password_hash: '$2b$10$placeholder.hash.for.registration' // Required field
+      name: clinicName,
+      email: regEmail,
+      phone: String(registrationData.phone || "").trim(),
+      address: String(registrationData.address || "").trim(),
+      website: String(registrationData.website || "").trim(),
+      clinic_code: resolvedClinicCode,
+      plan: registrationData.plan || "FREE",
+      max_patients: Number(registrationData.max_patients) > 0 ? Number(registrationData.max_patients) : 50,
+      password_hash: pwdHash,
     };
-    
 
-    const newClinic = await createClinic(clinicData);
-    
+    let newClinic;
+    try {
+      newClinic = await createClinic(clinicData);
+    } catch (createErr) {
+      console.error("[VERIFY REG OTP] createClinic:", createErr?.message || createErr);
+      return res.status(500).json({
+        ok: false,
+        error: "clinic_creation_failed",
+        message: createErr?.message || "Failed to create clinic",
+      });
+    }
+
     if (!newClinic) {
-
       return res.status(500).json({ ok: false, error: "clinic_creation_failed", message: "Failed to create clinic" });
     }
-    
 
-    
-    // Mark OTP as verified/used
     await markOTPUsed(latestOTP.id);
-    
-    // Generate admin token with proper structure
+
     const token = jwt.sign(
-      { 
-        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
-        clinicCode: clinicCodeTrimmed,
-        clinicId: newClinic.id, // 🔥 REQUIRED: clinicId (UUID)
-        email: registrationData.email,
-        role: "ADMIN", // 🔥 REQUIRED: role
+      {
+        type: "admin",
+        clinicCode: resolvedClinicCode,
+        clinicId: newClinic.id,
+        email: regEmail,
+        role: "ADMIN",
         otpVerified: true,
         iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60) // 30 days
+        exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
       },
       JWT_SECRET
     );
@@ -22007,11 +22012,11 @@ app.post("/api/admin/verify-registration-otp", async (req, res) => {
     });
     
   } catch (error) {
-
-    res.status(500).json({ 
-      ok: false, 
-      error: "internal_error", 
-      message: "Registration verification failed" 
+    console.error("[VERIFY REG OTP] Uncaught:", error?.stack || error?.message || error);
+    res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: IS_PROD ? "Registration verification failed" : String(error?.message || error || "Registration verification failed"),
     });
   }
 });

@@ -252,6 +252,8 @@
             type="email"
             id="email"
             name="email"
+            autocomplete="username"
+            inputmode="email"
             data-i18n-placeholder="register.emailPlaceholder"
             placeholder="clinic@example.com"
             required
@@ -532,6 +534,9 @@
           <input
             type="text"
             id="otp-input"
+            name="one-time-code"
+            autocomplete="one-time-code"
+            inputmode="numeric"
             placeholder="Enter 6-digit code"
             maxlength="6"
             pattern="[0-9]{6}"
