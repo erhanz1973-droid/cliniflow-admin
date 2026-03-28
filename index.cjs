@@ -1,7 +1,6 @@
-console.log("🔥 RUNNING INDEX.CJS FROM ROOT /cliniflow-admin");
-console.log("🔥 ADMIN ALIAS ROUTES LOADED FROM INDEX.CJS");
 
-// Load environment variables from .env file
+
+// ─── Bootstrap: imports & app init ─────────────────────────────────────────
 require("dotenv").config();
 
 const express = require("express");
@@ -14,21 +13,23 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
-// 🔥 NATIVE CRYPTO - NO EXTERNAL DEPS
 const { randomUUID } = require("crypto");
 const procedures = require("./shared/procedures");
+const { procedureIdForEncounterTreatmentColumn } = require("../lib/procedureIdForEncounterTreatment");
+const { fillIcdRowFromStatic } = require("../lib/icd10StaticLabels.cjs");
+const { SPECIALITY_SEED_NAMES, LANGUAGE_SEED_NAMES } = require("../lib/profileReferenceSeeds");
 
-// Supabase client
 const {
   supabase,
-  // isSupabaseEnabled,  // Remove from import to avoid duplicate declaration
   testSupabaseConnection,
+  clearClinicCache,
   getClinicByCode,
   getClinicById,
   getClinicByEmail,
   createClinic,
   updateClinic,
   getAllClinics,
+  getAdminByEmailAndClinicCode,
   getPatientById,
   getPatientByPhone,
   getPatientByEmail,
@@ -38,7 +39,6 @@ const {
   countPatientsByClinic,
   getChatMessagesByPatient,
   createChatMessage,
-  // OTP fonksiyonları AKTİF - Supabase kullanılıyor
   createOTP: createOTP,
   getOTPByEmail: getOTPByEmail,
   incrementOTPAttempts: incrementOTPAttempts,
@@ -51,53 +51,30 @@ const {
   createReferral: createReferralInDB,
   getReferralsByClinic: getReferralsByClinicFromDB,
   savePushSubscription,
-  getPushSubscriptionsByPatient
+  getPushSubscriptionsByPatient,
 } = require("./lib/supabase");
 
 const app = express();
-
 const server = http.createServer(app);
 const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
-const JWT_SECRET = process.env.JWT_SECRET || "clinifly-secret-key-change-in-production";
-const JWT_EXPIRES_IN = "30d"; // 30 days
+const JWT_SECRET = process.env.JWT_SECRET || "yJ2uB87EHHAEqMyrePIrYQR0+pC3t8fFh5IJJ/QH6lY";
+const JWT_EXPIRES_IN = "30d";
 const IS_PROD = String(process.env.NODE_ENV || "").toLowerCase() === "production";
+const PERF_LOGS_ENABLED = !IS_PROD || String(process.env.PERF_LOGS || "").trim() === "1";
+/** Non-production: skip OTP hash / missing-row checks for /auth/verify-otp (patient & doctor). Set OTP_DEV_BYPASS=0 to enforce real OTP locally. */
+function isOtpDevBypassEnabled() {
+  if (IS_PROD) return false;
+  return String(process.env.OTP_DEV_BYPASS || "1").trim() !== "0";
+}
+
+function normalizeOtpRowFromStore(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.length > 0 ? raw[0] : null;
+  return raw;
+}
 const ALLOW_FILE_FALLBACK = String(process.env.ALLOW_FILE_FALLBACK || "").toLowerCase() === "true";
-
-function canUseFileFallback() {
-  // Only allow file fallback when explicitly enabled.
-  // This prevents data loss on deploy/restart in ephemeral environments.
-  return ALLOW_FILE_FALLBACK === true;
-}
-
-function supabaseDisabledPayload(scope) {
-  const s = scope ? ` (${scope})` : "";
-  return {
-    ok: false,
-    error: "supabase_disabled",
-    message: `Supabase is disabled${s}. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in deploy environment.`,
-  };
-}
-
-function isMissingTableError(error, tableName) {
-  const msg = String(error?.message || "");
-  const details = String(error?.details || "");
-  const hint = String(error?.hint || "");
-  const combined = `${msg} ${details} ${hint}`.toLowerCase();
-  const t = String(tableName || "").toLowerCase();
-  return combined.includes("does not exist") && combined.includes(t);
-}
-
-function isMissingColumnError(error, columnName) {
-  const msg = String(error?.message || "");
-  const details = String(error?.details || "");
-  const hint = String(error?.hint || "");
-  const combined = `${msg} ${details} ${hint}`.toLowerCase();
-  const code = String(error?.code || "");
-  const isMissingCode = code === "PGRST204" || code === "42703";
-  if (!columnName) return isMissingCode;
-  return isMissingCode && combined.includes(String(columnName || "").toLowerCase());
-}
+// ────────────────────────────────────────────────────────────────────────────
 
 function getMissingColumnName(error) {
   const msg = String(error?.message || "");
@@ -109,7 +86,7 @@ async function insertWithColumnPruning(payload) {
   let current = { ...(payload || {}) };
   let lastError = null;
 
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < 14; attempt += 1) {
     const { data, error } = await supabase
       .from("messages")
       .insert(current)
@@ -176,6 +153,7 @@ function mapDbMessageToLegacyMessage(row) {
   const senderRaw =
     row.sender ??
     row.sender_type ??
+    row.from_role ??
     row.from ??
     (row.from_patient !== undefined ? (row.from_patient ? "patient" : "clinic") : "");
   const sender = String(senderRaw || "").toLowerCase();
@@ -207,6 +185,20 @@ function mapDbMessageToLegacyMessage(row) {
   } else if (createdRaw instanceof Date) {
     createdAt = createdRaw.getTime();
   }
+  const readRaw =
+    row.read_at ??
+    row.readAt ??
+    row.admin_read_at ??
+    row.read_by_clinic_at ??
+    null;
+  let readAt = null;
+  if (readRaw != null) {
+    if (typeof readRaw === "number") readAt = readRaw;
+    else if (typeof readRaw === "string") {
+      const p = Date.parse(readRaw);
+      if (!Number.isNaN(p)) readAt = p;
+    } else if (readRaw instanceof Date) readAt = readRaw.getTime();
+  }
   return {
     id: String(row.id || row.message_id || row.messageId || ""),
     text: String(text || ""),
@@ -215,26 +207,453 @@ function mapDbMessageToLegacyMessage(row) {
     attachment: attachment || undefined,
     createdAt,
     patientId: row.patient_id || undefined,
+    ...(readAt != null ? { readAt } : {}),
   };
+}
+
+/** patient_messages row → same legacy shape as admin-chat / mobile */
+function mapPatientMessagesRowToLegacy(row) {
+  if (!row) return null;
+  const role = String(row.from_role || "").toLowerCase();
+  const from = role === "patient" ? "PATIENT" : "CLINIC";
+  let attachment = row.attachment || undefined;
+  if (attachment && typeof attachment === "object") {
+    attachment = {
+      ...attachment,
+      mimeType: attachment.mimeType || attachment.mime,
+      name: attachment.name || "Dosya",
+      size: attachment.size != null ? attachment.size : 0,
+    };
+  }
+  const createdRaw = row.created_at ?? row.createdAt;
+  let createdAt = now();
+  if (typeof createdRaw === "number") createdAt = createdRaw;
+  else if (typeof createdRaw === "string") {
+    const parsed = Date.parse(createdRaw);
+    if (!Number.isNaN(parsed)) createdAt = parsed;
+  } else if (createdRaw instanceof Date) {
+    createdAt = createdRaw.getTime();
+  }
+  let readAt = null;
+  const readRaw = row.read_at ?? row.readAt ?? null;
+  if (readRaw != null) {
+    if (typeof readRaw === "number") readAt = readRaw;
+    else if (typeof readRaw === "string") {
+      const p = Date.parse(readRaw);
+      if (!Number.isNaN(p)) readAt = p;
+    } else if (readRaw instanceof Date) readAt = readRaw.getTime();
+  }
+  const bodyText =
+    row.text ??
+    row.message ??
+    row.content ??
+    row.message_text ??
+    row.body ??
+    "";
+  return {
+    id: String(row.message_id || row.id || ""),
+    text: String(bodyText || ""),
+    from,
+    type: row.type || "text",
+    attachment: attachment || undefined,
+    createdAt,
+    patientId: row.patient_id || undefined,
+    ...(readAt != null ? { readAt } : {}),
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** messages.patient_id FK → patients.id (UUID). Token may carry legacy patients.patient_id (e.g. p_…). */
+async function resolveMessagesPatientDbId(patientId) {
+  const raw = String(patientId || "").trim();
+  if (!raw) return null;
+  if (UUID_RE.test(raw)) return raw;
+  try {
+    const { data: byPid, error: errPid } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("patient_id", raw)
+      .maybeSingle();
+    if (!errPid && byPid?.id) return String(byPid.id);
+
+    if (raw.length > 2 && String(raw[0]).toLowerCase() === "p" && raw[1] === "_") {
+      const rest = raw.slice(2);
+      if (UUID_RE.test(rest)) {
+        const { data: byId, error: errId } = await supabase
+          .from("patients")
+          .select("id")
+          .eq("id", rest)
+          .maybeSingle();
+        if (!errId && byId?.id) return String(byId.id);
+      }
+    }
+
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function resolveClinicContextForPatientRow(internalPatientId) {
+  const id = String(internalPatientId || "").trim();
+  if (!id) return { clinicId: null, clinicCode: null };
+  const selects = ["id, clinic_id, clinic_code", "id, clinic_id", "id, clinic_code"];
+  for (const sel of selects) {
+    let r = await supabase.from("patients").select(sel).eq("id", id).maybeSingle();
+    if (!r.error && r.data) {
+      return {
+        clinicId: r.data.clinic_id != null ? String(r.data.clinic_id).trim() : null,
+        clinicCode: r.data.clinic_code != null ? String(r.data.clinic_code).trim() : null,
+      };
+    }
+    const code = String(r.error?.code || "");
+    if (!["PGRST116", "42P01", "42703", "PGRST204", "PGRST205"].includes(code)) break;
+  }
+  return { clinicId: null, clinicCode: null };
+}
+
+async function resolveClinicUuidFromClinicCode(clinicCodeRaw) {
+  const code = String(clinicCodeRaw || "")
+    .trim()
+    .toUpperCase();
+  if (!code) return null;
+  const attempts = [
+    () => supabase.from("clinics").select("id").eq("clinic_code", code).maybeSingle(),
+    () => supabase.from("clinics").select("id").ilike("clinic_code", code).maybeSingle(),
+    () => supabase.from("clinics").select("id").eq("code", code).maybeSingle(),
+  ];
+  for (const run of attempts) {
+    const { data, error } = await run();
+    if (!error && data?.id) return String(data.id).trim();
+    const c = String(error?.code || "");
+    if (!["42P01", "42703", "PGRST204", "PGRST205", "PGRST116"].includes(c)) break;
+  }
+  return null;
 }
 
 async function fetchMessagesFromSupabase(patientId) {
-  const { data, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("patient_id", patientId)
-    .order("created_at", { ascending: true });
-  return { data, error };
+  const resolvedId = await resolveMessagesPatientDbId(patientId);
+  if (!resolvedId) {
+    return { data: [], error: null, preMapped: true };
+  }
+
+  const [pmRes, mgRes] = await Promise.all([
+    supabase.from("patient_messages").select("*").eq("patient_id", resolvedId).order("created_at", { ascending: true }),
+    supabase.from("messages").select("*").eq("patient_id", resolvedId).order("created_at", { ascending: true }),
+  ]);
+
+  const pmRows = !pmRes.error && Array.isArray(pmRes.data) ? pmRes.data : [];
+  const mgRows = !mgRes.error && Array.isArray(mgRes.data) ? mgRes.data : [];
+
+  const legacyPm = pmRows.map(mapPatientMessagesRowToLegacy).filter(Boolean);
+  const legacyMg = mgRows.map(mapDbMessageToLegacyMessage).filter(Boolean);
+  const merged = [...legacyPm, ...legacyMg].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+  if (merged.length > 0) {
+    return { data: merged, error: null, preMapped: true };
+  }
+
+  const ignorableFetchErr = (e) => {
+    if (!e) return true;
+    const c = String(e.code || "");
+    if (["42P01", "PGRST205", "PGRST116"].includes(c)) return true;
+    return isMissingTableError(e, "messages") || isMissingTableError(e, "patient_messages");
+  };
+
+  if (!ignorableFetchErr(pmRes.error) && !ignorableFetchErr(mgRes.error)) {
+    return { data: [], error: pmRes.error || mgRes.error, preMapped: true };
+  }
+  if (!ignorableFetchErr(mgRes.error)) {
+    return { data: [], error: mgRes.error, preMapped: true };
+  }
+  return { data: [], error: null, preMapped: true };
 }
 
-async function insertMessageToSupabase({ patientId, sender, message, attachments, type }) {
-  const primaryPayload = {
-    patient_id: patientId,
-    sender,
-    message,
-    attachments: attachments ?? null,
+function isSupabaseSchemaMissingColumnError(error) {
+  const c = String(error?.code || "");
+  const m = String(error?.message || "").toLowerCase();
+  return (
+    ["42703", "PGRST204", "PGRST205"].includes(c) ||
+    (m.includes("column") && m.includes("does not exist"))
+  );
+}
+
+/** Admin marked patient-originated rows as read (patient_messages and/or messages). */
+async function markPatientMessagesReadForAdmin(resolvedPatientId) {
+  const id = String(resolvedPatientId || "").trim();
+  if (!id) return { ok: false, error: { message: "patient_id_required" } };
+  const readAtIso = new Date().toISOString();
+
+  const pmUp = await supabase
+    .from("patient_messages")
+    .update({ read_at: readAtIso })
+    .eq("patient_id", id)
+    .or("from_role.eq.patient,from_role.eq.PATIENT")
+    .is("read_at", null);
+  if (!pmUp.error) return { ok: true, error: null };
+  const pmCode = String(pmUp.error?.code || "");
+  const pmMsg = String(pmUp.error?.message || "").toLowerCase();
+  const skipPm =
+    pmCode === "42P01" ||
+    pmCode === "PGRST205" ||
+    (pmMsg.includes("relation") && pmMsg.includes("does not exist")) ||
+    isSupabaseSchemaMissingColumnError(pmUp.error);
+  if (!skipPm) {
+    return { ok: false, error: pmUp.error };
+  }
+
+  const stampCandidates = [
+    { col: "read_at", payload: { read_at: readAtIso } },
+    { col: "admin_read_at", payload: { admin_read_at: readAtIso } },
+    { col: "read_by_clinic_at", payload: { read_by_clinic_at: readAtIso } },
+  ];
+  const filterRuns = [
+    (q) => q.eq("from_patient", true),
+    (q) => q.or("sender_type.eq.patient,sender_type.eq.PATIENT"),
+  ];
+
+  for (const { col, payload } of stampCandidates) {
+    for (const applyFilter of filterRuns) {
+      let q = supabase.from("messages").update(payload).eq("patient_id", id);
+      q = applyFilter(q);
+      q = q.is(col, null);
+      const { error } = await q;
+      if (!error) return { ok: true, error: null };
+      if (isSupabaseSchemaMissingColumnError(error)) break;
+      const msg = String(error?.message || "").toLowerCase();
+      if (msg.includes("from_patient") || msg.includes("sender_type")) continue;
+      return { ok: false, error };
+    }
+  }
+  return { ok: true, error: null, noop: true };
+}
+
+async function handlePatientMessagesReadMark(req, res) {
+  try {
+    const rawPid = String(req.params.patientId || "").trim();
+    if (!rawPid) {
+      return res.status(400).json({ ok: false, error: "patientId_required" });
+    }
+    const resolvedPatientId = await resolveMessagesPatientDbId(rawPid);
+    if (!resolvedPatientId) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+
+    const adminCode = String(req.clinicCode || "").trim().toUpperCase();
+    const adminClinicId = req.clinicId ? String(req.clinicId).trim() : "";
+    const { data: prow, error: perr } = await supabase
+      .from("patients")
+      .select("id, clinic_id, clinic_code")
+      .eq("id", resolvedPatientId)
+      .maybeSingle();
+    if (perr || !prow) {
+      return res.status(404).json({ ok: false, error: "patient_not_found" });
+    }
+    const pCode = String(prow.clinic_code || "").trim().toUpperCase();
+    const pCid = prow.clinic_id != null ? String(prow.clinic_id).trim() : "";
+    const codeOk = adminCode && pCode && adminCode === pCode;
+    const idOk = adminClinicId && pCid && adminClinicId === pCid;
+    if (!codeOk && !idOk) {
+      return res.status(403).json({ ok: false, error: "forbidden" });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, updated: 0, fileMode: true });
+    }
+
+    const result = await markPatientMessagesReadForAdmin(resolvedPatientId);
+    if (!result.ok && result.error) {
+      const supabasePublic = supabaseErrorPublic(result.error);
+      return res.status(500).json({ ok: false, error: "mark_read_failed", supabase: supabasePublic });
+    }
+    bumpUnreadCountsCache(req.clinicId);
+    return res.json({ ok: true, noop: !!result.noop });
+  } catch (error) {
+    if (error?.name === "JsonWebTokenError" || error?.name === "TokenExpiredError") {
+      return res.status(401).json({ ok: false, error: "invalid_token" });
+    }
+    return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+  }
+}
+
+async function insertClinicMessageViaPatientMessages(patientIdParam, text, msgType) {
+  const resolvedPatientId = await resolveMessagesPatientDbId(patientIdParam);
+  if (!resolvedPatientId) {
+    return {
+      data: null,
+      error: { message: "patient_not_found_for_messages", code: "PGRST116" },
+    };
+  }
+  const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  const baseRow = {
+    patient_id: resolvedPatientId,
+    message_id: messageId,
+    chat_id: String(patientIdParam || "").trim(),
+    text: String(text || "").trim(),
+    type: String(msgType || "text").trim() || "text",
+    attachment: null,
   };
-  const primaryResult = await supabase
+  const fromRoles = ["admin", "clinic", "CLINIC", "clinic_staff"];
+  let lastError = null;
+  for (const from_role of fromRoles) {
+    const { data, error } = await supabase
+      .from("patient_messages")
+      .insert({ ...baseRow, from_role })
+      .select("*")
+      .single();
+    if (!error) return { data: mapPatientMessagesRowToLegacy(data), error: null };
+    lastError = error;
+    const msg = String(error?.message || "").toLowerCase();
+    const code = String(error?.code || "");
+    const enumOrCheck =
+      code === "23514" ||
+      code === "22P02" ||
+      msg.includes("enum") ||
+      msg.includes("check constraint") ||
+      msg.includes("invalid input");
+    if (!enumOrCheck) break;
+  }
+  if (lastError) {
+    console.warn("[MESSAGES] patient_messages clinic insert failed (will try messages table):", lastError.message);
+  }
+  return { data: null, error: lastError || { message: "patient_messages_insert_failed" } };
+}
+
+/** Same storage as admin replies — keeps admin chat GET (patient_messages merge) consistent. */
+async function insertPatientMessageViaPatientMessages(patientIdParam, text, msgType) {
+  const resolvedPatientId = await resolveMessagesPatientDbId(patientIdParam);
+  if (!resolvedPatientId) {
+    return {
+      data: null,
+      error: { message: "patient_not_found_for_messages", code: "PGRST116" },
+    };
+  }
+  const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  const baseRow = {
+    patient_id: resolvedPatientId,
+    message_id: messageId,
+    chat_id: String(patientIdParam || "").trim(),
+    text: String(text || "").trim(),
+    type: String(msgType || "text").trim() || "text",
+    attachment: null,
+  };
+  const fromRoles = ["patient", "PATIENT"];
+  let lastError = null;
+  for (const from_role of fromRoles) {
+    // Prefer row without sender_id: many DBs have no patient_messages.sender_id (PostgREST errors on unknown column).
+    const variants = [
+      { ...baseRow, from_role },
+      { ...baseRow, from_role, sender_id: resolvedPatientId },
+    ];
+    for (let vi = 0; vi < variants.length; vi++) {
+      const row = variants[vi];
+      const { data, error } = await supabase
+        .from("patient_messages")
+        .insert(row)
+        .select("*")
+        .single();
+      if (!error) return { data: mapPatientMessagesRowToLegacy(data), error: null };
+      lastError = error;
+      const msg = String(error?.message || "").toLowerCase();
+      const code = String(error?.code || "");
+      const enumOrCheck =
+        code === "23514" ||
+        code === "22P02" ||
+        msg.includes("enum") ||
+        msg.includes("check constraint") ||
+        msg.includes("invalid input");
+      if (enumOrCheck) continue;
+      const missingCol =
+        code === "PGRST204" ||
+        code === "42703" ||
+        (msg.includes("sender_id") && (msg.includes("schema") || msg.includes("could not find")));
+      if (missingCol && row.sender_id != null && vi + 1 < variants.length) continue;
+      if (code === "23502" && msg.includes("sender_id") && row.sender_id != null && vi + 1 < variants.length) {
+        continue;
+      }
+      break;
+    }
+  }
+  if (lastError) {
+    console.warn("[MESSAGES] patient_messages patient insert failed (will try messages table):", lastError.message);
+  }
+  return { data: null, error: lastError || { message: "patient_messages_insert_failed" } };
+}
+
+async function insertMessageToSupabase({ patientId, sender, message, attachments, type, senderId: senderIdOpt }) {
+  const resolvedPatientId = await resolveMessagesPatientDbId(patientId);
+  if (!resolvedPatientId) {
+    return {
+      data: null,
+      error: {
+        message: "patient_not_found_for_messages",
+        code: "PGRST116",
+        details: "No patients row for this id; cannot insert messages.patient_id",
+      },
+    };
+  }
+
+  const msgText = String(message || "").trim();
+  const fromPatient = String(sender || "").toLowerCase() === "patient";
+  const msgType = deriveMessageType(type, attachments);
+
+  if (fromPatient) {
+    const pmTry = await insertPatientMessageViaPatientMessages(patientId, msgText, msgType);
+    if (!pmTry.error && pmTry.data) {
+      return { data: pmTry.data, error: null };
+    }
+  }
+  const { clinicId: rowClinicId, clinicCode: rowClinicCode } = await resolveClinicContextForPatientRow(
+    resolvedPatientId
+  );
+  let clinicCode =
+    rowClinicCode || (await resolveClinicCodeForPatient(resolvedPatientId)) || null;
+  let clinicId = rowClinicId || null;
+  if (!clinicId && clinicCode) {
+    clinicId = await resolveClinicUuidFromClinicCode(clinicCode);
+  }
+
+  if (!clinicId && !clinicCode) {
+    return {
+      data: null,
+      error: {
+        message: "patient_clinic_unknown_for_messages",
+        code: "23502",
+        details: "Patient has no clinic_id/clinic_code; cannot satisfy messages NOT NULL",
+      },
+    };
+  }
+
+  const clinicFields = {
+    ...(clinicId ? { clinic_id: clinicId } : {}),
+    ...(clinicCode ? { clinic_code: String(clinicCode).trim() } : {}),
+  };
+
+  const createdAtIso = new Date().toISOString();
+
+  const senderTypeLower = fromPatient ? "patient" : "clinic";
+  const senderTypeUpper = fromPatient ? "PATIENT" : "CLINIC";
+  let resolvedSenderId = String(senderIdOpt || "").trim();
+  if (!resolvedSenderId) {
+    resolvedSenderId = fromPatient ? resolvedPatientId : clinicId || resolvedPatientId;
+  }
+  const senderFields = {
+    sender_type: senderTypeLower,
+    sender_role: senderTypeUpper,
+    from_role: senderTypeLower,
+    sender_id: resolvedSenderId,
+  };
+
+  const primaryPayload = {
+    patient_id: resolvedPatientId,
+    ...clinicFields,
+    ...senderFields,
+    sender,
+    message: msgText,
+    ...(attachments != null ? { attachments } : {}),
+  };
+  let primaryResult = await supabase
     .from("messages")
     .insert(primaryPayload)
     .select("*")
@@ -242,27 +661,90 @@ async function insertMessageToSupabase({ patientId, sender, message, attachments
 
   if (!primaryResult?.error) return primaryResult;
 
-  // Fallback for schemas that use text/from_patient/clinic_code instead of sender/message.
-  if (!isMissingColumnError(primaryResult.error)) {
+  const pCode = String(primaryResult.error?.code || "");
+  const retryPrimary =
+    isMissingColumnError(primaryResult.error) || pCode === "23502" || pCode === "23514";
+
+  if (retryPrimary) {
+    const pruned = await insertWithColumnPruning({ ...primaryPayload });
+    if (!pruned?.error) return pruned;
+    const prCode = String(pruned.error?.code || "");
+    const prRetry = isMissingColumnError(pruned.error) || prCode === "23502" || prCode === "23514";
+    if (!prRetry) return pruned;
+  } else {
     return primaryResult;
   }
 
-  const clinicCode = await resolveClinicCodeForPatient(patientId);
-
-  const fallbackPayload = {
-    patient_id: patientId,
-    ...(clinicCode ? { clinic_code: clinicCode } : {}),
+  // Modern-ish: message + optional flags (do not send "text" unless legacy attempt — many Supabase DBs have no text column)
+  const fallbackNoText = {
+    patient_id: resolvedPatientId,
+    ...clinicFields,
+    ...senderFields,
     message_id: rid("msg"),
-    type: deriveMessageType(type, attachments),
-    message: String(message || ""),
-    text: String(message || ""),
-    attachment: attachments ?? null,
-    attachments: attachments ?? null,
-    from_patient: String(sender || "").toLowerCase() === "patient",
-    created_at: now(),
+    type: msgType,
+    message: msgText,
+    from_patient: fromPatient,
+    created_at: createdAtIso,
+    ...(attachments != null ? { attachments } : {}),
   };
+  let fb = await insertWithColumnPruning(fallbackNoText);
+  if (!fb?.error) return fb;
 
-  return insertWithColumnPruning(fallbackPayload);
+  // Minimal: patient_id + clinic + sender_type + message
+  fb = await insertWithColumnPruning({
+    patient_id: resolvedPatientId,
+    ...clinicFields,
+    ...senderFields,
+    message: msgText,
+  });
+  if (!fb?.error) return fb;
+
+  // Some DBs use UPPERCASE enum for sender_type
+  const senderFieldsUpperType = {
+    sender_type: senderTypeUpper,
+    sender_role: senderTypeUpper,
+    from_role: senderTypeUpper,
+  };
+  fb = await insertWithColumnPruning({
+    patient_id: resolvedPatientId,
+    ...clinicFields,
+    ...senderFieldsUpperType,
+    message: msgText,
+  });
+  if (!fb?.error) return fb;
+
+  // Legacy: text + clinic_code; created_at is often TIMESTAMPTZ (use ISO), not BIGINT ms
+  if (clinicCode) {
+    fb = await insertWithColumnPruning({
+      patient_id: resolvedPatientId,
+      ...clinicFields,
+      ...senderFields,
+      message_id: rid("msg"),
+      type: msgType,
+      text: msgText,
+      from_patient: fromPatient,
+      created_at: createdAtIso,
+      ...(attachments != null ? { attachment: attachments } : {}),
+    });
+    if (!fb?.error) return fb;
+    const legMsg = String(fb?.error?.message || "");
+    if (fb?.error && (String(fb.error.code || "") === "22008" || legMsg.includes("out of range"))) {
+      fb = await insertWithColumnPruning({
+        patient_id: resolvedPatientId,
+        ...clinicFields,
+        ...senderFields,
+        message_id: rid("msg"),
+        type: msgType,
+        text: msgText,
+        from_patient: fromPatient,
+        created_at: Date.now(),
+        ...(attachments != null ? { attachment: attachments } : {}),
+      });
+      if (!fb?.error) return fb;
+    }
+  }
+
+  return fb || primaryResult;
 }
 
 // Super Admin ENV variables
@@ -297,6 +779,68 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
+// Invalid JSON body → always JSON (never HTML), so mobile clients don't get JSON.parse errors on "<"
+app.use((err, req, res, next) => {
+  const isBodyParse =
+    err &&
+    (err instanceof SyntaxError ||
+      String(err.type || "") === "entity.parse.failed" ||
+      /JSON|body/i.test(String(err.message || "")));
+  if (isBodyParse && !res.headersSent) {
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_json",
+      message: "Geçersiz istek gövdesi (JSON bekleniyor).",
+    });
+  }
+  next(err);
+});
+app.use((req, res, next) => {
+  if (!PERF_LOGS_ENABLED || !String(req.path || "").startsWith("/api/")) {
+    next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  logPerfLine(`[API CALL] ${req.method} ${req.originalUrl}`);
+
+  res.on("finish", () => {
+    const duration = Date.now() - startedAt;
+    logPerfLine(`[API PERF] ${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+  });
+
+  next();
+});
+
+// Admin chat — mark patient messages read (early in stack; must run before static / any catch-alls)
+app.patch("/api/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+app.post("/api/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+app.put("/api/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+// Alias under /api/admin/… (same handler; avoids rare path conflicts on some deployments)
+app.patch("/api/admin/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+app.post("/api/admin/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+app.put("/api/admin/patient/:patientId/messages/read", requireAdminAuth, handlePatientMessagesReadMark);
+
+app.post("/api/messages/read", requireAdminAuth, (req, res) => {
+  const pid = String(req.body?.patientId || "").trim();
+  if (!pid) return res.status(400).json({ ok: false, error: "patientId_required" });
+  req.params = { ...req.params, patientId: pid };
+  return handlePatientMessagesReadMark(req, res);
+});
+app.patch("/api/messages/read", requireAdminAuth, (req, res) => {
+  const pid = String(req.body?.patientId || "").trim();
+  if (!pid) return res.status(400).json({ ok: false, error: "patientId_required" });
+  req.params = { ...req.params, patientId: pid };
+  return handlePatientMessagesReadMark(req, res);
+});
+app.put("/api/messages/read", requireAdminAuth, (req, res) => {
+  const pid = String(req.body?.patientId || "").trim();
+  if (!pid) return res.status(400).json({ ok: false, error: "patientId_required" });
+  req.params = { ...req.params, patientId: pid };
+  return handlePatientMessagesReadMark(req, res);
+});
+
+app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 // Force file-based storage temporarily until Supabase schema is fixed
 const FORCE_FILE_STORAGE = false;  // Changed to false to use Supabase
@@ -393,7 +937,54 @@ async function calculateClinicOralHealthAverage(clinicId) {
 
 // ================== SUPER ADMIN GUARD ==================
 const publicDir = path.join(__dirname, "public");
+const rootPublicDir = path.join(process.cwd(), "public");
 
+// Canonical admin UI routes (must be before static middleware)
+// /admin.html → always serves cliniflow-admin/public/admin.html (handled below at line ~1688)
+
+app.get("/admin-patients.html", (req, res) => {
+  const patientsPath = path.join(publicDir, "admin-patients.html");
+  if (fs.existsSync(patientsPath)) {
+    return res.sendFile(patientsPath);
+  }
+  return res.status(404).send("admin-patients.html not found in cliniflow-admin/public");
+});
+
+app.get("/admin-patient-detail.html", (req, res) => {
+  const detailPath = path.join(rootPublicDir, "admin-patient-detail.html");
+  if (fs.existsSync(detailPath)) {
+    return res.sendFile(detailPath);
+  }
+  return res.status(404).send("admin-patient-detail.html not found in workspace /public");
+});
+
+app.get("/admin-schedule.html", (req, res) => {
+  const schedulePath = path.join(rootPublicDir, "admin-schedule.html");
+  if (fs.existsSync(schedulePath)) {
+    return res.sendFile(schedulePath);
+  }
+
+  const fallbackPath = path.join(publicDir, "admin-schedule.html");
+  if (fs.existsSync(fallbackPath)) {
+    return res.sendFile(fallbackPath);
+  }
+
+  return res.status(404).send("admin-schedule.html not found");
+});
+
+app.get("/admin-treatment.html", (req, res) => {
+  const treatmentPath = path.join(rootPublicDir, "admin-treatment.html");
+  if (fs.existsSync(treatmentPath)) {
+    return res.sendFile(treatmentPath);
+  }
+
+  const fallbackPath = path.join(publicDir, "admin-treatment.html");
+  if (fs.existsSync(fallbackPath)) {
+    return res.sendFile(fallbackPath);
+  }
+
+  return res.status(404).send("admin-treatment.html not found");
+});
 
 app.use(express.static(publicDir));
 
@@ -413,6 +1004,25 @@ const OTP_FILE = path.join(DATA_DIR, "otps.json"); // OTP storage with hashed co
 const PUSH_SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "pushSubscriptions.json"); // Push notification subscriptions
 const TREATMENT_PRICES_FILE = path.join(DATA_DIR, "treatmentPrices.json"); // Clinic treatment price list
 const PAYMENTS_FILE = path.join(DATA_DIR, "payments.json"); // Patient payment summaries
+const TREATMENT_ITEM_OVERRIDES_DIR = path.join(DATA_DIR, "treatment-item-overrides");
+if (!fs.existsSync(TREATMENT_ITEM_OVERRIDES_DIR)) fs.mkdirSync(TREATMENT_ITEM_OVERRIDES_DIR, { recursive: true });
+
+// Schema-discovery caches – avoids re-running sequential fallback queries on every request
+let _eventsPatientSelectClause = null;   // cached working SELECT clause for patients table
+let _eventsItemsSelectClause   = null;   // cached working SELECT clause for treatment_items
+let _eventsItemsTableName      = null;   // cached working table name (treatment_items vs treatment_plan_items)
+
+/** Short-lived cache for unread-counts (badge polling hits this every ~30s from multiple pages). */
+const UNREAD_COUNTS_TTL_MS = 25000;
+const unreadCountsCache = new Map(); // key: `${clinicId}:${totalOnlyFlag}` → { body, expires }
+function bumpUnreadCountsCache(clinicId) {
+  if (clinicId) {
+    unreadCountsCache.delete(`${clinicId}:1`);
+    unreadCountsCache.delete(`${clinicId}:0`);
+  } else {
+    unreadCountsCache.clear();
+  }
+}
 
 function readJson(file, fallback) {
   try {
@@ -426,6 +1036,67 @@ function writeJson(file, obj) {
   fs.writeFileSync(file, JSON.stringify(obj, null, 2), "utf-8");
 }
 
+function getTreatmentItemOverridePath(itemId) {
+  const safeId = String(itemId || '').trim();
+  if (!safeId) return null;
+  return path.join(TREATMENT_ITEM_OVERRIDES_DIR, `${safeId}.json`);
+}
+
+function readTreatmentItemOverride(itemId) {
+  const filePath = getTreatmentItemOverridePath(itemId);
+  if (!filePath) return null;
+  return readJson(filePath, null);
+}
+
+function saveTreatmentItemOverride(itemId, patch) {
+  const filePath = getTreatmentItemOverridePath(itemId);
+  if (!filePath) return null;
+  const current = readJson(filePath, {});
+  const next = {
+    ...(current || {}),
+    ...(patch || {}),
+    updated_at: new Date().toISOString(),
+  };
+  writeJson(filePath, next);
+  return next;
+}
+
+function applyTreatmentItemOverride(baseRow, overrideRow) {
+  if (!baseRow || !overrideRow || typeof overrideRow !== 'object') return baseRow;
+  const pick = (key) => Object.prototype.hasOwnProperty.call(overrideRow, key);
+  const merged = { ...(baseRow || {}) };
+
+  if (pick('planned_date')) {
+    merged.scheduled_at = overrideRow.planned_date;
+    merged.scheduled_date = overrideRow.planned_date;
+    merged.due_date = overrideRow.planned_date;
+  }
+  if (pick('note')) {
+    merged.note = overrideRow.note;
+    merged.notes = overrideRow.note;
+  }
+  if (pick('chair_no')) {
+    merged.chair_no = overrideRow.chair_no;
+    merged.chair = overrideRow.chair_no;
+  }
+  if (pick('doctor_id')) {
+    merged.doctor_id = overrideRow.doctor_id;
+    merged.created_by_doctor_id = overrideRow.doctor_id;
+  }
+  if (pick('price')) {
+    merged.price = overrideRow.price;
+  }
+  if (pick('title')) {
+    merged.procedure_description = overrideRow.title;
+    merged.procedure_name = overrideRow.title;
+  }
+  if (pick('procedure_code')) {
+    merged.procedure_code = overrideRow.procedure_code;
+  }
+
+  return merged;
+}
+
 // Ensure referrals file exists for persistence
 if (!fs.existsSync(REF_FILE)) {
   fs.mkdirSync(path.dirname(REF_FILE), { recursive: true });
@@ -433,6 +1104,78 @@ if (!fs.existsSync(REF_FILE)) {
 }
 
 const now = () => Date.now();
+const TREATMENTS_CACHE_TTL_MS = 15000;
+let TREATMENTS_CACHE_BUSTER = 0;
+const TREATMENTS_RESPONSE_CACHE = new Map();
+const PLAN_ITEMS_CACHE_TTL_MS = 15000;
+const PLAN_ITEMS_RESPONSE_CACHE = new Map();
+
+function bumpTreatmentsCache() {
+  TREATMENTS_CACHE_BUSTER += 1;
+  if (TREATMENTS_RESPONSE_CACHE.size > 300) {
+    TREATMENTS_RESPONSE_CACHE.clear();
+  }
+  if (PLAN_ITEMS_RESPONSE_CACHE.size > 500) {
+    PLAN_ITEMS_RESPONSE_CACHE.clear();
+  }
+}
+
+/** Drop cached GET /treatments payloads for one patient (all actor/admin variants). */
+function invalidateTreatmentsCacheForPatient(patientId) {
+  const p = String(patientId || "").trim();
+  if (!p) return;
+  const prefix = `${p}|`;
+  for (const key of [...TREATMENTS_RESPONSE_CACHE.keys()]) {
+    if (String(key).startsWith(prefix)) TREATMENTS_RESPONSE_CACHE.delete(key);
+  }
+  bumpTreatmentsCache();
+}
+
+function buildTreatmentsCacheKey({ patientId, planId, isAdmin, clinicId, actorPatientId }) {
+  return [
+    String(patientId || "").trim(),
+    String(planId || "").trim(),
+    isAdmin ? "admin" : "patient",
+    String(clinicId || "").trim(),
+    String(actorPatientId || "").trim(),
+    String(TREATMENTS_CACHE_BUSTER),
+  ].join("|");
+}
+
+function getCachedTreatmentsPayload(cacheKey) {
+  const entry = TREATMENTS_RESPONSE_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if ((Date.now() - Number(entry.createdAt || 0)) > TREATMENTS_CACHE_TTL_MS) {
+    TREATMENTS_RESPONSE_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.payload || null;
+}
+
+function setCachedTreatmentsPayload(cacheKey, payload) {
+  TREATMENTS_RESPONSE_CACHE.set(cacheKey, {
+    createdAt: Date.now(),
+    payload,
+  });
+}
+
+function getCachedPlanItemsPayload(cacheKey) {
+  const entry = PLAN_ITEMS_RESPONSE_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if ((Date.now() - Number(entry.createdAt || 0)) > PLAN_ITEMS_CACHE_TTL_MS) {
+    PLAN_ITEMS_RESPONSE_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.payload || null;
+}
+
+function setCachedPlanItemsPayload(cacheKey, payload) {
+  PLAN_ITEMS_RESPONSE_CACHE.set(cacheKey, {
+    createdAt: Date.now(),
+    payload,
+  });
+}
+
 // 🔥 NATIVE CRYPTO - NO EXTERNAL DEPS
 const rid = (p) => p + "_" + randomUUID();
 const makeToken = () => "t_" + crypto.randomBytes(10).toString("base64url");
@@ -596,7 +1339,13 @@ async function fetchTreatmentPricesMap(clinicId) {
 
   const map = {};
   (data || []).forEach((row) => {
-    const keyRaw = row?.treatment_code || row?.type || row?.name || "";
+    const keyRaw =
+      row?.treatment_code ||
+      row?.treatment_name ||
+      row?.procedure_code ||
+      row?.type ||
+      row?.name ||
+      "";
     const key = String(keyRaw).trim().toUpperCase();
     if (!key) return;
     const isActive = row?.is_active !== undefined ? row.is_active !== false : true;
@@ -607,10 +1356,23 @@ async function fetchTreatmentPricesMap(clinicId) {
         : row?.default_price !== undefined && row?.default_price !== null
           ? Number(row.default_price)
           : null;
-    if (!Number.isFinite(priceVal)) return;
+
+    const durationVal = parseMinuteValue(
+      row?.duration_minutes ?? row?.estimated_duration_minutes ?? row?.duration,
+      0
+    );
+    const breakVal = parseMinuteValue(
+      row?.break_minutes ?? row?.rest_minutes ?? row?.pause_minutes ?? row?.break_duration,
+      0
+    );
+
+    if (!Number.isFinite(priceVal) && durationVal <= 0 && breakVal <= 0) return;
+
     map[key] = {
-      price: priceVal,
+      ...(Number.isFinite(priceVal) ? { price: priceVal } : {}),
       currency: row?.currency || "EUR",
+      duration_minutes: durationVal,
+      break_minutes: breakVal,
     };
   });
   return map;
@@ -619,15 +1381,59 @@ async function fetchTreatmentPricesMap(clinicId) {
 function applyEventPrices(events, priceMap) {
   const list = Array.isArray(events) ? events : [];
   if (!priceMap || Object.keys(priceMap).length === 0) return list;
+  const priceKeys = Object.keys(priceMap);
+  const hasUsefulTiming = (entry) => {
+    if (!entry) return false;
+    return parseMinuteValue(entry?.duration_minutes, 0) > 0 || parseMinuteValue(entry?.break_minutes, 0) > 0;
+  };
+  const hasUsefulData = (entry) => hasUsefulTiming(entry) || Number.isFinite(Number(entry?.price));
+
+  const findMatchByKey = (candidateKey) => {
+    if (!candidateKey) return null;
+    const exact = priceMap[candidateKey] || null;
+    if (exact && hasUsefulData(exact)) return exact;
+
+    const prefixedUseful = priceKeys
+      .filter((key) => key === candidateKey || key.startsWith(`${candidateKey}_`))
+      .map((key) => priceMap[key])
+      .find((entry) => hasUsefulTiming(entry));
+    if (prefixedUseful) return prefixedUseful;
+
+    if (exact) return exact;
+    const prefixed = priceKeys.find((key) => key === candidateKey || key.startsWith(`${candidateKey}_`));
+    return prefixed ? priceMap[prefixed] : null;
+  };
+
   return list.map((event) => {
-    if (event?.price != null) return event;
-    const key = String(event?.type || "").trim().toUpperCase();
-    const match = priceMap[key];
+    const keys = [
+      event?.type,
+      event?.eventType,
+      event?.treatment,
+      event?.procedure,
+      event?.procedureCode,
+      event?.procedure_code,
+      event?.procedureName,
+      event?.procedure_name,
+    ]
+      .map((value) => String(value || "").trim().toUpperCase())
+      .filter(Boolean);
+
+    let match = null;
+    for (const key of keys) {
+      const found = findMatchByKey(key);
+      if (found) {
+        match = found;
+        break;
+      }
+    }
+
     if (!match) return event;
     return {
       ...event,
-      price: match.price,
-      currency: match.currency,
+      ...(event?.price == null && Number.isFinite(match.price) ? { price: match.price } : {}),
+      ...(event?.currency == null && match.currency ? { currency: match.currency } : {}),
+      duration_minutes: parseMinuteValue(event?.duration_minutes ?? match.duration_minutes, 0),
+      break_minutes: parseMinuteValue(event?.break_minutes ?? match.break_minutes, 0),
     };
   });
 }
@@ -649,6 +1455,20 @@ function normalizePhone(phone) {
   }
   
   return cleaned;
+}
+
+/** PostgREST `.or(...)` string: match patients.phone stored as 10-digit, 0-prefixed, or 90-prefixed. */
+function buildPhoneMatchOrFilter(phoneNorm) {
+  if (!phoneNorm) return "";
+  const d = String(phoneNorm).replace(/\D/g, "");
+  const variants = new Set([d, phoneNorm].filter(Boolean));
+  if (d.length === 10) {
+    variants.add("0" + d);
+    variants.add("90" + d);
+  }
+  return [...variants]
+    .map((v) => `phone.eq.${v}`)
+    .join(",");
 }
 
 const chatUpload = multer({
@@ -842,74 +1662,26 @@ async function getOTPsForEmail(email) {
   // Try Supabase first if available
   if (isSupabaseEnabled()) {
     try {
-      // Direct Supabase query instead of missing function
-
       const { data, error } = await supabase
         .from('otps')
         .select('*')
         .eq('email', emailKey)
         .order('created_at', { ascending: false })
         .limit(1);
-      
-
-
-      if (data && data.length > 0) {
-
-
-      }
-      
       if (error) {
-
-        throw error;
-      }
-      
-      if (data && data.length > 0) {
-
-        return data[0];  // Return first element, not the array
+        console.error('[OTP] Supabase query failed:', error);
+      } else if (data && data.length > 0) {
+        return data;
       }
     } catch (error) {
-
-      // Fall back to file-based
+      console.error('[OTP] Supabase getOTPsForEmail failed:', error);
     }
   }
-  
-  // FILE-BASED FALLBACK
+
   const otps = readJson(OTP_FILE, {});
-  return otps[emailKey] || null;
-}
-
-/**
- * Save OTP for an email (Supabase or File-based)
- */
-async function saveOTP(email, otpCode, attempts = 0) {
-  const emailKey = email.toLowerCase().trim();
-  const hashedOTP = await hashOTP(otpCode);
-  const expiresAt = now() + OTP_EXPIRY_MS;
-  
-  // Try Supabase first if available
-  if (isSupabaseEnabled()) {
-    try {
-      const result = await createOTP(emailKey, hashedOTP, new Date(expiresAt), attempts);
-
-      return result;
-    } catch (error) {
-
-      // Fall back to file-based
-    }
-  }
-  
-  // FILE-BASED FALLBACK
-  const otps = readJson(OTP_FILE, {});
-  otps[emailKey] = {
-    hashedOTP,
-    created_at: new Date().toISOString(),
-    expires_at: new Date(expiresAt).toISOString(),
-    attempts,
-    verified: false
-  };
-  writeJson(OTP_FILE, otps);
-
-  return true;
+  const otp = otps[emailKey];
+  if (!otp) return [];
+  return [otp];
 }
 
 /**
@@ -1292,6 +2064,11 @@ app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
+// Diagnostic entrypoint check - verifies this file is the running entry
+app.get('/api/_entry-check', (req, res) => {
+  res.json({ entry: 'index.cjs', status: 'ok' });
+});
+
 // Detailed health (optional - for debugging)
 app.get("/health/detail", (req, res) => {
   res.json({ 
@@ -1621,10 +2398,21 @@ app.get("/super-admin.html", (req, res) => {
 
 // ================== REGISTER ==================
 app.post("/api/register", async (req, res) => {
-  const { name = "", phone = "", email = "", referralCode = "", clinicCode = "", language = "" } = req.body || {};
-  
+  const body = req.body || {};
+  const {
+    name = "",
+    patientName: bodyPatientName = "",
+    fullName = "",
+    phone = "",
+    email = "",
+    clinicCode = "",
+    language = "",
+  } = body;
+  const referralCode = String(body.referralCode || body.inviterReferralCode || "").trim();
+  const displayName = String(bodyPatientName || fullName || name || "").trim();
+
   console.log(`[REGISTER] Request received:`, { 
-    name: name ? "***" : "", 
+    name: displayName ? "***" : "", 
     phone: phone ? "***" : "", 
     email: email ? "***" : "",
     clinicCode: clinicCode || "(empty)",
@@ -1793,7 +2581,10 @@ app.post("/api/register", async (req, res) => {
     const payload = {
       patient_id: patientId, // legacy app id (p_xxx)
       email: emailNormalized,
-      name: String(name || ""),
+      name: displayName,
+      full_name: displayName,
+      first_name: "",
+      last_name: "",
       clinic_id: supabaseClinicId,
       status: "PENDING",
       language: patientLanguage,
@@ -1876,7 +2667,7 @@ app.post("/api/register", async (req, res) => {
   const existingFile = patients[patientId] || null;
   patients[patientId] = {
     patientId,
-    name: String(name || ""),
+    name: displayName,
     ...(phoneNormalized ? { phone: phoneNormalized } : {}),
     email: emailNormalized,
     language: patientLanguage,
@@ -1892,7 +2683,7 @@ app.post("/api/register", async (req, res) => {
   const row = {
     requestId,
     patientId,
-    name: String(name || ""),
+    name: displayName,
     phone: phoneNormalized, // Use normalized phone
     email: emailNormalized,
     status: "PENDING",
@@ -2060,8 +2851,10 @@ app.post("/api/register", async (req, res) => {
                 inviter_discount_percent: null,
                 invited_discount_percent: null,
                 discount_percent: null,
+                inviter_patient_name: inviter?.name || null,
+                invited_patient_name: displayName || null,
               };
-              created = await createReferralInDB(referralData);
+              created = await createReferralInDBFlexible(referralData);
               break;
             } catch (e) {
               lastCreateErr = e;
@@ -2126,7 +2919,7 @@ app.post("/api/register", async (req, res) => {
             inviterPatientId,
             inviterPatientName,
             invitedPatientId: patientId,
-            invitedPatientName: String(name || ""),
+            invitedPatientName: displayName,
             status: "PENDING",
             createdAt: now(),
             inviterDiscountPercent: null,
@@ -2223,11 +3016,24 @@ app.post("/api/register", async (req, res) => {
 // Removed duplicate endpoint - using the one at line 509
 
 // ================== PATIENT REGISTER (alias) ==================
-app.post("/api/patient/register", async (req, res) => {
-  const { name = "", phone = "", email = "", referralCode = "", clinicCode = "", language = "" } = req.body || {};
-  
+// Same as /api/register/patient — some clients use the swapped path
+app.post(["/api/patient/register", "/api/register/patient"], async (req, res) => {
+  const body = req.body || {};
+  const {
+    name = "",
+    patientName: bodyPatientName = "",
+    fullName = "",
+    phone = "",
+    email = "",
+    clinicCode = "",
+    language = "",
+  } = body;
+  const referralCode = String(body.referralCode || body.inviterReferralCode || "").trim();
+  /** Full display name: mobile often sends patientName; keep single field in DB (name/full_name), leave first/last empty */
+  const displayName = String(bodyPatientName || fullName || name || "").trim();
+
   console.log(`[REGISTER /api/patient/register] Request received:`, { 
-    name: name ? "***" : "", 
+    name: displayName ? "***" : "", 
     phone: phone ? "***" : "", 
     email: email ? "***" : "",
     clinicCode: clinicCode || "(empty)",
@@ -2400,7 +3206,10 @@ app.post("/api/patient/register", async (req, res) => {
     const payload = {
       patient_id: patientId, // legacy app id (p_xxx)
       email: emailNormalized,
-      name: String(name || ""),
+      name: displayName,
+      full_name: displayName,
+      first_name: "",
+      last_name: "",
       clinic_id: supabaseClinicId,
       status: "PENDING",
       language: patientLanguage,
@@ -2483,7 +3292,7 @@ app.post("/api/patient/register", async (req, res) => {
   const existingFile = patients[patientId] || null;
   patients[patientId] = {
     patientId,
-    name: String(name || ""),
+    name: displayName,
     ...(phoneNormalized ? { phone: phoneNormalized } : {}),
     email: emailNormalized,
     language: patientLanguage,
@@ -2504,7 +3313,7 @@ app.post("/api/patient/register", async (req, res) => {
   const row = {
     requestId,
     patientId,
-    name: String(name || ""),
+    name: displayName,
     phone: phoneNormalized, // Use normalized phone
     email: emailNormalized,
     status: "PENDING",
@@ -2661,8 +3470,10 @@ app.post("/api/patient/register", async (req, res) => {
                 inviter_discount_percent: null,
                 invited_discount_percent: null,
                 discount_percent: null,
+                inviter_patient_name: inviter?.name || null,
+                invited_patient_name: displayName || null,
               };
-              created = await createReferralInDB(referralData);
+              created = await createReferralInDBFlexible(referralData);
               break;
             } catch (e) {
               lastCreateErr = e;
@@ -2716,7 +3527,7 @@ app.post("/api/patient/register", async (req, res) => {
             inviterPatientId,
             inviterPatientName,
             invitedPatientId: patientId,
-            invitedPatientName: String(name || ""),
+            invitedPatientName: displayName,
             status: "PENDING",
             createdAt: now(),
             inviterDiscountPercent: null,
@@ -2968,18 +3779,17 @@ async function resolvePatientForOtp({ email, phone }) {
 
   if (isSupabaseEnabled()) {
     try {
-      // 🔥 FIX: Check both patients table and doctor applications
+      // Use .limit(1) instead of .single() to avoid PGRST116 failures when
+      // multiple clinics share the same email (or duplicate rows exist).
       if (emailNormalized) {
-        // First check patients table
-        const { data: row, error: pErr } = await supabase
+        const { data: rows, error: pErr } = await supabase
           .from("patients")
           .select(selectColumns)
           .eq("email", emailNormalized)
-          .single();
-        if (!pErr && row) {
-          foundPatient = row;
-
-        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          .limit(1);
+        if (!pErr && rows && rows.length > 0) {
+          foundPatient = rows[0];
+        } else if (pErr) {
           console.error("[OTP] Supabase patient lookup (email) failed:", {
             message: pErr.message,
             code: pErr.code,
@@ -2989,16 +3799,14 @@ async function resolvePatientForOtp({ email, phone }) {
       }
 
       if (!foundPatient && phoneNormalized) {
-        // First check patients table
-        const { data: row, error: pErr } = await supabase
+        const { data: rows, error: pErr } = await supabase
           .from("patients")
           .select(selectColumns)
           .eq("phone", phoneNormalized)
-          .single();
-        if (!pErr && row) {
-          foundPatient = row;
-
-        } else if (pErr && String(pErr.code || "") !== "PGRST116") {
+          .limit(1);
+        if (!pErr && rows && rows.length > 0) {
+          foundPatient = rows[0];
+        } else if (pErr) {
           console.error("[OTP] Supabase patient lookup (phone) failed:", {
             message: pErr.message,
             code: pErr.code,
@@ -3007,7 +3815,7 @@ async function resolvePatientForOtp({ email, phone }) {
         }
       }
     } catch (e) {
-
+      console.error("[OTP] resolvePatientForOtp unexpected error:", e?.message || e);
     }
   }
 
@@ -3032,7 +3840,12 @@ async function resolvePatientForOtp({ email, phone }) {
   }
 
   if (foundPatient) {
-    foundPatientId = foundPatientId || foundPatient.patient_id || foundPatient.id;
+    // Önce Supabase UUID (id) — API / token ile uyum; yoksa legacy patient_id / patientId (p_…)
+    foundPatientId =
+      foundPatientId ||
+      foundPatient.id ||
+      foundPatient.patient_id ||
+      foundPatient.patientId;
     foundPhone = foundPatient.phone || foundPhone;
     foundLanguage = normalizePatientLanguage(foundPatient.language);
     resolvedEmail = String(foundPatient.email || resolvedEmail || "").trim().toLowerCase();
@@ -3591,6 +4404,202 @@ app.post("/api/doctor/verify-otp", async (req, res) => {
   }
 });
 
+// POST /api/doctor/login
+// Frontend login endpoint for doctors (email + clinic code) - for Expo app
+app.post("/api/doctor/login", async (req, res) => {
+  try {
+    const { email, clinicCode } = req.body || {};
+
+    // Validate inputs
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required", message: "Email is required" });
+    }
+
+    if (!clinicCode || !String(clinicCode).trim()) {
+      return res.status(400).json({ ok: false, error: "clinic_code_required", message: "Clinic code is required" });
+    }
+
+    const emailNormalized = String(email).trim().toLowerCase();
+    const code = String(clinicCode).trim().toUpperCase();
+
+    console.log("[DOCTOR LOGIN] Request:", { email: emailNormalized, clinicCode: code });
+
+    // Lookup doctor by email in doctors table
+    let foundDoctor = null;
+    let supabaseClinicId = null;
+    let singleEmailFallbackUsed = false;
+
+    if (isSupabaseEnabled()) {
+      try {
+        const normalizeClinicCode = (value) => String(value || "").trim().toUpperCase();
+
+        const doctorSelectCandidates = [
+          "id, doctor_id, email, phone, name, full_name, first_name, last_name, clinic_id, clinic_code, status",
+          "id, doctor_id, email, phone, name, full_name, clinic_id, clinic_code, status",
+          "id, doctor_id, email, phone, name, clinic_id, clinic_code, status",
+          "id, doctor_id, email, clinic_id, clinic_code, status",
+        ];
+
+        const runDoctorLookup = async (filterKind, filterValue, limitValue = 50) => {
+          let lastError = null;
+          for (const selectClause of doctorSelectCandidates) {
+            let query = supabase
+              .from("doctors")
+              .select(selectClause)
+              .limit(limitValue);
+
+            if (filterKind === "email") {
+              query = query.ilike("email", filterValue);
+            } else {
+              query = query.ilike("clinic_code", filterValue);
+            }
+
+            const result = await query;
+            if (!result.error) {
+              return { data: Array.isArray(result.data) ? result.data : [], error: null };
+            }
+
+            lastError = result.error;
+            const code = String(result.error?.code || "");
+            if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+              break;
+            }
+          }
+
+          return { data: [], error: lastError };
+        };
+
+        const broadLookup = await runDoctorLookup("email", emailNormalized, 50);
+
+        if (broadLookup.error) {
+          console.error("[DOCTOR LOGIN] Doctor lookup failed:", {
+            message: broadLookup.error.message,
+            code: broadLookup.error.code,
+          });
+        } else {
+          const rows = Array.isArray(broadLookup.data) ? broadLookup.data : [];
+          const clinicMatched = rows.filter((row) => normalizeClinicCode(row?.clinic_code) === code);
+
+          if (clinicMatched.length === 1) {
+            foundDoctor = clinicMatched[0];
+            supabaseClinicId = clinicMatched[0]?.clinic_id || null;
+          } else if (clinicMatched.length > 1) {
+            const approved = clinicMatched.find((row) => {
+              const status = String(row?.status || "").trim().toUpperCase();
+              return status === "APPROVED" || status === "ACTIVE";
+            });
+            foundDoctor = approved || clinicMatched[0];
+            supabaseClinicId = foundDoctor?.clinic_id || null;
+          } else if (rows.length === 1) {
+            foundDoctor = rows[0];
+            supabaseClinicId = rows[0]?.clinic_id || null;
+            singleEmailFallbackUsed = true;
+            console.warn("[DOCTOR LOGIN] Using single-email fallback (clinic_code mismatch or empty)", {
+              email: emailNormalized,
+              providedClinicCode: code,
+              storedClinicCode: normalizeClinicCode(rows[0]?.clinic_code),
+            });
+          }
+
+          if (foundDoctor) {
+            console.log("[DOCTOR LOGIN] Found doctor in Supabase:", {
+              id: foundDoctor.id,
+              email: foundDoctor.email,
+              name: foundDoctor.name || foundDoctor.full_name || null,
+              clinic_code: foundDoctor.clinic_code,
+            });
+          } else {
+            const clinicLookup = await runDoctorLookup("clinic", code, 20);
+
+            if (!clinicLookup.error) {
+              const clinicRows = Array.isArray(clinicLookup.data) ? clinicLookup.data : [];
+              const activeRows = clinicRows.filter((row) => {
+                const status = String(row?.status || "").trim().toUpperCase();
+                return status === "APPROVED" || status === "ACTIVE" || status === "PENDING";
+              });
+
+              if (activeRows.length === 1) {
+                foundDoctor = activeRows[0];
+                supabaseClinicId = activeRows[0]?.clinic_id || null;
+                singleEmailFallbackUsed = true;
+                console.warn("[DOCTOR LOGIN] Using clinic-scoped fallback (single active doctor in clinic)", {
+                  email: emailNormalized,
+                  clinicCode: code,
+                  resolvedDoctorId: foundDoctor?.doctor_id || foundDoctor?.id,
+                  resolvedDoctorEmail: foundDoctor?.email || null,
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[DOCTOR LOGIN] Supabase error:", err.message);
+      }
+    }
+
+    if (!foundDoctor) {
+      console.log("[DOCTOR LOGIN] Doctor not found:", { email: emailNormalized });
+      return res.status(404).json({ ok: false, error: "doctor_not_found", message: "Doctor not found with this email" });
+    }
+
+    // Verify clinic code matches
+    const doctorClinicCode = String(foundDoctor.clinic_code || "").toUpperCase();
+    if (!singleEmailFallbackUsed && doctorClinicCode && doctorClinicCode !== code) {
+      console.log("[DOCTOR LOGIN] Clinic code mismatch:", { provided: code, stored: doctorClinicCode });
+      return res.status(403).json({ ok: false, error: "invalid_clinic_code", message: "Clinic code does not match" });
+    }
+
+    const effectiveClinicCode = doctorClinicCode || code;
+
+    // Generate JWT token
+    const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
+    const token = jwt.sign(
+      {
+        doctorId: foundDoctor.doctor_id || foundDoctor.id,
+        email: emailNormalized,
+        clinicId: supabaseClinicId || foundDoctor.clinic_id,
+        clinicCode: effectiveClinicCode,
+        role: "DOCTOR",
+        type: "doctor"
+      },
+      JWT_SECRET,
+      { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+    );
+
+    console.log("[DOCTOR LOGIN] ✅ Login successful:", { 
+      doctorId: foundDoctor.doctor_id || foundDoctor.id,
+      email: emailNormalized,
+      name: foundDoctor.name || foundDoctor.full_name || `${foundDoctor.first_name || ""} ${foundDoctor.last_name || ""}`.trim() || null
+    });
+
+    const doctorName =
+      String(foundDoctor.name || "").trim() ||
+      String(foundDoctor.full_name || "").trim() ||
+      String(`${foundDoctor.first_name || ""} ${foundDoctor.last_name || ""}`).trim() ||
+      null;
+
+    // Return doctor info with token - format matches what frontend expects
+    res.json({
+      ok: true,
+      token,
+      doctor: {
+        id: foundDoctor.doctor_id || foundDoctor.id,
+        email: emailNormalized,
+        name: doctorName,
+        clinicId: supabaseClinicId || foundDoctor.clinic_id,
+        clinicCode: effectiveClinicCode,
+        role: "DOCTOR",
+        type: "doctor",
+        status: foundDoctor.status || "ACTIVE"
+      },
+      expiresIn: TOKEN_EXPIRY_DAYS * 24 * 60 * 60
+    });
+  } catch (error) {
+    console.error("[DOCTOR LOGIN] Error:", error.message);
+    res.status(500).json({ ok: false, error: "internal_error", message: error.message });
+  }
+});
+
 // POST /api/register/doctor
 // Real doctor registration endpoint - INSERTS INTO DOCTORS TABLE
 app.post("/api/register/doctor", async (req, res) => {
@@ -3908,10 +4917,14 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
     
     // OTP is valid - get patient data
     const foundPatient = resolved.patient;
-    const foundPatientId = resolved.patientId;
+    const resolvedPid = resolved.patientId;
     const foundLanguage = resolved.language;
+    const canonicalPatientId =
+      (foundPatient &&
+        (foundPatient.id || foundPatient.patient_id || foundPatient.patientId)) ||
+      resolvedPid;
     
-    if (!foundPatientId) {
+    if (!canonicalPatientId) {
       return res.status(404).json({
         ok: false,
         error: "patient_not_found",
@@ -3923,14 +4936,16 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
     markOTPVerified(emailNormalized);
 
     const foundPhone = String(foundPatient?.phone || "").trim();
+    const patientStatus = String(foundPatient?.status || "PENDING").toUpperCase();
     
     // 🔥 CLEAN SEPARATION: Generate PATIENT JWT token with REQUIRED payload
     const tokenExpiry = Math.floor(Date.now() / 1000) + (TOKEN_EXPIRY_DAYS * 24 * 60 * 60);
     const token = jwt.sign(
       { 
         type: "patient", // 🔥 REQUIRED: type is PRIMARY routing key
-        patientId: foundPatientId, // 🔥 REQUIRED: patientId
+        patientId: canonicalPatientId, // UUID veya legacy p_…
         role: "PATIENT", // 🔥 REQUIRED: role
+        status: patientStatus,
         email: emailNormalized || "",
         language: foundLanguage,
         ...(foundPhone ? { phone: foundPhone } : {}),
@@ -3943,7 +4958,7 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
     const tokens = readJson(TOK_FILE, {});
     tokens[token] = {
       type: "patient",
-      patientId: foundPatientId,
+      patientId: canonicalPatientId,
       role: "PATIENT",
       createdAt: now(),
       email: emailNormalized || "",
@@ -3958,9 +4973,9 @@ app.post("/auth/verify-otp-patient", async (req, res) => {
       ok: true,
       type: "patient", // 🔥 REQUIRED: type for frontend routing
       token,
-      patientId: foundPatientId,
+      patientId: canonicalPatientId,
       role: "PATIENT",
-      status: foundPatient.status || "APPROVED",
+      status: patientStatus,
       name: foundPatient.name || "",
       ...(foundPhone ? { phone: foundPhone } : {}),
       email: emailNormalized || "",
@@ -4288,18 +5303,25 @@ app.post("/api/admin/verify-otp", async (req, res) => {
   }
 });
 
-// POST /auth/verify-otp
+// POST /auth/verify-otp | /api/auth/verify-otp
 // UNIFIED OTP ENDPOINT - Single server, type-based separation
-app.post("/auth/verify-otp", async (req, res) => {
+app.post(["/auth/verify-otp", "/api/auth/verify-otp"], async (req, res) => {
   try {
-    const { otp, email, phone, role, sessionId } = req.body || {};
+    const { otp, email, phone, sessionId } = req.body || {};
+    let role = req.body?.role;
+    if (!role && req.body?.type != null) {
+      const t = String(req.body.type).toLowerCase();
+      if (t === "patient") role = "PATIENT";
+      else if (t === "doctor") role = "DOCTOR";
+      else if (t === "admin") role = "ADMIN";
+    }
 
     // 🔥 CRITICAL: Role is REQUIRED for routing
     if (!role || (role !== "DOCTOR" && role !== "PATIENT")) {
       return res.status(400).json({ 
         ok: false, 
         error: "role_required", 
-        message: "Role parameter is required (DOCTOR or PATIENT)." 
+        message: "Role parameter is required (DOCTOR or PATIENT), or send type: patient|doctor." 
       });
     }
 
@@ -4338,8 +5360,9 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
 
       // Get OTP data for this email
-      const otpData = await getOTPsForEmail(resolvedEmail);
-      if (!otpData) {
+      const otpDevBypass = isOtpDevBypassEnabled();
+      const otpData = normalizeOtpRowFromStore(await getOTPsForEmail(resolvedEmail));
+      if (!otpData && !otpDevBypass) {
         return res.status(404).json({ 
           ok: false, 
           error: "otp_not_found", 
@@ -4347,41 +5370,43 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
       
-      // OTP validation checks (expired, attempts, etc.)
-      if (otpData.verified) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_already_used", 
-          message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
-      if (expiresAt < now()) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_expired", 
-          message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_max_attempts", 
-          message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      // Verify OTP
-      const isValid = await verifyOTP(String(otpCode).trim(), otpData.otp_hash);
-      if (!isValid) {
-        incrementOTPAttempt(emailNormalized);
-        return res.status(401).json({ 
-          ok: false, 
-          error: "invalid_otp", 
-          message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
-        });
+      if (!otpDevBypass) {
+        if (otpData.verified) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_already_used", 
+            message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
+        if (expiresAt < now()) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_expired", 
+            message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_max_attempts", 
+            message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        const isValid = await verifyOTP(String(otpCode).trim(), otpData.otp_hash || otpData.hashedOTP);
+        if (!isValid) {
+          incrementOTPAttempt(emailNormalized);
+          return res.status(401).json({ 
+            ok: false, 
+            error: "invalid_otp", 
+            message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+          });
+        }
+      } else {
+        console.warn("[OTP] DEV BYPASS: doctor /auth/verify-otp — OTP not enforced (non-production, set OTP_DEV_BYPASS=0 to disable)");
       }
       
       // Get doctor data
@@ -4440,8 +5465,9 @@ app.post("/auth/verify-otp", async (req, res) => {
       }
 
       // Get OTP data for this email
-      const otpData = await getOTPsForEmail(resolvedEmail);
-      if (!otpData) {
+      const otpDevBypass = isOtpDevBypassEnabled();
+      const otpData = normalizeOtpRowFromStore(await getOTPsForEmail(resolvedEmail));
+      if (!otpData && !otpDevBypass) {
         return res.status(404).json({ 
           ok: false, 
           error: "otp_not_found", 
@@ -4449,52 +5475,58 @@ app.post("/auth/verify-otp", async (req, res) => {
         });
       }
       
-      // OTP validation checks (same as doctor)
-      if (otpData.verified) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_already_used", 
-          message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
-      if (expiresAt < now()) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_expired", 
-          message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
-        return res.status(400).json({ 
-          ok: false, 
-          error: "otp_max_attempts", 
-          message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
-        });
-      }
-      
-      // Verify OTP
-      const isValid = await verifyOTP(String(otpCode).trim(), otpData.otp_hash);
-      if (!isValid) {
-        incrementOTPAttempt(emailNormalized);
-        return res.status(401).json({ 
-          ok: false, 
-          error: "invalid_otp", 
-          message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
-        });
+      if (!otpDevBypass) {
+        if (otpData.verified) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_already_used", 
+            message: "Bu OTP zaten kullanılmış. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        const expiresAt = otpData.expires_at || otpData.created_at || (now() + OTP_EXPIRY_MS);
+        if (expiresAt < now()) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_expired", 
+            message: "OTP süresi dolmuş. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        if (otpData.attempts >= OTP_MAX_ATTEMPTS) {
+          return res.status(400).json({ 
+            ok: false, 
+            error: "otp_max_attempts", 
+            message: "Maksimum doğrulama denemesi aşıldı. Lütfen yeni bir OTP isteyin." 
+          });
+        }
+        
+        const isValid = await verifyOTP(String(otpCode).trim(), otpData.otp_hash || otpData.hashedOTP);
+        if (!isValid) {
+          incrementOTPAttempt(emailNormalized);
+          return res.status(401).json({ 
+            ok: false, 
+            error: "invalid_otp", 
+            message: "Geçersiz OTP kodu. Lütfen tekrar deneyin." 
+          });
+        }
+      } else {
+        console.warn("[OTP] DEV BYPASS: patient /auth/verify-otp — OTP not enforced (non-production, set OTP_DEV_BYPASS=0 to disable)");
       }
       
       // Get patient data
       console.log("[PATIENT VERIFY] Resolved object:", resolved);
       const foundPatient = resolved.patient;
-      const foundPatientId = resolved.patientId;
+      const resolvedPid = resolved.patientId;
+      const canonicalPatientId =
+        (foundPatient &&
+          (foundPatient.id || foundPatient.patient_id || foundPatient.patientId)) ||
+        resolvedPid;
       
       console.log("[PATIENT VERIFY] foundPatient:", foundPatient);
-      console.log("[PATIENT VERIFY] foundPatientId:", foundPatientId);
+      console.log("[PATIENT VERIFY] canonicalPatientId:", canonicalPatientId);
       
-      if (!foundPatientId) {
+      if (!canonicalPatientId) {
         return res.status(404).json({
           ok: false,
           error: "patient_not_found",
@@ -4505,12 +5537,15 @@ app.post("/auth/verify-otp", async (req, res) => {
       // Mark OTP as verified
       markOTPVerified(emailNormalized);
 
-      // 🔥 PATIENT TOKEN RESPONSE
+      const patientStatus = String(foundPatient?.status || "PENDING").toUpperCase();
+
+      // 🔥 PATIENT TOKEN RESPONSE (onaysız PENDING ile de giriş — klinik onayı ayrı ekranda)
       const token = jwt.sign(
         { 
           type: "patient",
-          patientId: foundPatientId,
+          patientId: canonicalPatientId,
           role: "PATIENT",
+          status: patientStatus,
           email: emailNormalized || "",
         },
         JWT_SECRET,
@@ -4521,9 +5556,11 @@ app.post("/auth/verify-otp", async (req, res) => {
       
       return res.json({
         ok: true,
+        type: "patient",
         token,
         role: "PATIENT",
-        patientId: foundPatientId,
+        patientId: canonicalPatientId,
+        status: patientStatus,
         name: foundPatient.name || "",
         email: emailNormalized || "",
       });
@@ -4537,75 +5574,185 @@ app.post("/auth/verify-otp", async (req, res) => {
 
 // ================== PATIENT LOGIN ==================
 // POST /api/patient/login
-// Patient login with phone or patientId, returns token
-app.post("/api/patient/login", (req, res) => {
+// Patient login with phone + clinicCode, returns JWT token
+// Checks Supabase first (production), falls back to local JSON (dev)
+app.post("/api/patient/login", async (req, res) => {
   try {
-    const { phone, patientId } = req.body || {};
-    
+    const { phone, patientId, clinicCode } = req.body || {};
+
     if (!phone && !patientId) {
       return res.status(400).json({ ok: false, error: "phone_or_patientId_required" });
     }
-    
+
+    // Normalize phone: strip +90/90 country code and leading 0 so it matches DB format
+    const phoneNorm = phone ? normalizePhone(String(phone).trim()) : null;
+    const clinicCodeNorm = clinicCode ? String(clinicCode).trim().toUpperCase() : null;
+
+    // ── Supabase path ──────────────────────────────────────────────────────────
+    if (isSupabaseEnabled()) {
+      let patientRow = null;
+
+      // If clinicCode supplied, resolve clinic_id first for a scoped query
+      let clinicIdFilter = null;
+      let clinicRow = null;
+      if (clinicCodeNorm) {
+        const { data: c } = await supabase
+          .from('clinics')
+          .select('id, clinic_code, name, plan, settings')
+          .eq('clinic_code', clinicCodeNorm)
+          .maybeSingle();
+        if (c) {
+          clinicIdFilter = c.id;
+          clinicRow = c;
+        }
+      }
+
+      const PATIENT_SELECT = 'id, patient_id, name, phone, email, status, clinic_id, clinic_code, referral_code, language';
+      const phoneOrFilter = phoneNorm ? buildPhoneMatchOrFilter(phoneNorm) : "";
+
+      // Search by phone: match common DB formats; prefer clinic_id, then patients.clinic_code, then unambiguous row
+      if (phoneNorm && phoneOrFilter) {
+        const tryPhone = async (extra) => {
+          let q = supabase.from("patients").select(PATIENT_SELECT).or(phoneOrFilter);
+          if (extra.clinic_id) q = q.eq("clinic_id", extra.clinic_id);
+          if (extra.clinic_code) q = q.eq("clinic_code", extra.clinic_code);
+          const { data } = await q.limit(1);
+          return data?.[0] || null;
+        };
+        if (clinicIdFilter) patientRow = await tryPhone({ clinic_id: clinicIdFilter });
+        if (!patientRow && clinicCodeNorm) patientRow = await tryPhone({ clinic_code: clinicCodeNorm });
+        if (!patientRow) {
+          const { data: multi } = await supabase
+            .from("patients")
+            .select(PATIENT_SELECT)
+            .or(phoneOrFilter)
+            .limit(8);
+          const arr = multi || [];
+          if (arr.length === 1) patientRow = arr[0];
+          else if (arr.length > 1 && clinicCodeNorm) {
+            const up = String(clinicCodeNorm).toUpperCase();
+            patientRow = arr.find((p) => String(p.clinic_code || "").toUpperCase() === up) || null;
+            if (!patientRow) {
+              console.warn("[PATIENT LOGIN] multiple rows for phone; none matched clinic_code:", clinicCodeNorm);
+            }
+          } else if (arr.length > 1) {
+            console.warn("[PATIENT LOGIN] multiple patients share this phone; pass clinicCode to disambiguate");
+          }
+        }
+      }
+
+      // Search by patientId if still not found
+      if (!patientRow && patientId) {
+        const UUID_RE_L = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isUuidL = UUID_RE_L.test(String(patientId));
+        let q2 = supabase.from('patients').select(PATIENT_SELECT);
+        if (isUuidL) q2 = q2.eq('id', patientId);
+        else q2 = q2.eq('patient_id', patientId);
+        if (clinicIdFilter) q2 = q2.eq('clinic_id', clinicIdFilter);
+        const { data: rows2 } = await q2.limit(1);
+        if (rows2 && rows2[0]) patientRow = rows2[0];
+      }
+
+      if (!patientRow) {
+        console.log('[PATIENT LOGIN] not found in Supabase, phone:', phoneNorm, 'clinicCode:', clinicCodeNorm);
+        return res.status(404).json({ ok: false, error: 'patient_not_found' });
+      }
+
+      // Load clinic row if not already loaded
+      if (!clinicRow && patientRow.clinic_id) {
+        const { data: c2 } = await supabase
+          .from('clinics')
+          .select('id, clinic_code, name, plan, settings')
+          .eq('id', patientRow.clinic_id)
+          .maybeSingle();
+        if (c2) clinicRow = c2;
+      }
+
+      // Always use UUID as patientId — TEXT patient_id is only a display label
+      const foundPatientId = patientRow.id;
+      const foundLanguage = patientRow.language || 'tr';
+      const foundName = patientRow.name || '';
+      console.log('[PATIENT LOGIN] uuid:', foundPatientId, '| name:', foundName, '| phone:', patientRow.phone);
+
+      const token = jwt.sign(
+        {
+          type: 'patient',
+          patientId: foundPatientId,
+          role: 'PATIENT',
+          phone: patientRow.phone || '',
+          language: foundLanguage,
+        },
+        JWT_SECRET,
+        { expiresIn: `${TOKEN_EXPIRY_DAYS}d` }
+      );
+
+      // Also persist in legacy TOK_FILE so other middleware can find it
+      const tokens = readJson(TOK_FILE, {});
+      tokens[token] = { type: 'patient', patientId: foundPatientId, role: 'PATIENT', createdAt: now(), phone: patientRow.phone || '', language: foundLanguage };
+      writeJson(TOK_FILE, tokens);
+
+      return res.json({
+        ok: true,
+        type: 'patient',
+        token,
+        id: patientRow.id,
+        patientId: foundPatientId,
+        role: 'PATIENT',
+        status: patientRow.status || 'APPROVED',
+        name: foundName,
+        phone: patientRow.phone || '',
+        email: patientRow.email || '',
+        language: foundLanguage,
+        clinicId: patientRow.clinic_id || (clinicRow && clinicRow.id) || null,
+        clinicCode: patientRow.clinic_code || (clinicRow && clinicRow.clinic_code) || clinicCodeNorm || null,
+        referralCode: patientRow.referral_code || null,
+      });
+    }
+
+    // ── Legacy file-based fallback (dev only) ──────────────────────────────────
     const patients = readJson(PAT_FILE, {});
-    const tokens = readJson(TOK_FILE, {});
-    
-    // Find patient by phone or patientId
+    const tokensFile = readJson(TOK_FILE, {});
     let foundPatient = null;
     let foundPatientId = null;
-    
+
     if (patientId) {
       foundPatient = patients[patientId];
-      if (foundPatient) {
-        foundPatientId = patientId;
-      }
+      if (foundPatient) foundPatientId = patientId;
     }
-    
-    if (!foundPatient && phone) {
-      // Search by phone
+    if (!foundPatient && phoneNorm) {
       for (const pid in patients) {
-        if (patients[pid].phone === String(phone).trim()) {
+        if (patients[pid].phone === phoneNorm) {
           foundPatient = patients[pid];
           foundPatientId = pid;
           break;
         }
       }
     }
-    
     if (!foundPatient) {
-      return res.status(404).json({ ok: false, error: "patient_not_found" });
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
     }
-    
-    // Find existing token for this patient
+
     let existingToken = null;
-    for (const token in tokens) {
-      if (tokens[token]?.patientId === foundPatientId) {
-        existingToken = token;
-        break;
-      }
+    for (const tok in tokensFile) {
+      if (tokensFile[tok]?.patientId === foundPatientId) { existingToken = tok; break; }
     }
-    
-    // If no token exists, create a new one
     if (!existingToken) {
       existingToken = makeToken();
-      tokens[existingToken] = {
-        patientId: foundPatientId,
-        role: foundPatient.status || "PENDING",
-        createdAt: now()
-      };
-      writeJson(TOK_FILE, tokens);
+      tokensFile[existingToken] = { patientId: foundPatientId, role: foundPatient.status || 'PENDING', createdAt: now() };
+      writeJson(TOK_FILE, tokensFile);
     }
-    
-    res.json({
+
+    return res.json({
       ok: true,
       token: existingToken,
       patientId: foundPatientId,
-      status: foundPatient.status || "PENDING",
-      name: foundPatient.name || "",
-      phone: foundPatient.phone || "",
+      status: foundPatient.status || 'PENDING',
+      name: foundPatient.name || '',
+      phone: foundPatient.phone || '',
     });
   } catch (error) {
-
-    res.status(500).json({ ok: false, error: error?.message || "internal_error" });
+    console.error('[PATIENT LOGIN] error:', error.message);
+    res.status(500).json({ ok: false, error: error?.message || 'internal_error' });
   }
 });
 
@@ -4614,20 +5761,29 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
   try {
     // Supabase is the single source of truth in production
     if (isSupabaseEnabled()) {
-      const { data: p, error: pErr } = await supabase
-        .from("patients")
-        .select("id,patient_id,name,phone,email,status,clinic_id,created_at,updated_at")
-        .eq("patient_id", req.patientId)
-        .single();
+      const mePatientId = req.patientId;
+      const UUID_RE_ME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isUuidMe = UUID_RE_ME.test(mePatientId);
+      const ME_SELECT = "id,patient_id,name,phone,email,status,clinic_id,created_at,updated_at";
 
-      if (pErr) {
-        console.error("[ME] Supabase patient fetch failed", {
-          message: pErr.message,
-          code: pErr.code,
-          details: pErr.details,
-        });
-        return res.status(500).json({ ok: false, error: "patient_fetch_failed" });
+      let p = null;
+      // Try UUID lookup first if token holds a UUID
+      if (isUuidMe) {
+        const r1 = await supabase.from("patients").select(ME_SELECT).eq("id", mePatientId).maybeSingle();
+        if (!r1.error && r1.data) p = r1.data;
       }
+      // Fallback: TEXT patient_id lookup
+      if (!p) {
+        const r2 = await supabase.from("patients").select(ME_SELECT).eq("patient_id", mePatientId).maybeSingle();
+        if (!r2.error && r2.data) p = r2.data;
+      }
+
+      if (!p) {
+        console.error("[ME] patient not found for patientId:", mePatientId);
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+
+      const pErr = null;
 
       let clinicCode = "";
       let clinicPlan = "FREE";
@@ -4676,6 +5832,7 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
       }
 
       const finalStatus = p?.status || "PENDING";
+      const meName = p?.name || '';
       const referralLevels =
         clinicData?.settings?.referralLevels ||
         {
@@ -4688,7 +5845,7 @@ app.get("/api/patient/me", requireToken, async (req, res) => {
         patientId: req.patientId,
         role: finalStatus,
         status: finalStatus,
-        name: p?.name || "",
+        name: meName,
         phone: p?.phone || "",
         email: p?.email || "",
         clinicCode,
@@ -4996,36 +6153,163 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
   }
 });
 
+/* ================= ADMIN DOCTOR APPROVAL ================= */
+app.post("/api/admin/approve-doctor", requireAdminAuth, async (req, res) => {
+  try {
+    console.log("[APPROVE DOCTOR] Request received");
+    
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId required" });
+    }
+
+    console.log("[APPROVE DOCTOR] Approving doctor:", doctorId);
+
+    const { data, error } = await supabase
+      .from("doctors")
+      .update({ status: "APPROVED", updated_at: new Date().toISOString() })
+      .eq("id", doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[APPROVE DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log("[APPROVE DOCTOR] Doctor approved successfully:", data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error("[APPROVE DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/admin/reject-doctor", requireAdminAuth, async (req, res) => {
+  try {
+    console.log("[REJECT DOCTOR] Request received");
+    
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      return res.status(400).json({ ok: false, error: "doctorId required" });
+    }
+
+    console.log("[REJECT DOCTOR] Rejecting doctor:", doctorId);
+
+    const { data, error } = await supabase
+      .from("doctors")
+      .update({ status: "REJECTED", updated_at: new Date().toISOString() })
+      .eq("id", doctorId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[REJECT DOCTOR] Error:", error);
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+
+    console.log("[REJECT DOCTOR] Doctor rejected successfully:", data);
+    res.json({ ok: true, doctor: data });
+  } catch (error) {
+    console.error("[REJECT DOCTOR] Error:", error);
+    res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // GET /api/admin/doctors - List doctors for admin
 app.get("/api/admin/doctors", requireAdminAuth, async (req, res) => {
   try {
     const clinicId = req.clinicId;
+    const clinicCodeUpper = String(req.clinicCode || "").trim().toUpperCase();
 
     if (!clinicId) {
       return res.status(400).json({ ok: false, error: "clinic_missing" });
     }
 
-    const { data, error } = await supabase
-      .from("doctors")
-      .select("id, full_name, phone, email, status, created_at")
-      .eq("clinic_id", clinicId)
-      .order("created_at", { ascending: false });
+    const selectCandidates = [
+      "id, doctor_id, full_name, name, phone, email, status, created_at, clinic_id, clinic_code",
+      "id, doctor_id, full_name, name, phone, email, status, created_at",
+      "id, doctor_id, full_name, phone, email, status, created_at",
+      "id, full_name, name, phone, email, status, created_at",
+      "id, full_name, phone, email, status, created_at",
+    ];
 
-    if (error) {
-      console.error("[ADMIN DOCTORS] Error:", error);
-      return res.status(500).json({ ok: false, error: "fetch_failed", details: error.message });
+    let data = [];
+    let lastError = null;
+    let queryWorked = false;
+
+    for (const selectClause of selectCandidates) {
+      const result = await supabase
+        .from("doctors")
+        .select(selectClause)
+        .eq("clinic_id", clinicId)
+        .order("created_at", { ascending: false });
+
+      if (!result.error) {
+        const byId = Array.isArray(result.data) ? result.data : [];
+        const seen = new Set(byId.map((d) => String(d?.id || "").trim()).filter(Boolean));
+        let merged = [...byId];
+        // Bazı doktorlarda yalnızca clinic_code dolu; clinic_id eşleşmezse listede yoktu → hasta ataması "görünmüyor"
+        if (clinicCodeUpper) {
+          const r2 = await supabase
+            .from("doctors")
+            .select(selectClause)
+            .eq("clinic_code", clinicCodeUpper)
+            .order("created_at", { ascending: false });
+          if (!r2.error && Array.isArray(r2.data)) {
+            for (const row of r2.data) {
+              const rid = String(row?.id || "").trim();
+              if (rid && !seen.has(rid)) {
+                merged.push(row);
+                seen.add(rid);
+              }
+            }
+          }
+        }
+        merged.sort((a, b) => {
+          const ta = new Date(a?.created_at || 0).getTime();
+          const tb = new Date(b?.created_at || 0).getTime();
+          return tb - ta;
+        });
+        data = merged;
+        queryWorked = true;
+        break;
+      }
+
+      lastError = result.error;
+      const code = String(result.error?.code || "");
+      if (!["42703", "PGRST204", "PGRST205"].includes(code)) {
+        break;
+      }
     }
 
-    const normalized = (data || []).map(d => ({
-      id: d.id,
-      name: d.full_name,
-      phone: d.phone,
-      email: d.email,
-      status: d.status,
-      createdAt: d.created_at
-    }));
+    if (!queryWorked) {
+      console.error("[ADMIN DOCTORS] Error:", lastError);
+      return res.status(500).json({ ok: false, error: "fetch_failed", details: lastError?.message || null });
+    }
 
-    res.json({ ok: true, items: normalized });
+    const normalized = (data || []).map((d) => {
+      const shortId = d.doctor_id ? String(d.doctor_id).trim() : "";
+      const display =
+        String(d.full_name || d.name || "").trim() ||
+        String(d.email || "").trim() ||
+        (shortId ? `Dr. ${shortId}` : "") ||
+        "Doctor";
+      return {
+        id: d.id,
+        doctor_id: d.doctor_id || d.id || null,
+        name: display,
+        phone: d.phone,
+        email: d.email,
+        status: d.status,
+        createdAt: d.created_at,
+      };
+    });
+
+    // `doctors` + `data` — admin HTML pages expect these; `items` kept for older clients
+    res.json({ ok: true, doctors: normalized, data: normalized, items: normalized });
 
   } catch (err) {
     console.error("[ADMIN DOCTORS] Exception:", err);
@@ -5053,7 +6337,7 @@ app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => 
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
     }
 
-    // Fetch patient with nested treatment groups and doctors using UUID id
+    // Fetch patient using UUID id
     const { data: patient, error } = await supabase
       .from("patients")
       .select(`
@@ -5061,25 +6345,11 @@ app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => 
         name,
         email,
         phone,
+        clinic_code,
+        assigned_doctor_id,
         created_at,
         updated_at,
-        status,
-        treatment_groups (
-          id,
-          group_name,
-          description,
-          status,
-          created_at,
-          treatment_group_doctors (
-            doctor_id,
-            is_primary,
-            doctors (
-              id,
-              name,
-              email
-            )
-          )
-        )
+        status
       `)
       .eq("id", patientId)
       .eq("clinic_id", req.clinicId)
@@ -5090,13 +6360,689 @@ app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => 
       return res.status(404).json({ ok: false, error: "patient_not_found" });
     }
 
-    res.json({ 
-      ok: true, 
-      patient: patient
+    let visits = [];
+    let diagnoses = [];
+    let treatments = [];
+
+    const visitsResult = await supabase
+      .from("visits")
+      .select("id, clinic_id, patient_id, visit_date, notes, created_at, updated_at")
+      .eq("clinic_id", req.clinicId)
+      .eq("patient_id", patientId)
+      .order("visit_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (visitsResult.error) {
+      if (visitsResult.error.code !== "42P01") {
+        console.error("[ADMIN PATIENT DETAIL] Visits fetch error:", visitsResult.error);
+      }
+    } else {
+      visits = Array.isArray(visitsResult.data) ? visitsResult.data : [];
+    }
+
+    const diagnosesResult = await supabase
+      .from("visit_diagnoses")
+      .select("id, clinic_id, patient_id, visit_id, icd10_code, icd10_description, created_at")
+      .eq("clinic_id", req.clinicId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (diagnosesResult.error) {
+      if (diagnosesResult.error.code !== "42P01") {
+        console.error("[ADMIN PATIENT DETAIL] Diagnoses fetch error:", diagnosesResult.error);
+      }
+    } else {
+      diagnoses = Array.isArray(diagnosesResult.data) ? diagnosesResult.data : [];
+    }
+
+    const treatmentsResult = await supabase
+      .from("treatments")
+      .select("id, clinic_id, patient_id, visit_id, tooth_number, procedure_code, procedure_name, notes, status, created_at")
+      .eq("clinic_id", req.clinicId)
+      .eq("patient_id", patientId)
+      .order("created_at", { ascending: false });
+
+    if (treatmentsResult.error) {
+      if (treatmentsResult.error.code !== "42P01") {
+        console.error("[ADMIN PATIENT DETAIL] Treatments fetch error:", treatmentsResult.error);
+      }
+    } else {
+      treatments = Array.isArray(treatmentsResult.data) ? treatmentsResult.data : [];
+    }
+
+    const legacyVisits = [];
+    const legacyDiagnoses = [];
+    const legacyTreatments = [];
+
+    try {
+      const { data: treatmentRow, error: treatmentRowError } = await fetchPatientTreatmentsRowSupabase(patientId, req.clinicId);
+      if (!treatmentRowError && isPlainObject(treatmentRow?.treatments)) {
+        const legacyPayload = treatmentRow.treatments;
+        const legacyTeeth = Array.isArray(legacyPayload.teeth) ? legacyPayload.teeth : [];
+
+        if (legacyTeeth.length > 0) {
+          const legacyVisitId = `legacy-${patientId}`;
+          const sourceDate = legacyPayload.lastUpdatedAt || legacyPayload.updatedAt || patient.updated_at || patient.created_at || new Date().toISOString();
+          const normalizedDate = typeof sourceDate === "number" ? new Date(sourceDate).toISOString() : String(sourceDate);
+
+          legacyVisits.push({
+            id: legacyVisitId,
+            clinic_id: req.clinicId,
+            patient_id: patientId,
+            visit_date: normalizedDate,
+            notes: "Doktor geçmiş kayıtları",
+            created_at: normalizedDate,
+            updated_at: normalizedDate,
+            source: "legacy_treatments_json",
+          });
+
+          let diagnosisCounter = 0;
+          let treatmentCounter = 0;
+          const diagnosisUniq = new Set();
+
+          for (const tooth of legacyTeeth) {
+            const toothNumber = String(tooth?.toothId || tooth?.tooth_number || tooth?.number || "").trim() || null;
+
+            const toothDiagnoses = Array.isArray(tooth?.diagnosis) ? tooth.diagnosis : [];
+            for (const diag of toothDiagnoses) {
+              const code = String(diag?.code || diag?.icd10_code || "").trim();
+              const desc = String(diag?.description || diag?.icd10_description || "").trim();
+              if (!code && !desc) continue;
+              const uniqKey = `${code}__${desc}`;
+              if (diagnosisUniq.has(uniqKey)) continue;
+              diagnosisUniq.add(uniqKey);
+              diagnosisCounter += 1;
+              legacyDiagnoses.push({
+                id: `${legacyVisitId}-diag-${diagnosisCounter}`,
+                clinic_id: req.clinicId,
+                patient_id: patientId,
+                visit_id: legacyVisitId,
+                icd10_code: code || null,
+                icd10_description: desc || null,
+                created_at: normalizedDate,
+              });
+            }
+
+            const toothProcedures = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+            for (const proc of toothProcedures) {
+              treatmentCounter += 1;
+              const procCreated = proc?.createdAt
+                ? (typeof proc.createdAt === "number" ? new Date(proc.createdAt).toISOString() : String(proc.createdAt))
+                : normalizedDate;
+              const procCode = String(proc?.procedure_code || proc?.type || "").trim() || null;
+              const procName = String(proc?.procedure_name || proc?.label || proc?.title || proc?.type || "Procedure").trim();
+              legacyTreatments.push({
+                id: String(proc?.procedureId || proc?.id || `${legacyVisitId}-tx-${treatmentCounter}`),
+                clinic_id: req.clinicId,
+                patient_id: patientId,
+                visit_id: legacyVisitId,
+                tooth_number: toothNumber,
+                procedure_code: procCode,
+                procedure_name: procName,
+                notes: proc?.notes ? String(proc.notes) : null,
+                status: proc?.status ? String(proc.status) : "PLANNED",
+                created_at: procCreated,
+              });
+            }
+          }
+        }
+      } else if (treatmentRowError && String(treatmentRowError.code || "") !== "PGRST116") {
+        console.error("[ADMIN PATIENT DETAIL] Legacy treatments fetch error:", treatmentRowError);
+      }
+
+      const { data: treatmentV1Row, error: treatmentV1Error } = await fetchPatientTreatmentRowSupabase(patientId, req.clinicId);
+      if (!treatmentV1Error && isPlainObject(treatmentV1Row?.treatment)) {
+        const v1TeethMap = isPlainObject(treatmentV1Row.treatment.teeth) ? treatmentV1Row.treatment.teeth : {};
+        const v1ToothEntries = Object.entries(v1TeethMap);
+
+        if (v1ToothEntries.length > 0) {
+          const legacyVisitIdV1 = `legacy-v1-${patientId}`;
+          const sourceDateV1 = treatmentV1Row.treatment.lastUpdatedAt || patient.updated_at || patient.created_at || new Date().toISOString();
+          const normalizedDateV1 = typeof sourceDateV1 === "number" ? new Date(sourceDateV1).toISOString() : String(sourceDateV1);
+
+          if (!legacyVisits.find((v) => String(v.id) === legacyVisitIdV1)) {
+            legacyVisits.push({
+              id: legacyVisitIdV1,
+              clinic_id: req.clinicId,
+              patient_id: patientId,
+              visit_date: normalizedDateV1,
+              notes: "Doktor geçmiş kayıtları (treatment v1)",
+              created_at: normalizedDateV1,
+              updated_at: normalizedDateV1,
+              source: "legacy_treatment_v1",
+            });
+          }
+
+          let v1DiagnosisCounter = 0;
+          let v1TreatmentCounter = 0;
+          const v1DiagnosisUniq = new Set();
+
+          for (const [toothIdRaw, proceduresList] of v1ToothEntries) {
+            const toothNumber = String(toothIdRaw || "").trim() || null;
+            const proceduresArray = Array.isArray(proceduresList) ? proceduresList : [];
+
+            for (const proc of proceduresArray) {
+              v1TreatmentCounter += 1;
+              const procDate = proc?.date || normalizedDateV1;
+              legacyTreatments.push({
+                id: String(proc?.id || `${legacyVisitIdV1}-tx-${v1TreatmentCounter}`),
+                clinic_id: req.clinicId,
+                patient_id: patientId,
+                visit_id: legacyVisitIdV1,
+                tooth_number: toothNumber,
+                procedure_code: String(proc?.procedure || proc?.procedure_code || "").trim() || null,
+                procedure_name: String(proc?.procedure || proc?.procedure_name || "Procedure").trim(),
+                notes: proc?.clinicNote ? String(proc.clinicNote) : (proc?.note ? String(proc.note) : null),
+                status: proc?.status ? String(proc.status).toUpperCase() : "PLANNED",
+                created_at: procDate,
+              });
+
+              const diagList = [
+                ...(Array.isArray(proc?.diagnosis) ? proc.diagnosis : []),
+                ...(Array.isArray(proc?.diagnoses) ? proc.diagnoses : []),
+              ];
+
+              for (const diag of diagList) {
+                const code = String(diag?.code || diag?.icd10_code || "").trim();
+                const desc = String(diag?.description || diag?.icd10_description || "").trim();
+                if (!code && !desc) continue;
+                const uniqKey = `${code}__${desc}`;
+                if (v1DiagnosisUniq.has(uniqKey)) continue;
+                v1DiagnosisUniq.add(uniqKey);
+                v1DiagnosisCounter += 1;
+                legacyDiagnoses.push({
+                  id: `${legacyVisitIdV1}-diag-${v1DiagnosisCounter}`,
+                  clinic_id: req.clinicId,
+                  patient_id: patientId,
+                  visit_id: legacyVisitIdV1,
+                  icd10_code: code || null,
+                  icd10_description: desc || null,
+                  created_at: procDate,
+                });
+              }
+            }
+          }
+        }
+      } else if (treatmentV1Error && String(treatmentV1Error.code || "") !== "PGRST116") {
+        console.error("[ADMIN PATIENT DETAIL] Legacy treatment(v1) fetch error:", treatmentV1Error);
+      }
+    } catch (legacyError) {
+      console.error("[ADMIN PATIENT DETAIL] Legacy extraction error:", legacyError);
+    }
+
+    const allDiagnoses = [...diagnoses, ...legacyDiagnoses];
+    const allTreatments = [...treatments, ...legacyTreatments];
+    const allVisits = [...visits, ...legacyVisits];
+
+    const icdCodeList = [...new Set(allDiagnoses.map((item) => item.icd10_code).filter(Boolean))];
+    const icdCodeMap = new Map();
+
+    if (icdCodeList.length > 0) {
+      const icdResult = await supabase
+        .from("icd10_codes")
+        .select("code, title_tr, title_en, title_ru, title_ka, description_tr, description_en, description_ru, description_ka")
+        .in("code", icdCodeList);
+
+      if (icdResult.error) {
+        if (icdResult.error.code !== "42P01") {
+          console.error("[ADMIN PATIENT DETAIL] ICD codes fetch error:", icdResult.error);
+        }
+      } else {
+        (icdResult.data || []).forEach((row) => {
+          icdCodeMap.set(row.code, row);
+        });
+      }
+    }
+
+    const diagnosesWithIcd = allDiagnoses.map((diagnosis) => ({
+      ...diagnosis,
+      icdCode: diagnosis.icd10_code ? (icdCodeMap.get(diagnosis.icd10_code) || null) : null,
+    }));
+
+    const visitBoard = allVisits.map((visit) => ({
+      ...visit,
+      diagnoses: diagnosesWithIcd.filter((item) => item.visit_id === visit.id),
+      treatments: allTreatments.filter((item) => item.visit_id === visit.id),
+    })).sort((a, b) => {
+      const aDate = new Date(a.visit_date || a.created_at || 0).getTime();
+      const bDate = new Date(b.visit_date || b.created_at || 0).getTime();
+      return bDate - aDate;
+    });
+
+    res.json({
+      ok: true,
+      patient: {
+        ...patient,
+        visits: visitBoard,
+      },
+      visits: visitBoard,
     });
   } catch (error) {
     console.error("[ADMIN PATIENT DETAIL] Error:", error);
     res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// GET /api/admin/patients/:patientId/full-record — aggregated treatments + diagnoses for tooth chart
+app.get("/api/admin/patients/:patientId/full-record", requireAdminAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patientId_required" });
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+
+    // Pull from patients.treatments JSONB (primary source)
+    const { data: patRow } = await supabase
+      .from("patients")
+      .select("id, name, treatments, treatment")
+      .or(`id.eq.${patientId},patient_id.eq.${patientId}`)
+      .maybeSingle();
+
+    const treatments = [];
+    const diagnoses = [];
+
+    // ── Parse modern JSONB treatments.teeth ─────────────────────────────────
+    const teethArr = Array.isArray(patRow?.treatments?.teeth) ? patRow.treatments.teeth : [];
+    const diagnosisDedupe = new Set();
+    const addDiagnosis = (d) => {
+      const tn = String(d.tooth_number ?? d.toothNumber ?? "").trim();
+      const code = String(d.icd10_code ?? d.code ?? "").trim();
+      const key = `${tn}__${code}`;
+      if (!tn) return;
+      if (diagnosisDedupe.has(key)) return;
+      diagnosisDedupe.add(key);
+      diagnoses.push(d);
+    };
+
+    teethArr.forEach(tooth => {
+      const tn = String(tooth?.toothId || tooth?.tooth_id || "").trim();
+      if (!tn) return;
+      (Array.isArray(tooth.procedures) ? tooth.procedures : []).forEach(p => {
+        treatments.push({
+          id: p.procedureId || p.id || `${tn}-proc`,
+          tooth_number: tn,
+          procedure_name: p.type || "PROCEDURE",
+          type: p.type || "PROCEDURE",
+          status: p.status || "PLANNED",
+          created_at: p.createdAt || p.scheduledAt || null,
+        });
+      });
+      const toothDiags = [
+        ...(Array.isArray(tooth.diagnosis) ? tooth.diagnosis : []),
+        ...(Array.isArray(tooth.diagnoses) ? tooth.diagnoses : []),
+      ];
+      toothDiags.forEach(d => {
+        addDiagnosis({
+          id: `diag-${tn}-${d.code || d.icd10_code || Math.random()}`,
+          tooth_number: tn,
+          icd10_code: d.code || d.icd10_code || null,
+          icd10_description: d.description || d.icd10_description || null,
+        });
+      });
+    });
+
+    // ── encounter_treatments → admin/tedavi ekranı: JSON gecikse bile DB doğrusu ─
+    try {
+      const internalPatientId = String(patRow?.id || "").trim() || patientId;
+      const encPidCandidates = await encounterPatientIdMatchSet(internalPatientId, patientId);
+      const pidIn = encPidCandidates.length ? encPidCandidates : [internalPatientId];
+      const { data: encListEt, error: encListEtErr } = await supabase
+        .from("patient_encounters")
+        .select("id")
+        .in("patient_id", pidIn);
+      if (!encListEtErr && Array.isArray(encListEt) && encListEt.length > 0) {
+        const encIdsEt = encListEt.map((e) => e.id).filter(Boolean);
+        const { data: encTreatRows, error: etErr } = await supabase
+          .from("encounter_treatments")
+          .select(
+            "id, encounter_id, tooth_number, procedure_type, status, scheduled_at, created_at, chair, assigned_doctor_id"
+          )
+          .in("encounter_id", encIdsEt)
+          .order("created_at", { ascending: false });
+        if (!etErr && Array.isArray(encTreatRows) && encTreatRows.length > 0) {
+          const byLinkId = new Map(
+            encTreatRows.map((r) => [`encounter-treatment-${r.id}`, r])
+          );
+          for (let i = 0; i < treatments.length; i++) {
+            const t = treatments[i];
+            const lid = String(t?.id || "").trim();
+            const row = byLinkId.get(lid);
+            if (!row) continue;
+            treatments[i] = {
+              ...t,
+              tooth_number: String(row.tooth_number ?? t.tooth_number),
+              procedure_name: row.procedure_type || t.procedure_name,
+              type: row.procedure_type || t.type,
+              status: mapEncounterTreatmentStatusToPatientJsonStatus(row.status),
+              created_at: row.created_at || t.created_at,
+              source: "encounter_treatments",
+            };
+          }
+          const existingIds = new Set(treatments.map((x) => String(x?.id || "").trim()));
+          for (const row of encTreatRows) {
+            const linkId = `encounter-treatment-${row.id}`;
+            if (existingIds.has(linkId)) continue;
+            existingIds.add(linkId);
+            treatments.push({
+              id: linkId,
+              tooth_number: String(row.tooth_number),
+              procedure_name: row.procedure_type,
+              type: row.procedure_type,
+              status: mapEncounterTreatmentStatusToPatientJsonStatus(row.status),
+              created_at: row.created_at,
+              source: "encounter_treatments",
+            });
+          }
+        }
+      }
+    } catch (etMergeErr) {
+      console.warn("[FULL-RECORD] encounter_treatments merge:", etMergeErr?.message || etMergeErr);
+    }
+
+    // ── Doktor uygulaması: encounter_diagnoses (patient_encounters üzerinden) ─
+    try {
+      const internalPatientId = String(patRow?.id || "").trim() || patientId;
+      const encPidCandidates = await encounterPatientIdMatchSet(internalPatientId, patientId);
+      const pidIn = encPidCandidates.length ? encPidCandidates : [internalPatientId];
+      const { data: encList, error: encListErr } = await supabase
+        .from("patient_encounters")
+        .select("id")
+        .in("patient_id", pidIn);
+      if (!encListErr && Array.isArray(encList) && encList.length > 0) {
+        const encIds = encList.map((e) => e.id).filter(Boolean);
+        const { data: encDiags, error: edErr } = await supabase
+          .from("encounter_diagnoses")
+          .select("id, encounter_id, tooth_number, icd10_code, icd10_description, notes, created_at")
+          .in("encounter_id", encIds)
+          .order("created_at", { ascending: false });
+        if (!edErr && Array.isArray(encDiags)) {
+          for (const row of encDiags) {
+            const tn = row.tooth_number != null && String(row.tooth_number).trim() !== ""
+              ? String(row.tooth_number).trim()
+              : "";
+            if (!tn) continue;
+            addDiagnosis({
+              id: String(row.id),
+              tooth_number: tn,
+              icd10_code: row.icd10_code || null,
+              icd10_description: row.icd10_description || row.notes || null,
+              created_at: row.created_at,
+              encounter_id: row.encounter_id,
+              source: "encounter_diagnoses",
+            });
+          }
+        }
+      }
+    } catch (encDiagErr) {
+      console.warn("[FULL-RECORD] encounter_diagnoses merge:", encDiagErr?.message || encDiagErr);
+    }
+
+    // ── visit_diagnoses (birleştir; yalnızca boşken değil) ────────────────────
+    try {
+      const visitPidKeys = [...new Set([patientId, String(patRow?.id || "").trim()].filter(Boolean))];
+      const { data: diagRows } = await supabase
+        .from("visit_diagnoses")
+        .select("id, patient_id, tooth_number, icd10_code, icd10_description, created_at")
+        .in("patient_id", visitPidKeys)
+        .order("created_at", { ascending: false });
+      (diagRows || []).forEach((d) => {
+        addDiagnosis({
+          id: String(d.id),
+          tooth_number: d.tooth_number != null ? String(d.tooth_number).trim() : "",
+          icd10_code: d.icd10_code || null,
+          icd10_description: d.icd10_description || null,
+          created_at: d.created_at,
+          source: "visit_diagnoses",
+        });
+      });
+    } catch (vdErr) {
+      console.warn("[FULL-RECORD] visit_diagnoses:", vdErr?.message || vdErr);
+    }
+
+    return res.json({ ok: true, data: { treatments, diagnoses } });
+  } catch (e) {
+    console.error("[FULL-RECORD] error:", e.message);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get('/api/admin/patients/:patientId/treatment-plans', requireAdminAuth, async (req, res) => {
+  try {
+    const rawPatientId = String(req.params.patientId || '').trim();
+    if (!rawPatientId) {
+      return res.status(400).json({ ok: false, error: 'patient_id_required' });
+    }
+
+    const clinicId = String(req.clinicId || '').trim();
+    if (!clinicId) {
+      return res.status(403).json({ ok: false, error: 'clinic_not_authenticated' });
+    }
+
+    const patientSelects = [
+      'id, patient_id, clinic_id, clinic_code, full_name, name, created_at',
+      'id, patient_id, clinic_id, full_name, name, created_at',
+      'id, patient_id, clinic_id, created_at',
+      'id, patient_id, created_at',
+    ];
+
+    const findPatientBy = async (fieldName) => {
+      for (const selectClause of patientSelects) {
+        const result = await supabase
+          .from('patients')
+          .select(selectClause)
+          .eq(fieldName, rawPatientId)
+          .eq('clinic_id', clinicId)
+          .maybeSingle();
+
+        if (!result.error) {
+          return result.data || null;
+        }
+
+        const code = String(result.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205', '22P02'].includes(code)) {
+          break;
+        }
+      }
+      return null;
+    };
+
+    const patient = (await findPatientBy('id')) || (await findPatientBy('patient_id'));
+    if (!patient) {
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
+    }
+
+    const patientIds = [...new Set([
+      String(patient?.id || '').trim(),
+      String(patient?.patient_id || '').trim(),
+      rawPatientId,
+    ].filter(Boolean))];
+
+    const encounterSelects = [
+      'id, patient_id, clinic_id, created_at',
+      'id, patient_id, clinic_id',
+      'id, patient_id',
+      'id',
+    ];
+
+    let encounters = [];
+    for (const selectClause of encounterSelects) {
+      const withClinic = await supabase
+        .from('patient_encounters')
+        .select(selectClause)
+        .in('patient_id', patientIds)
+        .eq('clinic_id', clinicId)
+        .order('created_at', { ascending: false });
+
+      if (!withClinic.error) {
+        encounters = Array.isArray(withClinic.data) ? withClinic.data : [];
+        if (encounters.length > 0) break;
+
+        const withoutClinic = await supabase
+          .from('patient_encounters')
+          .select(selectClause)
+          .in('patient_id', patientIds)
+          .order('created_at', { ascending: false });
+
+        if (!withoutClinic.error) {
+          encounters = Array.isArray(withoutClinic.data) ? withoutClinic.data : [];
+          break;
+        }
+
+        const fallbackCode = String(withoutClinic.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(fallbackCode)) {
+          break;
+        }
+      }
+
+      const code = String(withClinic.error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+        break;
+      }
+    }
+
+    const encounterIds = [...new Set(encounters.map((enc) => String(enc?.id || '').trim()).filter(Boolean))];
+    const planSelects = [
+      'id, encounter_id, patient_id, status, created_at, submitted_at, completed_at, created_by_doctor_id, assigned_doctor_id',
+      'id, encounter_id, patient_id, status, created_at, created_by_doctor_id, assigned_doctor_id',
+      'id, encounter_id, patient_id, status, created_at, created_by_doctor_id',
+      'id, encounter_id, patient_id, status, created_at',
+      'id, encounter_id, status, created_at',
+      'id, encounter_id, created_at',
+      'id, encounter_id',
+    ];
+
+    let plans = [];
+    for (const selectClause of planSelects) {
+      if (encounterIds.length > 0) {
+        const byEncounter = await supabase
+          .from('treatment_plans')
+          .select(selectClause)
+          .in('encounter_id', encounterIds)
+          .order('created_at', { ascending: false });
+
+        if (!byEncounter.error) {
+          plans = Array.isArray(byEncounter.data) ? byEncounter.data : [];
+          if (plans.length > 0) break;
+        } else {
+          const code = String(byEncounter.error?.code || '');
+          if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+            break;
+          }
+        }
+      }
+
+      const byPatient = await supabase
+        .from('treatment_plans')
+        .select(selectClause)
+        .in('patient_id', patientIds)
+        .order('created_at', { ascending: false });
+
+      if (!byPatient.error) {
+        plans = Array.isArray(byPatient.data) ? byPatient.data : [];
+        if (plans.length > 0) break;
+      } else {
+        const code = String(byPatient.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+          break;
+        }
+      }
+    }
+
+    if (plans.length === 0) {
+      const planIdsFromItems = new Set();
+      const itemTables = ['treatment_items', 'treatment_plan_items'];
+      const itemSelects = [
+        'treatment_plan_id, patient_id, created_at',
+        'treatment_plan_id, patient_id',
+        'treatment_plan_id',
+      ];
+
+      for (const tableName of itemTables) {
+        for (const selectClause of itemSelects) {
+          const result = await supabase
+            .from(tableName)
+            .select(selectClause)
+            .in('patient_id', patientIds)
+            .order('created_at', { ascending: false });
+
+          if (!result.error) {
+            (result.data || []).forEach((row) => {
+              const id = String(row?.treatment_plan_id || '').trim();
+              if (id) planIdsFromItems.add(id);
+            });
+            break;
+          }
+
+          const code = String(result.error?.code || '');
+          if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+            break;
+          }
+        }
+      }
+
+      if (planIdsFromItems.size > 0) {
+        const recoveredPlanIds = Array.from(planIdsFromItems);
+        for (const selectClause of planSelects) {
+          const recoveredPlansResult = await supabase
+            .from('treatment_plans')
+            .select(selectClause)
+            .in('id', recoveredPlanIds)
+            .order('created_at', { ascending: false });
+
+          if (!recoveredPlansResult.error) {
+            plans = Array.isArray(recoveredPlansResult.data) ? recoveredPlansResult.data : [];
+            if (plans.length > 0) break;
+          }
+
+          const code = String(recoveredPlansResult.error?.code || '');
+          if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+            break;
+          }
+        }
+      }
+    }
+
+    // Fetch all diagnoses for these encounters and patient
+    let diagnoses = [];
+    if (encounterIds.length > 0) {
+      const diagnosesResult = await supabase
+        .from('encounter_diagnoses')
+        .select('id, encounter_id, patient_id, icd10_code, icd10_description, tooth_number, notes, created_at')
+        .in('encounter_id', encounterIds)
+        .order('created_at', { ascending: false });
+      if (!diagnosesResult.error) {
+        diagnoses = Array.isArray(diagnosesResult.data) ? diagnosesResult.data : [];
+      }
+    }
+    // Also include any diagnoses directly by patient (if any)
+    if (diagnoses.length === 0 && patientIds.length > 0) {
+      const fallbackDiagnoses = await supabase
+        .from('encounter_diagnoses')
+        .select('id, encounter_id, patient_id, icd10_code, icd10_description, tooth_number, notes, created_at')
+        .in('patient_id', patientIds)
+        .order('created_at', { ascending: false });
+      if (!fallbackDiagnoses.error) {
+        diagnoses = Array.isArray(fallbackDiagnoses.data) ? fallbackDiagnoses.data : [];
+      }
+    }
+
+    // Attach diagnoses array to each plan by encounter_id
+    const plansWithDiagnoses = plans.map(plan => ({
+      ...plan,
+      diagnoses: diagnoses.filter(d => String(d.encounter_id) === String(plan.encounter_id)),
+    }));
+
+    return res.json({
+      ok: true,
+      treatment_plans: plansWithDiagnoses,
+      patient: {
+        id: String(patient?.id || rawPatientId),
+        patient_id: String(patient?.patient_id || patient?.id || rawPatientId),
+        name: String(patient?.name || patient?.full_name || 'Patient'),
+      },
+    });
+  } catch (error) {
+    console.error('[ADMIN PATIENT TREATMENT PLANS] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
 
@@ -5108,7 +7054,8 @@ app.get("/api/admin/patients/:patientId", requireAdminAuth, async (req, res) => 
 app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
   try {
     const { patientId } = req.body || {};
-    if (!patientId) {
+    const pidRaw = String(patientId || "").trim();
+    if (!pidRaw) {
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
 
@@ -5120,67 +7067,1380 @@ app.post("/api/admin/approve", requireAdminAuth, async (req, res) => {
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
     }
 
+    // UI sends patients.patient_id (legacy / external) or patients.id (UUID) — both must work
+    let resolvedId = null;
+    const byInternal = await supabase
+      .from("patients")
+      .select("id")
+      .eq("clinic_id", req.clinicId)
+      .eq("id", pidRaw)
+      .maybeSingle();
+    if (!byInternal.error && byInternal.data?.id) {
+      resolvedId = String(byInternal.data.id);
+    }
+    if (!resolvedId) {
+      const byExternal = await supabase
+        .from("patients")
+        .select("id")
+        .eq("clinic_id", req.clinicId)
+        .eq("patient_id", pidRaw)
+        .maybeSingle();
+      if (!byExternal.error && byExternal.data?.id) {
+        resolvedId = String(byExternal.data.id);
+      }
+    }
 
+    if (!resolvedId) {
+      console.error("[ADMIN APPROVE] patient not found in clinic", { pidRaw, clinicId: req.clinicId });
+      return res.status(404).json({ ok: false, error: "patient_not_found", message: "Hasta bu klinikte bulunamadı veya ID eşleşmedi." });
+    }
+
+    // DB constraint patients_status_check allows PENDING, ACTIVE, INACTIVE, SUSPENDED — not APPROVED
+    const patch = {
+      status: "ACTIVE",
+      updated_at: new Date().toISOString(),
+    };
 
     const { error } = await supabase
       .from("patients")
-      .update({
-        status: "APPROVED",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", patientId)
+      .update(patch)
+      .eq("id", resolvedId)
       .eq("clinic_id", req.clinicId);
 
     if (error) {
-
-      return res.status(500).json({ ok: false, error: "approve_failed" });
+      console.error("[ADMIN APPROVE] Supabase update error:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      return res.status(500).json({
+        ok: false,
+        error: "approve_failed",
+        message: error.message || "Güncelleme başarısız",
+        code: error.code || null,
+      });
     }
 
-
-    return res.json({ ok: true, patientId, status: "APPROVED" });
+    return res.json({
+      ok: true,
+      patientId: pidRaw,
+      id: resolvedId,
+      status: "ACTIVE",
+      approved: true,
+    });
   } catch (e) {
+    console.error("[ADMIN APPROVE] exception:", e);
+    return res.status(500).json({ ok: false, error: "internal_error", message: e?.message || String(e) });
+  }
+});
 
+// ─── DIAGNOSIS CRUD ──────────────────────────────────────────────────────────
+
+/** patients.id (UUID) for FK columns; never pass p_… into uuid columns. */
+async function resolveAdminPatientInternalId(patientId, clinicId) {
+  const raw = String(patientId || "").trim();
+  const cid = String(clinicId || "").trim();
+  if (!raw || !cid) return null;
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const legacyMatch = /^p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(raw);
+
+  const { data: byLegacy } = await supabase
+    .from("patients")
+    .select("id")
+    .eq("patient_id", raw)
+    .eq("clinic_id", cid)
+    .maybeSingle();
+  if (byLegacy?.id) return byLegacy.id;
+
+  const asUuid = uuidRe.test(raw) ? raw : legacyMatch ? legacyMatch[1] : null;
+  if (asUuid) {
+    const { data: byPk } = await supabase
+      .from("patients")
+      .select("id")
+      .eq("id", asUuid)
+      .eq("clinic_id", cid)
+      .maybeSingle();
+    if (byPk?.id) return byPk.id;
+  }
+
+  return null;
+}
+
+/** patient_encounters.patient_id may be UUID or legacy p_… — match all aliases */
+async function encounterPatientIdMatchSet(internalPatientUuid, rawParamFromRequest) {
+  const set = new Set();
+  const raw = String(rawParamFromRequest || "").trim();
+  if (internalPatientUuid) set.add(String(internalPatientUuid));
+  if (raw) set.add(raw);
+  const m = /^p_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(raw);
+  if (m) set.add(m[1]);
+  if (internalPatientUuid) {
+    try {
+      const { data } = await supabase
+        .from("patients")
+        .select("patient_id")
+        .eq("id", internalPatientUuid)
+        .maybeSingle();
+      if (data?.patient_id) set.add(String(data.patient_id).trim());
+    } catch (_) {}
+  }
+  return Array.from(set).filter(Boolean);
+}
+
+/** encounter_treatments.id — legacy patient-json satırlarından ayırt için */
+function isPlainEncounterTreatmentRowUuid(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id || "").trim());
+}
+
+/** Aynı diş + işlem tipi için zaten DB (UUID) satırı varsa JSON merge ile çift satır gösterme */
+function doctorTreatmentsListHasDbRowForToothProcedure(treatments, toothNum, procedureTypeUpper) {
+  return treatments.some((x) => {
+    if (!x || !isPlainEncounterTreatmentRowUuid(x.id)) return false;
+    const xtn = Number(x.tooth_number ?? x.tooth_fdi_code);
+    if (!Number.isFinite(xtn) || xtn !== toothNum) return false;
+    return String(x.procedure_type || "").toUpperCase() === procedureTypeUpper;
+  });
+}
+
+/** patient-json / legacy procedure object → ISO scheduled_at */
+function scheduledIsoFromProcedureLikeProc(proc) {
+  if (!proc || typeof proc !== "object") return null;
+  const candidates = [
+    proc.scheduled_at,
+    proc.scheduledAt,
+    proc.scheduled_date,
+    proc.due_date,
+    proc.date,
+  ];
+  for (const c of candidates) {
+    if (c == null || c === "") continue;
+    if (typeof c === "number" && Number.isFinite(c)) {
+      const d = new Date(c);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+      continue;
+    }
+    const s = String(c).trim();
+    if (!s) continue;
+    const d = new Date(s);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  return null;
+}
+
+function chairFromProcedureLikeProc(proc) {
+  if (!proc || typeof proc !== "object") return null;
+  const v =
+    proc.chair ??
+    proc.chairNo ??
+    proc.chair_no ??
+    proc.chairNumber ??
+    proc.chair_id ??
+    proc.chairId ??
+    (proc.meta && proc.meta.chairNo) ??
+    (proc.meta && proc.meta.chair_no);
+  if (v == null || v === "") return null;
+  return String(v).trim();
+}
+
+function assignedDoctorFieldsFromProcedureLikeProc(proc) {
+  if (!proc || typeof proc !== "object") return { id: null, name: null };
+  const id = String(
+    proc.assigned_doctor_id ||
+      proc.assignedDoctorId ||
+      proc.doctor_id ||
+      proc.doctorId ||
+      ""
+  ).trim();
+  const name = String(
+    proc.assigned_doctor_name ||
+      proc.assignedDoctorName ||
+      proc.doctor_name ||
+      proc.doctorName ||
+      ""
+  ).trim();
+  return { id: id || null, name: name || null };
+}
+
+/** encounter_treatments listesine assigned_doctor_id için doctors tablosundan isim ekler */
+async function attachDoctorNamesToEncounterTreatmentsList(treatments, supabaseClient) {
+  if (!Array.isArray(treatments) || !supabaseClient) return;
+  const ids = new Set();
+  for (const t of treatments) {
+    const id = String(t.assigned_doctor_id || "").trim();
+    if (!id) continue;
+    if (String(t.assigned_doctor_name || "").trim()) continue;
+    ids.add(id);
+  }
+  if (!ids.size) return;
+  const idArr = [...ids];
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const uuids = idArr.filter((x) => uuidRe.test(x));
+  const others = idArr.filter((x) => !uuidRe.test(x));
+  const nameByKey = new Map();
+  const ingest = (row) => {
+    if (!row || typeof row !== "object") return;
+    const nm = String(row.full_name || row.name || row.email || "").trim();
+    if (!nm) return;
+    const rid = row.id != null ? String(row.id).trim() : "";
+    const did = row.doctor_id != null ? String(row.doctor_id).trim() : "";
+    if (rid) nameByKey.set(rid, nm);
+    if (did) nameByKey.set(did, nm);
+  };
+  try {
+    if (uuids.length) {
+      const { data, error } = await supabaseClient
+        .from("doctors")
+        .select("id, doctor_id, name, full_name, email")
+        .in("id", uuids);
+      if (!error) (data || []).forEach(ingest);
+    }
+    if (others.length) {
+      const { data: d2, error: e2 } = await supabaseClient
+        .from("doctors")
+        .select("id, doctor_id, name, full_name, email")
+        .in("doctor_id", others);
+      if (!e2) (d2 || []).forEach(ingest);
+    }
+    for (const t of treatments) {
+      const id = String(t.assigned_doctor_id || "").trim();
+      if (!id || String(t.assigned_doctor_name || "").trim()) continue;
+      const nm = nameByKey.get(id);
+      if (nm) t.assigned_doctor_name = nm;
+    }
+  } catch (e) {
+    console.warn("[DOCTOR ENCOUNTERS] attachDoctorNames:", e?.message || e);
+  }
+}
+
+/** appointments satırından tek ISO zaman (admin takvimindeki güncel randevu) */
+function appointmentRowStartIso(row) {
+  if (!row || typeof row !== "object") return null;
+  const s = row.start_at ?? row.startAt ?? row.starts_at;
+  if (s) {
+    const t = Date.parse(String(s));
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  const d = row.date ?? row.appointment_date;
+  const tm = row.time ?? row.appointment_time ?? "12:00";
+  if (d) {
+    const ds = String(d).slice(0, 10);
+    const tmStr = String(tm);
+    const m = tmStr.match(/^(\d{1,2}):(\d{2})/);
+    const hh = m ? String(m[1]).padStart(2, "0") : "12";
+    const mm = m ? m[2] : "00";
+    const t = Date.parse(`${ds}T${hh}:${mm}:00`);
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  return null;
+}
+
+function normalizeAppointmentRowTooth(row) {
+  const raw =
+    row.tooth_number ??
+    row.toothNumber ??
+    row.tooth_fdi_code ??
+    row.tooth ??
+    row.fdi_tooth ??
+    row.fdiTooth;
+  if (raw == null || raw === "") return "";
+  const digits = String(raw).replace(/\D/g, "");
+  const n = digits.length >= 2 ? Number.parseInt(digits.slice(0, 2), 10) : NaN;
+  if (Number.isFinite(n) && n >= 11 && n <= 48) return String(n);
+  return String(raw).trim();
+}
+
+function appointmentProcedureMatchesEtType(procType, row) {
+  const t = String(procType || "")
+    .toUpperCase()
+    .trim();
+  if (!t) return true;
+  const blob = [
+    row.procedure,
+    row.notes,
+    row.treatment,
+    row.type,
+    row.service,
+    row.appointment_type,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase();
+  if (!blob) return true;
+  if (blob.includes(t)) return true;
+  const t2 = t.replace(/_/g, " ");
+  return blob.includes(t2);
+}
+
+/**
+ * Admin takviminde randevu (appointments) güncellenmiş olabilir; encounter_treatments.scheduled_at geride kalabilir.
+ * Doktor tedavi planı GET yanıtında aynı hasta + diş için eşleşen randevu saatini yansıtır.
+ */
+function applyAppointmentsScheduleOverlayToDoctorTreatments(treatments, apptRows) {
+  if (!Array.isArray(treatments) || !Array.isArray(apptRows) || !apptRows.length) return;
+  const byTooth = new Map();
+  for (const a of apptRows) {
+    const tooth = normalizeAppointmentRowTooth(a);
+    if (!tooth) continue;
+    if (!byTooth.has(tooth)) byTooth.set(tooth, []);
+    byTooth.get(tooth).push(a);
+  }
+  for (const t of treatments) {
+    if (!t) continue;
+    const tooth = String(t.tooth_number ?? t.tooth_fdi_code ?? "").trim();
+    if (!tooth) continue;
+    const list = byTooth.get(tooth);
+    if (!list || !list.length) continue;
+    const procType = String(t.procedure_type || "").toUpperCase().trim();
+    let candidates = list.filter((a) => appointmentProcedureMatchesEtType(procType, a));
+    if (candidates.length === 0) {
+      candidates = list.length === 1 ? list : [...list];
+    }
+    let bestIso = null;
+    let bestTs = -1;
+    for (const a of candidates) {
+      const iso = appointmentRowStartIso(a);
+      if (!iso) continue;
+      const ts = Date.parse(iso);
+      if (!Number.isFinite(ts)) continue;
+      if (ts > bestTs) {
+        bestTs = ts;
+        bestIso = iso;
+      }
+    }
+    if (!bestIso) continue;
+    const isDbRow = isPlainEncounterTreatmentRowUuid(t.id);
+    const next = Date.parse(bestIso);
+    if (!Number.isFinite(next)) continue;
+    if (isDbRow) {
+      const cur = t.scheduled_at ? Date.parse(String(t.scheduled_at)) : NaN;
+      if (Number.isFinite(cur) && Math.abs(next - cur) <= 60000) continue;
+      t.scheduled_at = bestIso;
+      t._schedule_matched_from = "appointments";
+    } else {
+      if (t.scheduled_at) continue;
+      t.scheduled_at = bestIso;
+      t._schedule_matched_from = "appointments";
+    }
+  }
+}
+
+async function fetchAppointmentsRowsForPatientOverlay(supabaseClient, patientId, clinicId) {
+  const pid = String(patientId || "").trim();
+  if (!pid) return [];
+  const selFull =
+    "id, patient_id, clinic_id, start_at, date, time, appointment_date, appointment_time, procedure, notes, treatment, type, service, status, tooth_number, tooth, doctor_id, chair, chair_no";
+  const sel =
+    "id, patient_id, clinic_id, start_at, date, time, appointment_date, appointment_time, procedure, notes, treatment, type, service, status, tooth_number, tooth";
+  const attempts = [];
+  if (clinicId) {
+    attempts.push(() =>
+      supabaseClient
+        .from("appointments")
+        .select(selFull)
+        .eq("patient_id", pid)
+        .eq("clinic_id", String(clinicId).trim())
+        .limit(400)
+    );
+    attempts.push(() =>
+      supabaseClient
+        .from("appointments")
+        .select(sel)
+        .eq("patient_id", pid)
+        .eq("clinic_id", String(clinicId).trim())
+        .limit(400)
+    );
+  }
+  attempts.push(() => supabaseClient.from("appointments").select(selFull).eq("patient_id", pid).limit(400));
+  attempts.push(() => supabaseClient.from("appointments").select(sel).eq("patient_id", pid).limit(400));
+  for (const run of attempts) {
+    try {
+      const { data, error } = await run();
+      const code = String(error?.code || "");
+      if (!error && Array.isArray(data)) {
+        return data.filter((r) => {
+          const st = String(r?.status || "").toLowerCase();
+          return st !== "cancelled" && st !== "canceled";
+        });
+      }
+      if (["42P01", "42703", "PGRST204", "PGRST205"].includes(code)) continue;
+      break;
+    } catch (_) {}
+  }
+  return [];
+}
+
+/**
+ * Hasta tedavi listesi: encounter_treatments / JSON'da zaman boşsa appointments ile diş + işlem tipine göre doldurur.
+ */
+function applyAppointmentsScheduleOverlayToPatientTeethProcedures(data, apptRows) {
+  if (!data || !Array.isArray(data.teeth) || !Array.isArray(apptRows) || !apptRows.length) return;
+  const byTooth = new Map();
+  for (const a of apptRows) {
+    const tooth = normalizeAppointmentRowTooth(a);
+    if (!tooth) continue;
+    if (!byTooth.has(tooth)) byTooth.set(tooth, []);
+    byTooth.get(tooth).push(a);
+  }
+  for (const tooth of data.teeth) {
+    const toothNo = String(tooth?.toothId ?? tooth?.tooth_id ?? "").trim();
+    if (!toothNo || !Array.isArray(tooth.procedures)) continue;
+    const list = byTooth.get(toothNo);
+    if (!list?.length) continue;
+    const usedAppt = new Set();
+    for (const proc of tooth.procedures) {
+      const procType = String(proc.type || "").toUpperCase().trim();
+      let candidates = list.filter((a) => {
+        const id = String(a?.id ?? "").trim();
+        return id && !usedAppt.has(id) && appointmentProcedureMatchesEtType(procType, a);
+      });
+      if (candidates.length === 0) {
+        candidates = list.filter((a) => {
+          const id = String(a?.id ?? "").trim();
+          return id && !usedAppt.has(id);
+        });
+      }
+      if (candidates.length === 0) continue;
+      let bestIso = null;
+      let bestTs = -1;
+      let bestRow = null;
+      for (const a of candidates) {
+        const iso = appointmentRowStartIso(a);
+        if (!iso) continue;
+        const ts = Date.parse(iso);
+        if (!Number.isFinite(ts)) continue;
+        if (ts > bestTs) {
+          bestTs = ts;
+          bestIso = iso;
+          bestRow = a;
+        }
+      }
+      if (!bestIso || !bestRow) continue;
+      const nextMs = Date.parse(bestIso);
+      if (!Number.isFinite(nextMs)) continue;
+      const curSched = proc.scheduledAt != null ? Number(proc.scheduledAt) : NaN;
+      const hasSched = Number.isFinite(curSched) && curSched > 0;
+      if (hasSched && Math.abs(nextMs - curSched) <= 60000) continue;
+      proc.scheduledAt = nextMs;
+      proc.date = nextMs;
+      proc.meta = typeof proc.meta === "object" && proc.meta ? { ...proc.meta } : {};
+      proc.meta.schedule_matched_from = "appointments";
+      const ch = String(
+        bestRow.chair ?? bestRow.chair_no ?? bestRow.chairNo ?? bestRow.chair_number ?? ""
+      ).trim();
+      if (ch) {
+        if (!String(proc.chair || "").trim()) proc.chair = ch;
+        if (!String(proc.chair_no || "").trim()) proc.chair_no = ch;
+        if (!String(proc.chairNo || "").trim()) proc.chairNo = ch;
+      }
+      const doc = String(bestRow.doctor_id ?? bestRow.doctorId ?? "").trim();
+      if (doc && !String(proc.assigned_doctor_id || proc.assignedDoctorId || "").trim()) {
+        proc.assigned_doctor_id = doc;
+        proc.assignedDoctorId = doc;
+      }
+      const apid = String(bestRow.id ?? "").trim();
+      if (apid) usedAppt.add(apid);
+    }
+  }
+}
+
+async function applyPatientTreatmentsAppointmentsOverlay(data, patientId, clinicId) {
+  if (!isSupabaseEnabled() || !data?.teeth?.length) return;
+  try {
+    const rows = await fetchAppointmentsRowsForPatientOverlay(supabase, patientId, clinicId);
+    applyAppointmentsScheduleOverlayToPatientTeethProcedures(data, rows);
+  } catch (e) {
+    console.warn("[TREATMENTS GET] patient appointments overlay:", e?.message || e);
+  }
+}
+
+function mapEncounterTreatmentStatusToPatientJsonStatus(stRaw) {
+  const st = String(stRaw || "planned").toUpperCase().replace(/-/g, "_");
+  if (st === "COMPLETED" || st === "DONE" || st === "COMPLETE" || st === "FINISHED" || st === "CLOSED") return "COMPLETED";
+  if (st === "PLANNED") return "PLANNED";
+  if (st === "CANCELLED" || st === "CANCELED") return "CANCELLED";
+  if (st === "SCHEDULED") return "SCHEDULED";
+  if (st === "IN_PROGRESS" || st === "ACTIVE") return "ACTIVE";
+  return "ACTIVE";
+}
+
+/**
+ * Same tooth procedure can appear from encounter_treatments (DB) and patient_treatments JSON (stale).
+ * Prefer COMPLETED/CANCELLED and higher-trust sources so completed work does not stay on the dashboard timeline.
+ */
+function dedupeAdminTimelineEvents(events) {
+  const list = Array.isArray(events) ? events : [];
+  const keyOf = (e) => {
+    const pid = String(e?.patientId || "").trim();
+    const tooth = String(e?.toothId ?? "").trim();
+    const typ = String(e?.eventType || e?.treatment || "").toUpperCase();
+    const ds = String(e?.date || "").trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) return `${pid}|${tooth}|${typ}|${ds}`;
+    const ts = e?.timestamp || (e?.timelineAt ? Date.parse(e.timelineAt) : 0);
+    if (!Number.isFinite(ts) || ts <= 0) return `${pid}|${tooth}|${typ}|`;
+    const d = new Date(ts);
+    const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return `${pid}|${tooth}|${typ}|${dayStr}`;
+  };
+  const rank = (e) => {
+    const s = String(e?.status || "").toUpperCase();
+    let sr = 1;
+    if (s === "COMPLETED" || s === "DONE") sr = 4;
+    else if (s === "CANCELLED" || s === "CANCELED") sr = 3;
+    else if (s === "ACTIVE") sr = 2;
+    else sr = 1;
+    const src = String(e?.source || "");
+    let pr = 0;
+    if (src === "encounter_treatments") pr = 4;
+    else if (src === "encounter_treatment") pr = 3;
+    else if (src === "patient_treatments") pr = 2;
+    else if (src === "treatment") pr = 1;
+    else pr = 0;
+    return sr * 10 + pr;
+  };
+  const best = new Map();
+  for (const e of list) {
+    const k = keyOf(e);
+    const cur = best.get(k);
+    if (!cur || rank(e) > rank(cur)) best.set(k, e);
+  }
+  return [...best.values()];
+}
+
+function mergeEncounterTreatmentRowsIntoPatientTeethPayload(
+  data,
+  encounterTreatmentRows,
+  encounterIdToPlanId
+) {
+  if (!data || !Array.isArray(encounterTreatmentRows) || encounterTreatmentRows.length === 0) return;
+  const merged = {};
+  (Array.isArray(data.teeth) ? data.teeth : []).forEach((t) => {
+    const k = String(t?.toothId ?? t?.tooth_id ?? "").trim();
+    if (!k) return;
+    merged[k] = {
+      ...t,
+      toothId: k,
+      procedures: [...(Array.isArray(t.procedures) ? t.procedures : [])],
+    };
+  });
+  const planMap = encounterIdToPlanId instanceof Map ? encounterIdToPlanId : null;
+  for (const row of encounterTreatmentRows) {
+    const toothNo = String(row?.tooth_number ?? "").trim();
+    if (!toothNo) continue;
+    if (!merged[toothNo]) merged[toothNo] = { toothId: toothNo, procedures: [] };
+    const procId = `encounter-treatment-${row.id}`;
+    const type = String(row.procedure_type || "UNKNOWN").trim();
+    const mappedStatus = mapEncounterTreatmentStatusToPatientJsonStatus(row.status);
+    const createdAt = row.created_at ? new Date(row.created_at).getTime() : Date.now();
+    const schedMs = row.scheduled_at ? new Date(row.scheduled_at).getTime() : null;
+    const encKey = String(row?.encounter_id ?? "").trim();
+    const planFromEnc = planMap && encKey ? planMap.get(encKey) : null;
+    const nextProc = {
+      id: procId,
+      procedureId: procId,
+      type,
+      category: procedures.categoryForType(type),
+      status: mappedStatus,
+      scheduledAt: Number.isFinite(schedMs) ? schedMs : null,
+      date: Number.isFinite(schedMs) ? schedMs : createdAt,
+      createdAt,
+      notes: "",
+      meta: {
+        source: "encounter_treatments",
+        encounter_id: row.encounter_id,
+        ...(planFromEnc ? { treatment_plan_id: planFromEnc } : {}),
+      },
+    };
+    if (row.chair != null && String(row.chair).trim() !== "") nextProc.chair = String(row.chair).trim();
+    if (row.assigned_doctor_id) {
+      const ad = String(row.assigned_doctor_id).trim();
+      nextProc.assigned_doctor_id = ad;
+      nextProc.assignedDoctorId = ad;
+    }
+
+    const procs = merged[toothNo].procedures;
+    const idx = procs.findIndex((p) => String(p.procedureId || p.id || "") === procId);
+    if (idx >= 0) {
+      const prev = procs[idx];
+      procs[idx] = {
+        ...prev,
+        ...nextProc,
+        createdAt: prev.createdAt != null ? prev.createdAt : nextProc.createdAt,
+      };
+    } else {
+      procs.push(nextProc);
+    }
+  }
+  data.teeth = Object.values(merged);
+}
+
+/**
+ * Legacy / fast-path teeth: encounter birleşmesi olmasa bile UUID → isim ve treatment_doctors son ataması.
+ * (patient_id ile treatment_plans; meta.treatment_plan_id olan prosedürlerde güncel hekim)
+ */
+async function enrichTreatmentsDataDoctorDisplayFields(data, patientId) {
+  if (!isSupabaseEnabled() || !data || !Array.isArray(data.teeth)) return;
+  const looseUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let lookupIds = [String(patientId || "").trim()].filter(Boolean);
+  try {
+    const patientRecord = await getPatientById(patientId);
+    lookupIds.push(
+      String(patientRecord?.id || "").trim(),
+      String(patientRecord?.patient_id || "").trim()
+    );
+    const encExpand = await encounterPatientIdMatchSet(
+      String(patientRecord?.id || "").trim() || String(patientId).trim(),
+      patientId
+    );
+    lookupIds.push(...(encExpand || []));
+  } catch (_) {
+    /* ignore */
+  }
+  lookupIds = [...new Set(lookupIds.filter(Boolean))];
+
+  const latestTdByPlan = new Map();
+  const planRowById = new Map();
+  const planIds = [];
+
+  const encFromProcs = new Set();
+  for (const tooth of data.teeth) {
+    for (const proc of tooth?.procedures || []) {
+      const meta = proc?.meta && typeof proc.meta === "object" ? proc.meta : null;
+      const eid = meta ? String(meta.encounter_id || "").trim() : "";
+      if (eid && looseUuid.test(eid)) encFromProcs.add(eid);
+    }
+  }
+
+  const ingestPlanRows = (rows) => {
+    if (!Array.isArray(rows)) return;
+    for (const pr of rows) {
+      const pid = String(pr?.id || "").trim();
+      if (pid && !planRowById.has(pid)) {
+        planRowById.set(pid, pr);
+        planIds.push(pid);
+      }
+    }
+  };
+
+  try {
+    const pq = await supabase
+      .from("treatment_plans")
+      .select("id, encounter_id, patient_id, assigned_doctor_id, created_by_doctor_id, created_at")
+      .in("patient_id", lookupIds)
+      .limit(400);
+    if (!pq.error && Array.isArray(pq.data)) ingestPlanRows(pq.data);
+  } catch (_) {
+    /* ignore */
+  }
+
+  if (encFromProcs.size > 0) {
+    try {
+      const eq = await supabase
+        .from("treatment_plans")
+        .select("id, encounter_id, patient_id, assigned_doctor_id, created_by_doctor_id, created_at")
+        .in("encounter_id", [...encFromProcs])
+        .limit(400);
+      if (!eq.error && Array.isArray(eq.data)) ingestPlanRows(eq.data);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  const encounterIdToPlanId = new Map();
+  const byEnc = new Map();
+  for (const pr of planRowById.values()) {
+    const eid = String(pr.encounter_id || "").trim();
+    const pid = String(pr.id || "").trim();
+    if (!eid || !pid) continue;
+    if (!byEnc.has(eid)) byEnc.set(eid, []);
+    byEnc.get(eid).push(pr);
+  }
+  for (const [eid, arr] of byEnc) {
+    arr.sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    const top = String(arr[0]?.id || "").trim();
+    if (top) encounterIdToPlanId.set(eid, top);
+  }
+
+  const resolvePlanKeyForProcedure = (proc) => {
+    const topPlan = String(proc.treatment_plan_id || "").trim();
+    const meta = proc?.meta && typeof proc.meta === "object" ? proc.meta : null;
+    const metaPlan = meta ? String(meta.treatment_plan_id || "").trim() : "";
+    const enc = meta ? String(meta.encounter_id || "").trim() : "";
+    if (looseUuid.test(topPlan)) return topPlan;
+    if (looseUuid.test(metaPlan)) return metaPlan;
+    if (enc && encounterIdToPlanId.has(enc)) return encounterIdToPlanId.get(enc);
+    return "";
+  };
+
+  const uniqPlanIds = [...new Set([...planRowById.keys()].filter(Boolean))];
+  if (uniqPlanIds.length > 0) {
+    try {
+      const tdq = await supabase
+        .from("treatment_doctors")
+        .select("treatment_id, doctor_id, created_at")
+        .in("treatment_id", uniqPlanIds)
+        .order("created_at", { ascending: false });
+      if (!tdq.error && Array.isArray(tdq.data)) {
+        for (const row of tdq.data) {
+          const tid = String(row?.treatment_id || "").trim();
+          const did = String(row?.doctor_id || "").trim();
+          if (!tid || !did || !looseUuid.test(did)) continue;
+          if (!latestTdByPlan.has(tid)) latestTdByPlan.set(tid, did);
+        }
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  const planDoctorId = (planId) => {
+    const pid = String(planId || "").trim();
+    if (!pid) return null;
+    if (latestTdByPlan.has(pid)) return latestTdByPlan.get(pid);
+    const pr = planRowById.get(pid);
+    if (!pr) return null;
+    const a = String(pr.assigned_doctor_id || "").trim();
+    const c = String(pr.created_by_doctor_id || "").trim();
+    const pick = a || c || "";
+    return looseUuid.test(pick) ? pick : null;
+  };
+
+  const doctorIdSet = new Set();
+  for (const tooth of data.teeth) {
+    for (const proc of tooth?.procedures || []) {
+      for (const key of [
+        "assigned_doctor_id",
+        "assignedDoctorId",
+        "created_by_doctor_id",
+        "doctor_id",
+        "doctorId",
+      ]) {
+        const v = String(proc?.[key] ?? "").trim();
+        if (looseUuid.test(v)) doctorIdSet.add(v);
+      }
+      const planKey = resolvePlanKeyForProcedure(proc);
+      if (planKey) {
+        const fd = planDoctorId(planKey);
+        if (fd) doctorIdSet.add(fd);
+      }
+    }
+  }
+
+  const idList = [...doctorIdSet];
+  const nameById = new Map();
+  if (idList.length > 0) {
+    for (const sel of ["id, doctor_id, name, full_name", "id, name, full_name"]) {
+      const r = await supabase.from("doctors").select(sel).in("id", idList);
+      if (!r.error && Array.isArray(r.data)) {
+        for (const d of r.data) {
+          const nm = String(d?.full_name || d?.name || "").trim();
+          if (!nm) continue;
+          nameById.set(String(d.id), nm);
+          if (d.doctor_id != null && String(d.doctor_id).trim()) {
+            nameById.set(String(d.doctor_id).trim(), nm);
+          }
+        }
+        break;
+      }
+      const code = String(r?.error?.code || "");
+      if (!["42703", "PGRST204"].includes(code)) break;
+    }
+    const miss = idList.filter((x) => !nameById.has(x));
+    if (miss.length > 0) {
+      for (const sel of ["id, doctor_id, name, full_name", "id, name, full_name"]) {
+        const r = await supabase.from("doctors").select(sel).in("doctor_id", miss);
+        if (!r.error && Array.isArray(r.data)) {
+          for (const d of r.data) {
+            const nm = String(d?.full_name || d?.name || "").trim();
+            if (!nm) continue;
+            nameById.set(String(d.id), nm);
+            if (d.doctor_id != null && String(d.doctor_id).trim()) {
+              nameById.set(String(d.doctor_id).trim(), nm);
+            }
+          }
+          break;
+        }
+        const code = String(r?.error?.code || "");
+        if (!["42703", "PGRST204"].includes(code)) break;
+      }
+    }
+  }
+
+  for (const tooth of data.teeth) {
+    if (!Array.isArray(tooth?.procedures)) continue;
+    for (const proc of tooth.procedures) {
+      const rawAid = String(proc.assigned_doctor_id || proc.assignedDoctorId || "").trim();
+      if (looseUuid.test(rawAid)) {
+        if (!proc.assigned_doctor_id) proc.assigned_doctor_id = rawAid;
+        if (!proc.assignedDoctorId) proc.assignedDoctorId = rawAid;
+      }
+      const planKey = resolvePlanKeyForProcedure(proc);
+      if (planKey) {
+        const fid = planDoctorId(planKey);
+        const existingDoc = String(proc.assigned_doctor_id || proc.assignedDoctorId || "").trim();
+        if (fid && nameById.has(fid) && !existingDoc) {
+          const nm = nameById.get(fid);
+          proc.assigned_doctor_id = fid;
+          proc.assignedDoctorId = fid;
+          proc.assigned_doctor_name = nm;
+          proc.doctor_name = nm;
+        }
+      }
+      if (!String(proc.doctor_name || "").trim()) {
+        const aid = String(proc.assigned_doctor_id || proc.assignedDoctorId || "").trim();
+        if (aid && nameById.has(aid)) {
+          const nm = nameById.get(aid);
+          proc.assigned_doctor_name = nm;
+          proc.doctor_name = nm;
+        }
+      }
+      if (!String(proc.doctor_name || "").trim()) {
+        const cid = String(proc.created_by_doctor_id || "").trim();
+        if (cid && nameById.has(cid)) proc.doctor_name = nameById.get(cid);
+      }
+      const nmFinal = String(proc.doctor_name || proc.assigned_doctor_name || "").trim();
+      proc.doctorName = nmFinal || null;
+    }
+  }
+}
+
+/**
+ * patients.treatments payload'ına encounter_treatments satırlarını uygular (upsert).
+ * GET önbellek isabetinde de çağrılmalı: aksi halde çoklu worker / TTL içinde DB güncellemesi görünmez.
+ */
+async function mergeEncounterTreatmentsIntoPatientTreatmentsData(data, patientId) {
+  if (!isSupabaseEnabled() || !data) return;
+  try {
+    const patientRecord = await getPatientById(patientId);
+    const internalUuid = String(patientRecord?.id || "").trim() || String(patientId).trim();
+    const encExpand = await encounterPatientIdMatchSet(internalUuid, patientId);
+    const patientLookupIds = [
+      ...new Set(
+        [
+          String(patientId || "").trim(),
+          String(patientRecord?.id || "").trim(),
+          String(patientRecord?.patient_id || "").trim(),
+          ...encExpand,
+        ].filter(Boolean)
+      ),
+    ];
+    const pidInClause = patientLookupIds.length ? patientLookupIds : [String(patientId)];
+
+    const etSelect =
+      "id, encounter_id, tooth_number, procedure_type, status, scheduled_at, created_at, chair, assigned_doctor_id";
+    const rowsById = new Map();
+    const skipEtCodes = new Set(["42P01", "42703", "PGRST204"]);
+
+    const { data: encList, error: encListErr } = await supabase
+      .from("patient_encounters")
+      .select("id")
+      .in("patient_id", pidInClause);
+    const encListCode = String(encListErr?.code || "");
+    if (encListErr && !skipEtCodes.has(encListCode) && encListCode !== "PGRST205") {
+      console.error("[TREATMENTS GET] encounter_treatments merge (encounters list):", encListErr);
+    } else if (Array.isArray(encList) && encList.length > 0) {
+      const eids = encList.map((e) => String(e?.id || "").trim()).filter(Boolean);
+      if (eids.length) {
+        const { data: etRows, error: etErr } = await supabase
+          .from("encounter_treatments")
+          .select(etSelect)
+          .in("encounter_id", eids);
+        const etCode = String(etErr?.code || "");
+        if (etErr && !skipEtCodes.has(etCode)) {
+          console.error("[TREATMENTS GET] encounter_treatments merge fetch failed:", etErr);
+        } else {
+          for (const r of etRows || []) {
+            const rid = String(r?.id || "").trim();
+            if (rid) rowsById.set(rid, r);
+          }
+        }
+      }
+    }
+
+    // Legacy JSON fast path skips encounter listing; patient_encounters may not match aliases.
+    // Prosedür id'si encounter-treatment-<row_uuid> ise satırı doğrudan çekip (encounter–hasta ile doğrula) birleştir.
+    const ET_PREFIX =
+      /^encounter-treatment-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+    const plainEtUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const idHints = new Set();
+    for (const tooth of Array.isArray(data.teeth) ? data.teeth : []) {
+      for (const proc of Array.isArray(tooth?.procedures) ? tooth.procedures : []) {
+        const metaSrc = String(proc?.meta?.source || "").toLowerCase();
+        const fromEncounterMeta = metaSrc.includes("encounter_treatment");
+        for (const rawId of [proc?.procedureId, proc?.id]) {
+          const s = String(rawId || "").trim();
+          const m = ET_PREFIX.exec(s);
+          if (m) idHints.add(m[1]);
+          else if (fromEncounterMeta && plainEtUuid.test(s)) idHints.add(s);
+        }
+      }
+    }
+    const missingEtIds = [...idHints].filter((id) => !rowsById.has(id));
+    if (missingEtIds.length > 0) {
+      const chunkSize = 80;
+      for (let i = 0; i < missingEtIds.length; i += chunkSize) {
+        const chunk = missingEtIds.slice(i, i + chunkSize);
+        const { data: byIdRows, error: byIdErr } = await supabase
+          .from("encounter_treatments")
+          .select(etSelect)
+          .in("id", chunk);
+        const byIdCode = String(byIdErr?.code || "");
+        if (byIdErr && !skipEtCodes.has(byIdCode)) {
+          console.error("[TREATMENTS GET] encounter_treatments merge by id:", byIdErr);
+          continue;
+        }
+        const encIdsSeen = [
+          ...new Set((byIdRows || []).map((r) => String(r?.encounter_id || "").trim()).filter(Boolean)),
+        ];
+        if (!encIdsSeen.length) continue;
+        const { data: encVerify, error: verErr } = await supabase
+          .from("patient_encounters")
+          .select("id, patient_id")
+          .in("id", encIdsSeen)
+          .in("patient_id", pidInClause);
+        if (verErr && !skipEtCodes.has(String(verErr?.code || ""))) {
+          console.warn("[TREATMENTS GET] encounter_treatments id-hint verify:", verErr.message || verErr);
+          continue;
+        }
+        const allowedEnc = new Set(
+          (encVerify || []).map((e) => String(e?.id || "").trim()).filter(Boolean)
+        );
+        for (const r of byIdRows || []) {
+          const eid = String(r?.encounter_id || "").trim();
+          const rid = String(r?.id || "").trim();
+          if (!rid || !allowedEnc.has(eid)) continue;
+          rowsById.set(rid, r);
+        }
+      }
+    }
+
+    const combined = [...rowsById.values()];
+    if (combined.length > 0) {
+      let encToPlan = null;
+      const encIdsForPlans = [
+        ...new Set(combined.map((r) => String(r.encounter_id || "").trim()).filter(Boolean)),
+      ];
+      if (encIdsForPlans.length > 0) {
+        const { data: planRows, error: planErr } = await supabase
+          .from("treatment_plans")
+          .select("id, encounter_id, created_at")
+          .in("encounter_id", encIdsForPlans);
+        const pCode = String(planErr?.code || "");
+        if (!planErr && Array.isArray(planRows)) {
+          encToPlan = new Map();
+          const byEnc = new Map();
+          for (const pr of planRows) {
+            const eid = String(pr.encounter_id || "").trim();
+            const pid = String(pr.id || "").trim();
+            if (!eid || !pid) continue;
+            if (!byEnc.has(eid)) byEnc.set(eid, []);
+            byEnc.get(eid).push(pr);
+          }
+          for (const [eid, arr] of byEnc) {
+            arr.sort(
+              (a, b) =>
+                new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+            );
+            const top = String(arr[0]?.id || "").trim();
+            if (top) encToPlan.set(eid, top);
+          }
+          if (encToPlan.size === 0) encToPlan = null;
+        } else if (planErr && !skipEtCodes.has(pCode) && pCode !== "PGRST205") {
+          console.warn("[TREATMENTS GET] encounter→plan map:", planErr.message || planErr);
+        }
+      }
+      mergeEncounterTreatmentRowsIntoPatientTeethPayload(
+        data,
+        combined,
+        encToPlan && encToPlan.size > 0 ? encToPlan : null
+      );
+    }
+  } catch (etMergeErr) {
+    console.error("[TREATMENTS GET] encounter_treatments merge exception:", etMergeErr?.message || etMergeErr);
+  }
+}
+
+/** Yeni encounter_treatments satırını patients.treatments JSONB içine yazar (38/48 vb. eski kayıtlarla aynı kaynak). */
+async function mirrorEncounterTreatmentRowToPatientTreatmentsJson(encounterId, treatmentRow) {
+  if (!isSupabaseEnabled() || !encounterId || !treatmentRow?.id) return;
+  try {
+    const eid = String(encounterId || "").trim();
+    const { data: encRow, error: encErr } = await supabase
+      .from("patient_encounters")
+      .select("patient_id")
+      .eq("id", eid)
+      .maybeSingle();
+    if (encErr || !encRow?.patient_id) return;
+
+    const pidEnc = String(encRow.patient_id).trim();
+    const { data: trRow, error: trErr } = await fetchPatientTreatmentsRowSupabase(pidEnc, null);
+    if (trErr || !trRow?.id) {
+      console.warn("[ENCOUNTER TREATMENT MIRROR] patient row:", trErr?.message || "not_found");
+      return;
+    }
+    const patientUuid = String(trRow.id).trim();
+    const base = isPlainObject(trRow.treatments) ? trRow.treatments : {};
+    const payload = {
+      schemaVersion: 1,
+      updatedAt: now(),
+      patientId: String(base.patientId || patientUuid),
+      teeth: Array.isArray(base.teeth)
+        ? base.teeth.map((t) => ({
+            ...t,
+            toothId: String(t?.toothId ?? t?.tooth_id ?? "").trim(),
+            procedures: [...(Array.isArray(t?.procedures) ? t.procedures : [])],
+          }))
+        : [],
+      formCompleted: base.formCompleted,
+      formCompletedAt: base.formCompletedAt,
+    };
+    const rowForMerge = {
+      ...treatmentRow,
+      encounter_id: treatmentRow.encounter_id || eid,
+    };
+    mergeEncounterTreatmentRowsIntoPatientTeethPayload(payload, [rowForMerge]);
+    const saveRes = await saveTreatmentsSupabaseWithFallback(
+      patientUuid,
+      payload,
+      "doctor_encounter_treatment"
+    );
+    if (!saveRes?.ok) {
+      console.warn("[ENCOUNTER TREATMENT MIRROR] save failed:", saveRes?.error?.message || saveRes?.error);
+    } else {
+      invalidateTreatmentsCacheForPatient(patientUuid);
+    }
+  } catch (e) {
+    console.warn("[ENCOUNTER TREATMENT MIRROR] exception:", e?.message || e);
+  }
+}
+
+/** encounter_diagnoses satırlarını patients.treatments.teeth[].diagnosis içine yazar (liste/GET ile uyumlu). */
+async function mirrorEncounterDiagnosesToPatientTreatmentsJson(encounterId, insertedRows) {
+  if (!isSupabaseEnabled() || !encounterId || !Array.isArray(insertedRows) || insertedRows.length === 0) return;
+  try {
+    const eid = String(encounterId || "").trim();
+    const { data: encRow, error: encErr } = await supabase
+      .from("patient_encounters")
+      .select("patient_id")
+      .eq("id", eid)
+      .maybeSingle();
+    if (encErr || !encRow?.patient_id) {
+      console.warn("[ENCOUNTER DIAGNOSIS MIRROR] encounter:", encErr?.message || "no_patient");
+      return;
+    }
+
+    const pidEnc = String(encRow.patient_id).trim();
+    const { data: trRow, error: trErr } = await fetchPatientTreatmentsRowSupabase(pidEnc, null);
+    if (trErr || !trRow?.id) {
+      console.warn("[ENCOUNTER DIAGNOSIS MIRROR] patient row:", trErr?.message || "not_found");
+      return;
+    }
+
+    const patientUuid = String(trRow.id).trim();
+    const base = isPlainObject(trRow.treatments) ? trRow.treatments : {};
+    const merged = {};
+    (Array.isArray(base.teeth) ? base.teeth : []).forEach((t) => {
+      const k = String(t?.toothId ?? t?.tooth_id ?? "").trim();
+      if (!k) return;
+      merged[k] = {
+        ...t,
+        toothId: k,
+        procedures: [...(Array.isArray(t?.procedures) ? t.procedures : [])],
+        diagnosis: [...(Array.isArray(t?.diagnosis) ? t.diagnosis : [])],
+        diagnoses: [...(Array.isArray(t?.diagnoses) ? t.diagnoses : [])],
+      };
+    });
+
+    for (const row of insertedRows) {
+      const tn =
+        row?.tooth_number != null && String(row.tooth_number).trim() !== ""
+          ? String(row.tooth_number).trim()
+          : "";
+      if (!tn) continue;
+      const code = String(row.icd10_code || "").trim();
+      const desc = String(row.icd10_description || row.notes || "").trim();
+      if (!merged[tn]) merged[tn] = { toothId: tn, procedures: [], diagnosis: [], diagnoses: [] };
+      const tooth = merged[tn];
+      const dlist = Array.isArray(tooth.diagnosis) ? tooth.diagnosis : [];
+      const key = `${code}__${desc}`;
+      const dup = dlist.some((d) => {
+        const c = String(d?.code || d?.icd10_code || "").trim();
+        const x = String(d?.description || d?.icd10_description || "").trim();
+        return `${c}__${x}` === key;
+      });
+      if (dup) continue;
+      tooth.diagnosis.push({
+        code: code || null,
+        description: desc || null,
+        icd10_code: code || null,
+        icd10_description: desc || null,
+        meta: { source: "encounter_diagnoses", encounter_id: eid, id: row.id },
+      });
+    }
+
+    const payload = {
+      schemaVersion: 1,
+      updatedAt: now(),
+      patientId: String(base.patientId || patientUuid),
+      teeth: Object.values(merged),
+      formCompleted: base.formCompleted,
+      formCompletedAt: base.formCompletedAt,
+    };
+
+    const saveRes = await saveTreatmentsSupabaseWithFallback(patientUuid, payload, "doctor_encounter_diagnosis");
+    if (!saveRes?.ok) {
+      console.warn("[ENCOUNTER DIAGNOSIS MIRROR] save failed:", saveRes?.error?.message || saveRes?.error);
+    }
+  } catch (e) {
+    console.warn("[ENCOUNTER DIAGNOSIS MIRROR] exception:", e?.message || e);
+  }
+}
+
+// GET /api/admin/patients/:patientId/diagnoses
+// Canonical source: encounter_diagnoses for all patient_encounters rows (encounter-based; not legacy JSON).
+app.get("/api/admin/patients/:patientId/diagnoses", requireAdminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const clinicId = req.clinicId;
+
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+
+    const patientUuid = await resolveAdminPatientInternalId(patientId, clinicId);
+    if (!patientUuid) return res.json({ ok: true, diagnoses: [] });
+
+    const encounterPidKeys = await encounterPatientIdMatchSet(patientUuid, patientId);
+
+    const { data: encounters, error: encErr } = await supabase
+      .from("patient_encounters")
+      .select("id")
+      .in("patient_id", encounterPidKeys);
+
+    if (encErr) {
+      const ignorable = ["42P01", "PGRST116"].includes(String(encErr.code || ""));
+      if (!ignorable) {
+        console.error("[DIAGNOSES GET] patient_encounters error:", encErr.message);
+        return res.status(500).json({ ok: false, error: "fetch_failed", details: encErr.message });
+      }
+    }
+
+    const encounterIds = (encounters || []).map((e) => e.id).filter(Boolean);
+    if (!encounterIds.length) return res.json({ ok: true, diagnoses: [] });
+
+    const { data: diagnoses, error } = await supabase
+      .from("encounter_diagnoses")
+      .select("*")
+      .in("encounter_id", encounterIds)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[DIAGNOSES GET] encounter_diagnoses error:", error.message);
+      return res.status(500).json({ ok: false, error: "fetch_failed", details: error.message });
+    }
+
+    return res.json({ ok: true, diagnoses: diagnoses || [] });
+  } catch (e) {
+    console.error("[DIAGNOSES GET] exception:", e.message);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// POST /api/admin/patients/:patientId/diagnoses
+// Save a new diagnosis to encounter_diagnoses
+app.post("/api/admin/patients/:patientId/diagnoses", requireAdminAuth, async (req, res) => {
+  try {
+    const { patientId } = req.params;
+    const { icd10_code, icd10_description, tooth_number, notes, is_primary } = req.body || {};
+    const clinicId = req.clinicId;
+
+    if (!icd10_code && !icd10_description) {
+      return res.status(400).json({ ok: false, error: "icd10_code_or_description_required" });
+    }
+
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+
+    const patientUuid = await resolveAdminPatientInternalId(patientId, clinicId);
+    if (!patientUuid) {
+      return res.status(404).json({ ok: false, error: "patient_not_found", message: "Patient not found in this clinic" });
+    }
+
+    const adminEncPidKeys = await encounterPatientIdMatchSet(patientUuid, patientId);
+
+    // Find most recent encounter or create one
+    let encounterId = null;
+    const { data: existingEncList } = await supabase
+      .from("patient_encounters")
+      .select("id")
+      .in("patient_id", adminEncPidKeys)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const existingEnc = Array.isArray(existingEncList) && existingEncList[0] ? existingEncList[0] : null;
+
+    if (existingEnc?.id) {
+      encounterId = existingEnc.id;
+    } else {
+      const { data: newEnc, error: newEncErr } = await supabase
+        .from("patient_encounters")
+        .insert({ patient_id: patientUuid, encounter_type: "admin_entry", status: "draft" })
+        .select("id")
+        .single();
+      if (newEncErr) {
+        console.error("[DIAGNOSES POST] create encounter failed:", newEncErr.message);
+        return res.status(500).json({ ok: false, error: "encounter_create_failed", details: newEncErr.message });
+      }
+      encounterId = newEnc?.id;
+    }
+
+    if (!encounterId) return res.status(500).json({ ok: false, error: "no_encounter" });
+
+    // Insert diagnosis
+    const { data: diag, error } = await supabase
+      .from("encounter_diagnoses")
+      .insert({
+        encounter_id: encounterId,
+        icd10_code: String(icd10_code || "").trim() || null,
+        icd10_description: String(icd10_description || "").trim() || null,
+        tooth_number: tooth_number ? String(tooth_number).trim() : null,
+        notes: notes ? String(notes).trim() : null,
+        is_primary: !!is_primary,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[DIAGNOSES POST] insert error:", error.message);
+      return res.status(500).json({
+        ok: false,
+        error: "insert_failed",
+        message: "Tanılar kaydedilemedi",
+        details: error.message,
+      });
+    }
+
+    if (!diag || !diag.id) {
+      console.error("[DIAGNOSES POST] Empty insert result (no row returned)");
+      return res.status(500).json({
+        ok: false,
+        error: "insert_empty",
+        message: "Tanılar veritabanına yazılmadı (empty result)",
+      });
+    }
+
+    return res.json({ ok: true, encounterId, diagnosis: diag });
+  } catch (e) {
+    console.error("[DIAGNOSES POST] exception:", e.message);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// DELETE /api/admin/patients/:patientId/diagnoses/:diagnosisId
+app.delete("/api/admin/patients/:patientId/diagnoses/:diagnosisId", requireAdminAuth, async (req, res) => {
+  try {
+    const { diagnosisId } = req.params;
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+
+    const { error } = await supabase
+      .from("encounter_diagnoses")
+      .delete()
+      .eq("id", diagnosisId);
+
+    if (error) {
+      console.error("[DIAGNOSES DELETE] error:", error.message);
+      return res.status(500).json({ ok: false, error: "delete_failed", details: error.message });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("[DIAGNOSES DELETE] exception:", e.message);
     return res.status(500).json({ ok: false, error: "internal_error" });
   }
 });
 
 // PUT /api/admin/patients/assign-doctor
-// Assign doctor to patient
+// Assign doctor to patient via patients.primary_doctor_id column.
+// Requires migration: ALTER TABLE patients ADD COLUMN IF NOT EXISTS primary_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL;
 app.put('/api/admin/patients/assign-doctor', requireAdminAuth, async (req, res) => {
   try {
-    console.log("🔥 ASSIGN ROUTE HIT");
-    console.log("🔥 BODY:", req.body);
+    const { patientId, doctorId } = req.body || {};
 
-    const { patientId, doctorId } = req.body;
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId missing' });
+    if (!doctorId)  return res.status(400).json({ ok: false, error: 'doctorId missing' });
+    if (!isSupabaseEnabled()) return res.status(500).json({ ok: false, error: 'supabase_not_configured' });
 
-    console.log("PATIENT ID USED:", patientId);
+    const clinicId = req.clinicId || null;
+    const now = new Date().toISOString();
 
-    if (!patientId) {
-      return res.status(400).json({ ok: false, error: 'patientId missing' });
+    // ── 1. Resolve patient UUID (önce klinik ile; yoksa aynı klinikte kayıt farklı clinic_id ile kalmış olabilir) ──
+    let patientUuid = null;
+    for (const col of ['id', 'patient_id']) {
+      let q = supabase.from('patients').select('id').eq(col, patientId);
+      if (clinicId) q = q.eq('clinic_id', clinicId);
+      const { data } = await q.limit(1);
+      if (data && data[0]) { patientUuid = data[0].id; break; }
+    }
+    if (!patientUuid && clinicId) {
+      for (const col of ['id', 'patient_id']) {
+        const { data } = await supabase.from('patients').select('id').eq(col, patientId).limit(1);
+        if (data && data[0]) { patientUuid = data[0].id; break; }
+      }
+    }
+    if (!patientUuid) {
+      return res.status(404).json({ ok: false, error: 'patient_not_found_or_not_in_clinic' });
     }
 
-    if (!doctorId) {
-      return res.status(400).json({ ok: false, error: 'doctorId missing' });
+    // ── 1b. primary_doctor_id FK = doctors.id (UUID); admin bazen doctor_id kodu (d_…) gönderir ──
+    const rawDoc = String(doctorId || "").trim();
+    let canonicalDoctorUuid = "";
+    const { data: docById } = await supabase.from("doctors").select("id").eq("id", rawDoc).maybeSingle();
+    if (docById?.id) canonicalDoctorUuid = String(docById.id).trim();
+    if (!canonicalDoctorUuid) {
+      const { data: docByCode } = await supabase.from("doctors").select("id").eq("doctor_id", rawDoc).maybeSingle();
+      if (docByCode?.id) canonicalDoctorUuid = String(docByCode.id).trim();
+    }
+    if (!canonicalDoctorUuid || !DOCTOR_FK_UUID_RE.test(canonicalDoctorUuid)) {
+      return res.status(400).json({ ok: false, error: 'doctor_not_found', message: 'Çözümlenen doktor UUID bulunamadı.' });
     }
 
-    // 🔥 Tam Doğru Kod - Always use patient_id column
-    const { data, error } = await supabase
+    // ── 2. Update patients.primary_doctor_id ──────────────────────────────────
+    const { error: updateErr } = await supabase
       .from('patients')
-      .update({ primary_doctor_id: doctorId })
-      .eq('patient_id', patientId)
-      .select();
+      .update({ primary_doctor_id: canonicalDoctorUuid, updated_at: now })
+      .eq('id', patientUuid);
 
-    console.log("UPDATE RESULT:", data, error);
-
-    if (error) {
-      console.error("SUPABASE ERROR:", error);
-      return res.status(500).json({ ok: false, error: error.message });
+    if (updateErr) {
+      const code = String(updateErr.code || '');
+      if (code === '42703' || code === 'PGRST204') {
+        // Column doesn't exist yet — tell admin to run migration
+        return res.status(500).json({
+          ok: false,
+          error: 'migration_required',
+          message: 'Run migration: ALTER TABLE patients ADD COLUMN IF NOT EXISTS primary_doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL;',
+        });
+      }
+      console.error('[ASSIGN DOCTOR] update error:', updateErr.message);
+      return res.status(500).json({ ok: false, error: 'assign_failed', message: updateErr.message });
     }
 
-    return res.json({ ok: true, data });
+    console.log(`[ASSIGN DOCTOR] patient=${patientUuid} → doctor=${canonicalDoctorUuid} (raw=${rawDoc})`);
+    let treatmentTeamSync = { ok: false };
+    try {
+      treatmentTeamSync = await syncAssignedDoctorOnPatientTreatmentPlans(patientUuid, canonicalDoctorUuid);
+      console.log("[ASSIGN DOCTOR] treatment_team sync:", treatmentTeamSync);
+    } catch (e) {
+      console.warn("[ASSIGN DOCTOR] treatment_team sync failed:", e?.message || e);
+    }
+    return res.json({
+      ok: true,
+      patientId: patientUuid,
+      doctorId: canonicalDoctorUuid,
+      treatmentTeamSync,
+    });
 
   } catch (err) {
-    console.error("ASSIGN ROUTE CRASH:", err);
+    console.error('[ASSIGN DOCTOR] crash:', err);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
@@ -5218,15 +8478,105 @@ function isPlainObject(x) {
   return x !== null && typeof x === "object" && !Array.isArray(x);
 }
 
-function isMissingColumnError(error, columnName) {
-  const msg = String(error?.message || "");
-  const details = String(error?.details || "");
-  const hint = String(error?.hint || "");
-  const combined = `${msg} ${details} ${hint}`.toLowerCase();
-  const code = String(error?.code || "");
-  const isMissingCode = code === "PGRST204" || code === "42703";
-  if (!columnName) return isMissingCode;
-  return isMissingCode && combined.includes(String(columnName || "").toLowerCase());
+/** Doctor GET diagnoses: dedupe merged rows (encounter + legacy). */
+function dedupeDiagnosisRowsById(rows) {
+  const out = [];
+  const seen = new Set();
+  for (const r of rows || []) {
+    if (!r) continue;
+    const id = String(r.id ?? "").trim();
+    const key =
+      id ||
+      `fb:${String(r.encounter_id ?? "").trim()}:${String(r.tooth_number ?? "").trim()}:${String(r.icd10_code ?? "").trim()}:${String(r.icd10_description ?? "").trim()}:${String(r.created_at ?? "").slice(0, 24)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
+/** Tanı API: epoch (1970) / bozuk created_at — GET yanıtında düzelt (mobil uyumu) */
+const MIN_VALID_DIAGNOSIS_TS_MS = Date.UTC(1980, 0, 1);
+
+function diagnosisTimestampMs(v) {
+  if (v == null || v === "") return NaN;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : NaN;
+}
+
+function normalizeDiagnosisRowForApi(row) {
+  if (!row || typeof row !== "object") return row;
+  const ca = diagnosisTimestampMs(row.created_at);
+  const ua = diagnosisTimestampMs(row.updated_at);
+  const out = { ...row };
+  if (!Number.isFinite(ca) || ca < MIN_VALID_DIAGNOSIS_TS_MS) {
+    if (Number.isFinite(ua) && ua >= MIN_VALID_DIAGNOSIS_TS_MS) {
+      out.created_at = new Date(ua).toISOString();
+    } else {
+      out.created_at = null;
+    }
+  }
+  return out;
+}
+
+function diagnosisSortKeyMs(row) {
+  if (!row || typeof row !== "object") return 0;
+  const ca = diagnosisTimestampMs(row.created_at);
+  const ua = diagnosisTimestampMs(row.updated_at);
+  if (Number.isFinite(ca) && ca >= MIN_VALID_DIAGNOSIS_TS_MS) return ca;
+  if (Number.isFinite(ua) && ua >= MIN_VALID_DIAGNOSIS_TS_MS) return ua;
+  return 0;
+}
+
+/**
+ * Legacy: diagnoses mirrored only in patients.treatments.teeth[].diagnosis / .diagnoses (meta.encounter_id optional).
+ */
+function extractDiagnosesFromPatientTreatmentsJson(treatments, currentEncounterId, includeAllEncounters) {
+  if (!isPlainObject(treatments)) return [];
+  const eidCur = String(currentEncounterId || "").trim();
+  const out = [];
+  const teeth = Array.isArray(treatments.teeth) ? treatments.teeth : [];
+  for (const tooth of teeth) {
+    const tn = String(
+      tooth?.toothId ?? tooth?.tooth_id ?? tooth?.toothNumber ?? tooth?.fdiNumber ?? tooth?.tooth_number ?? ""
+    ).trim();
+    if (!tn) continue;
+    const dlists = [
+      ...(Array.isArray(tooth.diagnosis) ? tooth.diagnosis : []),
+      ...(Array.isArray(tooth.diagnoses) ? tooth.diagnoses : []),
+    ];
+    dlists.forEach((d, i) => {
+      if (!d || typeof d !== "object") return;
+      const meta = isPlainObject(d.meta) ? d.meta : {};
+      const eid = String(meta.encounter_id || meta.encounterId || "").trim();
+      if (!includeAllEncounters && eid && eidCur && eid !== eidCur) return;
+      const code = String(d.icd10_code || d.code || "").trim();
+      const desc = String(d.icd10_description || d.description || "").trim();
+      if (!code && !desc) return;
+      const mid = meta.id != null ? String(meta.id).trim() : "";
+      const rid =
+        mid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(mid)
+          ? mid
+          : `json-${tn}-${code || "x"}-${i}-${eid || eidCur || "na"}`;
+      const rawCa = d.created_at;
+      const caMs = rawCa != null ? Date.parse(String(rawCa)) : NaN;
+      const safeCreated =
+        Number.isFinite(caMs) && caMs >= MIN_VALID_DIAGNOSIS_TS_MS
+          ? new Date(caMs).toISOString()
+          : null;
+      out.push({
+        id: rid,
+        encounter_id: eid || eidCur || null,
+        tooth_number: tn,
+        icd10_code: code,
+        icd10_description: desc,
+        notes: d.notes != null && String(d.notes).trim() ? String(d.notes).trim() : null,
+        created_at: safeCreated,
+        _source: "patient_treatments_json",
+      });
+    });
+  }
+  return out;
 }
 
 function deepMerge(base, patch) {
@@ -5528,21 +8878,21 @@ async function saveTravelHandler(req, res) {
       const existingTravel = isPlainObject(p?.travel) ? p.travel : {};
       const base = deepMerge(defaultTravelData(patientId), existingTravel);
 
-      // CRITICAL: Never let one actor overwrite the other's fields.
-      // - Admin may only update: hotel, airportPickup
-      // - Patient may only update: flights/flight, notes, editPolicy
-      // Missing fields MUST be preserved; forbidden fields are ignored (not deleted).
+      // Admin can update all travel fields (clinic arranges travel for patients).
+      // Patient can only update their own notes and flight preferences.
       const patch = {};
       if (req.isAdmin) {
-        if (hasIncoming("hotel")) patch.hotel = incoming.hotel;
-        if (hasIncoming("airportPickup")) patch.airportPickup = incoming.airportPickup;
-        // Admin cannot change editPolicy or patient-controlled fields
+        if (hasIncoming("hotel"))        patch.hotel        = incoming.hotel;
+        if (hasIncoming("airportPickup"))patch.airportPickup= incoming.airportPickup;
+        if (hasIncoming("flights"))      patch.flights      = incoming.flights;
+        if (hasIncoming("flight"))       patch.flight       = incoming.flight;
+        if (hasIncoming("notes"))        patch.notes        = incoming.notes;
+        if (hasIncoming("events"))       patch.events       = incoming.events;
       } else {
-        if (hasIncoming("notes")) patch.notes = incoming.notes;
-        if (hasIncoming("flights")) patch.flights = incoming.flights;
-        if (hasIncoming("flight")) patch.flight = incoming.flight;
-        // Patient can set editPolicy (patient-controlled)
-        if (hasIncoming("editPolicy")) patch.editPolicy = incoming.editPolicy;
+        if (hasIncoming("notes"))       patch.notes       = incoming.notes;
+        if (hasIncoming("flights"))     patch.flights     = incoming.flights;
+        if (hasIncoming("flight"))      patch.flight      = incoming.flight;
+        if (hasIncoming("editPolicy"))  patch.editPolicy  = incoming.editPolicy;
       }
 
       const touched = (k) => Object.prototype.hasOwnProperty.call(patch, k);
@@ -5768,6 +9118,188 @@ app.post("/api/admin/patient/:patientId/travel", requireAdminAuth, saveTravelHan
 app.post("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
 app.put("/api/patient/:patientId/travel", requireAdminOrPatientToken, saveTravelHandler);
 
+// ================== PATIENT TIMELINE (converts travel data to timeline items) ==================
+
+/** Parse any date string into ISO — handles YYYY-MM-DD, DD/MM/YYYY, DD.MM.YYYY, and full ISO */
+function parseTravelDate(dateStr, timeStr) {
+  if (!dateStr) return null;
+  const ds = String(dateStr).trim();
+  const ts = String(timeStr || "").trim() || "00:00";
+  let iso = null;
+
+  // Already ISO or ISO-like: 2026-03-25 or 2026-03-25T...
+  if (/^\d{4}-\d{2}-\d{2}/.test(ds)) {
+    iso = ds.includes("T") ? ds : `${ds}T${ts}:00`;
+  // DD/MM/YYYY or DD.MM.YYYY
+  } else if (/^\d{2}[\/\.]\d{2}[\/\.]\d{4}/.test(ds)) {
+    const parts = ds.split(/[\/\.]/);
+    iso = `${parts[2]}-${parts[1]}-${parts[0]}T${ts}:00`;
+  // MM/DD/YYYY
+  } else if (/^\d{2}\/\d{2}\/\d{4}/.test(ds)) {
+    const parts = ds.split("/");
+    iso = `${parts[2]}-${parts[0]}-${parts[1]}T${ts}:00`;
+  } else {
+    // Fallback: let Date parse it
+    const d = new Date(ds);
+    if (!isNaN(d.getTime())) iso = d.toISOString();
+  }
+
+  if (!iso) return null;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+app.get("/api/patient/:patientId/timeline", requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || "").trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
+
+    if (req.patientId !== patientId) {
+      console.warn(`[TIMELINE] patientId mismatch: token=${req.patientId} url=${patientId}`);
+      return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
+    }
+
+    let travelData = null;
+
+    if (isSupabaseEnabled()) {
+      const { data: p, error: travelErr } = await fetchPatientTravelRowSupabase(patientId, null);
+      if (travelErr) {
+        console.error(`[TIMELINE] Supabase travel fetch error: code=${travelErr.code} msg=${travelErr.message}`);
+      }
+      const rawFlightsCount = Array.isArray(p?.travel?.flights) ? p.travel.flights.length : 0;
+      const hasLegacyFlight = isPlainObject(p?.travel?.flight) && (p.travel.flight.arrival || p.travel.flight.departure);
+      console.log(`[TIMELINE] Supabase travel fetch: patientId=${patientId} found=${!!p} hasTravel=${!!(p && p.travel)} flightsCount=${rawFlightsCount} hasLegacyFlight=${hasLegacyFlight}`);
+      if (p && p.travel) {
+        console.log(`[TIMELINE] raw travel keys=${Object.keys(p.travel).join(",")} hotel=${JSON.stringify(p.travel.hotel)} airportPickup=${JSON.stringify(p.travel.airportPickup)}`);
+      }
+      if (p) {
+        travelData = deepMerge(defaultTravelData(patientId), p.travel || {});
+      }
+    }
+
+    if (!travelData && canUseFileFallback()) {
+      const TRAVEL_DIR = path.join(DATA_DIR, "travel");
+      const travelFile = path.join(TRAVEL_DIR, `${patientId}.json`);
+      travelData = deepMerge(defaultTravelData(patientId), readJson(travelFile, {}));
+    }
+
+    if (!travelData) {
+      console.log(`[TIMELINE] No travel data for patientId=${patientId} — Supabase enabled=${isSupabaseEnabled()}`);
+      return res.json({ ok: true, items: [] });
+    }
+
+    const items = [];
+    const createdAt = travelData.updatedAt || new Date().toISOString();
+
+    // ── Flights ───────────────────────────────────────────────────────────
+    // Collect from `flights[]` array first, then fall back to legacy `flight.arrival/departure` object
+    const flightsArr = Array.isArray(travelData.flights) && travelData.flights.length > 0
+      ? travelData.flights
+      : [];
+
+    const legacyLegs = [];
+    if (flightsArr.length === 0 && isPlainObject(travelData.flight)) {
+      if (travelData.flight.arrival)   legacyLegs.push({ ...travelData.flight.arrival,   type: "OUTBOUND" });
+      if (travelData.flight.departure) legacyLegs.push({ ...travelData.flight.departure, type: "RETURN"   });
+    }
+
+    const allFlights = flightsArr.length > 0 ? flightsArr : legacyLegs;
+
+    console.log(`[TIMELINE] flights=${allFlights.length} hotel=${!!(travelData.hotel && (travelData.hotel.name || travelData.hotel.checkIn))} pickup=${!!travelData.airportPickup}`);
+
+    allFlights.forEach((f, i) => {
+      if (!f || typeof f !== "object") return;
+      const typeUp = String(f.type || "").toUpperCase();
+      const isReturn = typeUp === "RETURN" || typeUp === "DEPARTURE";
+      const startDate = parseTravelDate(f.date, f.time);
+
+      items.push({
+        id: f.id || `flight_${patientId}_${i}`,
+        patient_id: patientId,
+        type: "flight",
+        title: isReturn ? "Dönüş Uçuşu" : "Gidiş Uçuşu",
+        description: f.from && f.to ? `${f.from} → ${f.to}` : null,
+        start_date: startDate,
+        end_date: null,
+        metadata: {
+          flight: {
+            ...f,
+            flightNo: f.flightNo || f.flightNumber || f.flight_no || null,
+          }
+        },
+        created_at: createdAt,
+      });
+    });
+
+    // ── Hotel ─────────────────────────────────────────────────────────────
+    const hotel = travelData.hotel;
+    if (isPlainObject(hotel) && (hotel.name || hotel.checkIn || hotel.checkOut)) {
+      items.push({
+        id: `hotel_${patientId}`,
+        patient_id: patientId,
+        type: "hotel",
+        title: hotel.name || "Otel",
+        description: hotel.address || null,
+        start_date: parseTravelDate(hotel.checkIn),
+        end_date:   parseTravelDate(hotel.checkOut),
+        metadata: { hotel },
+        created_at: createdAt,
+      });
+    }
+
+    // ── Airport pickup / transfer ─────────────────────────────────────────
+    const pickup = travelData.airportPickup;
+    const hasPickupData = isPlainObject(pickup) && (
+      pickup.name || pickup.contactName || pickup.phone || pickup.contactPhone ||
+      pickup.vehicle || pickup.vehicleInfo || pickup.meetingPoint
+    );
+    if (hasPickupData) {
+      const pickupName = pickup.name || pickup.contactName || null;
+      const pickupPhone = pickup.phone || pickup.contactPhone || null;
+      items.push({
+        id: `transfer_${patientId}`,
+        patient_id: patientId,
+        type: "transfer",
+        title: pickupName ? `Karşılama: ${pickupName}` : "Havalimanı Karşılama",
+        description: pickup.meetingPoint || pickup.vehicle || pickup.vehicleInfo || null,
+        start_date: null,
+        end_date: null,
+        metadata: {
+          airportPickup: {
+            ...pickup,
+            name: pickupName,
+            phone: pickupPhone,
+          }
+        },
+        created_at: createdAt,
+      });
+    }
+
+    // ── Custom events ─────────────────────────────────────────────────────
+    const events = Array.isArray(travelData.events) ? travelData.events : [];
+    events.forEach((evt, i) => {
+      if (!evt || typeof evt !== "object") return;
+      items.push({
+        id: evt.id || `event_${patientId}_${i}`,
+        patient_id: patientId,
+        type: evt.type || "appointment",
+        title: evt.title || evt.name || null,
+        description: evt.description || evt.note || null,
+        start_date: parseTravelDate(evt.date || evt.startDate || evt.start_date, evt.time),
+        end_date:   parseTravelDate(evt.endDate || evt.end_date),
+        metadata: evt.metadata || evt,
+        created_at: createdAt,
+      });
+    });
+
+    console.log(`[TIMELINE] patientId=${patientId} total items=${items.length} (flights=${allFlights.length})`);
+    return res.json({ ok: true, items });
+  } catch (e) {
+    console.error("[TIMELINE] error", e.message, e.stack && e.stack.split("\n")[1]);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 // ================== PATIENT TREATMENT (v1 JSONB, Supabase persistence) ==================
 function defaultTreatmentV1() {
   return {
@@ -5845,6 +9377,56 @@ function legacyTreatmentsToTreatmentV1(legacyPayload, enteredBy) {
     ...(enteredBy ? { enteredBy } : {}),
   };
   out.lastUpdatedAt = new Date().toISOString();
+
+  return out;
+}
+
+function treatmentV1ToLegacyTreatments(v1Payload, patientId) {
+  const source = isPlainObject(v1Payload) ? v1Payload : {};
+  const teethMap = isPlainObject(source.teeth) ? source.teeth : {};
+
+  const out = {
+    schemaVersion: 1,
+    updatedAt: source.lastUpdatedAt || new Date().toISOString(),
+    patientId,
+    teeth: [],
+  };
+
+  for (const [toothIdRaw, proceduresList] of Object.entries(teethMap)) {
+    const toothId = String(toothIdRaw || "").trim();
+    if (!toothId) continue;
+
+    const mappedProcedures = (Array.isArray(proceduresList) ? proceduresList : []).map((proc, index) => {
+      const typeRaw = String(proc?.procedure || proc?.procedure_name || proc?.type || "PROCEDURE").trim();
+      const type = procedures.normalizeType(typeRaw);
+      const normalizedStatus = normalizeTreatmentStatusV1(proc?.status);
+      let status = "PLANNED";
+      if (normalizedStatus === "completed") status = "COMPLETED";
+      else if (normalizedStatus === "in_progress") status = "ACTIVE";
+      else if (normalizedStatus === "planned") status = "PLANNED";
+
+      const date = proc?.date || null;
+      const procedureId = String(proc?.id || proc?.procedureId || `${patientId}-${toothId}-${type}-${index}`);
+
+      return {
+        id: procedureId,
+        procedureId,
+        type,
+        category: procedures.categoryForType(type),
+        status,
+        date,
+        scheduledAt: date,
+        notes: String(proc?.clinicNote || proc?.note || proc?.notes || ""),
+        diagnosis: Array.isArray(proc?.diagnosis) ? proc.diagnosis : (Array.isArray(proc?.diagnoses) ? proc.diagnoses : []),
+        createdAt: date || source.lastUpdatedAt || new Date().toISOString(),
+      };
+    });
+
+    out.teeth.push({
+      toothId,
+      procedures: mappedProcedures,
+    });
+  }
 
   return out;
 }
@@ -6040,6 +9622,365 @@ function mapTreatmentEventsForCalendar(rawEvents) {
   });
 }
 
+function resolveMissingDatePolicy(rawValue) {
+  const normalized = String(rawValue || "").trim().toUpperCase();
+  return normalized === "AUTO" ? "AUTO" : "MANUAL";
+}
+
+function todayYmdUtc() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeDoctorNameForConflict(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr")
+    .replace(/\b(dr|dr\.)\b/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeChairValueForConflict(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const prefixed = raw.match(/^chair\s*(\d+)$/i);
+  if (prefixed) return String(Number(prefixed[1]));
+  if (/^\d+$/.test(raw)) return String(Number(raw));
+  return raw.toUpperCase();
+}
+
+function toScheduledTimestampForConflict(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber) && asNumber > 0) return asNumber;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const ts = Date.parse(`${raw}T00:00:00`);
+    return Number.isFinite(ts) ? ts : null;
+  }
+  const ts = Date.parse(raw);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/** URL may use patients.id OR patients.patient_id — match either when comparing rows. */
+function patientRowMatchesApiPatientId(row, apiPatientId) {
+  const pid = String(apiPatientId || "").trim();
+  if (!pid || !row) return false;
+  return String(row.id || "").trim() === pid || String(row.patient_id || "").trim() === pid;
+}
+
+async function checkTreatmentScheduleAvailability({
+  clinicId,
+  patientId,
+  procedureId,
+  scheduledAt,
+  doctorId,
+  doctorName,
+  chairNo,
+}) {
+  if (!isSupabaseEnabled()) return { ok: true, skipped: true, reason: "supabase_disabled" };
+
+  const targetTs = toScheduledTimestampForConflict(scheduledAt);
+  if (!Number.isFinite(targetTs)) return { ok: true, skipped: true, reason: "date_missing" };
+
+  let effectiveClinicId = String(clinicId || "").trim();
+  if (!effectiveClinicId && patientId) {
+    try {
+      const patientRow = await getPatientById(patientId);
+      effectiveClinicId = String(patientRow?.clinic_id || "").trim();
+    } catch {}
+  }
+  if (!effectiveClinicId) return { ok: true, skipped: true, reason: "clinic_missing" };
+
+  const selectCandidates = [
+    "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatments, treatment_events",
+    "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatments, treatment_events",
+    "id, patient_id, clinic_id, name, full_name, doctor_id, treatments, treatment_events",
+    "id, patient_id, clinic_id, name, full_name, treatments, treatment_events",
+    "id, patient_id, clinic_id, name, full_name, treatments",
+  ];
+
+  let rows = [];
+  for (const selectClause of selectCandidates) {
+    const result = await supabase
+      .from("patients")
+      .select(selectClause)
+      .eq("clinic_id", effectiveClinicId)
+      .order("created_at", { ascending: false });
+
+    if (!result.error) {
+      rows = Array.isArray(result.data) ? result.data : [];
+      break;
+    }
+
+    if (!isMissingColumnError(result.error, "primary_doctor_id") &&
+        !isMissingColumnError(result.error, "doctor_id") &&
+        !isMissingColumnError(result.error, "treatment_events") &&
+        !isMissingColumnError(result.error, "treatments") &&
+        !["42703", "PGRST204"].includes(String(result.error.code || ""))) {
+      console.error("[TREATMENTS] schedule availability query failed", {
+        message: result.error.message,
+        code: result.error.code,
+        details: result.error.details,
+      });
+      break;
+    }
+  }
+
+  const doctorNameById = new Map();
+  const doctorIds = [...new Set(
+    rows
+      .map((row) => String(row?.primary_doctor_id || row?.doctor_id || "").trim())
+      .filter(Boolean)
+  )];
+  const incomingDoctorId = String(doctorId || "").trim();
+  if (incomingDoctorId) doctorIds.push(incomingDoctorId);
+
+  const uniqueDoctorIds = [...new Set(doctorIds.filter(Boolean))];
+  if (uniqueDoctorIds.length > 0) {
+    const byId = await supabase
+      .from("doctors")
+      .select("id, doctor_id, name, full_name, email")
+      .in("id", uniqueDoctorIds);
+
+    if (byId.error && ["42703", "PGRST204"].includes(String(byId.error.code || ""))) {
+      const byDoctorId = await supabase
+        .from("doctors")
+        .select("id, doctor_id, name, full_name, email")
+        .in("doctor_id", uniqueDoctorIds);
+      if (!byDoctorId.error) {
+        (byDoctorId.data || []).forEach((doc) => {
+          const keyA = String(doc?.id || "").trim();
+          const keyB = String(doc?.doctor_id || "").trim();
+          const label = String(doc?.name || doc?.full_name || doc?.email || keyA || keyB || "").trim();
+          if (keyA && label) doctorNameById.set(keyA, label);
+          if (keyB && label) doctorNameById.set(keyB, label);
+        });
+      }
+    } else if (!byId.error) {
+      (byId.data || []).forEach((doc) => {
+        const keyA = String(doc?.id || "").trim();
+        const keyB = String(doc?.doctor_id || "").trim();
+        const label = String(doc?.name || doc?.full_name || doc?.email || keyA || keyB || "").trim();
+        if (keyA && label) doctorNameById.set(keyA, label);
+        if (keyB && label) doctorNameById.set(keyB, label);
+      });
+    }
+  }
+
+  const targetMinute = Math.floor(targetTs / 60000);
+  const targetDoctorId = String(doctorId || "").trim();
+  const targetDoctorName = normalizeDoctorNameForConflict(
+    doctorName || doctorNameById.get(targetDoctorId) || ""
+  );
+  const targetChair = normalizeChairValueForConflict(chairNo);
+  const targetProcedureId = String(procedureId || "").trim();
+  const targetPatientId = String(patientId || "").trim();
+
+  const resolveDoctorFromEntry = (entry, patientDoctorId, patientDoctorName) => {
+    const entryDoctorId = String(
+      entry?.assignedDoctorId ||
+      entry?.assigned_doctor_id ||
+      entry?.doctorId ||
+      entry?.doctor_id ||
+      entry?.meta?.doctorId ||
+      entry?.meta?.doctor_id ||
+      patientDoctorId ||
+      ""
+    ).trim();
+    const entryDoctorName = normalizeDoctorNameForConflict(
+      entry?.assignedDoctorName ||
+      entry?.doctorName ||
+      entry?.doctor ||
+      doctorNameById.get(entryDoctorId) ||
+      patientDoctorName ||
+      ""
+    );
+    return { id: entryDoctorId, name: entryDoctorName };
+  };
+
+  for (const row of rows) {
+    const rowPatientId = String(row?.patient_id || row?.id || "").trim();
+    const patientDoctorId = String(row?.primary_doctor_id || row?.doctor_id || "").trim();
+    const patientDoctorName = normalizeDoctorNameForConflict(
+      doctorNameById.get(patientDoctorId) || ""
+    );
+
+    const treatments = row?.treatments || {};
+    const teeth = Array.isArray(treatments?.teeth) ? treatments.teeth : [];
+    for (const tooth of teeth) {
+      const proceduresList = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+      for (const proc of proceduresList) {
+        const rowProcedureId = String(proc?.procedureId || proc?.id || "").trim();
+        if (
+          targetPatientId &&
+          targetProcedureId &&
+          patientRowMatchesApiPatientId(row, targetPatientId) &&
+          rowProcedureId === targetProcedureId
+        ) {
+          continue;
+        }
+
+        const procTs =
+          toScheduledTimestampForConflict(proc?.scheduledAt) ??
+          toScheduledTimestampForConflict(proc?.date) ??
+          toScheduledTimestampForConflict(proc?.createdAt);
+        if (!Number.isFinite(procTs)) continue;
+        if (Math.floor(procTs / 60000) !== targetMinute) continue;
+
+        const doctor = resolveDoctorFromEntry(proc, patientDoctorId, patientDoctorName);
+        const procChair = normalizeChairValueForConflict(
+          proc?.chairNo || proc?.chair_no || proc?.chair || proc?.chairId || proc?.chair_id || proc?.meta?.chairNo || proc?.meta?.chair_no
+        );
+
+        const doctorBusy = Boolean(
+          targetDoctorName &&
+          ((doctor.name && doctor.name === targetDoctorName) ||
+            (targetDoctorId && doctor.id && doctor.id === targetDoctorId))
+        );
+        const chairBusy = Boolean(targetChair && procChair && procChair === targetChair);
+
+        if (doctorBusy || chairBusy) {
+          return {
+            ok: false,
+            error: "schedule_conflict",
+            message: "Bu tarih/saatte doktor veya chair müsait değil.",
+            doctorBusy,
+            chairBusy,
+            conflictingPatientId: rowPatientId || null,
+            conflictingProcedureId: rowProcedureId || null,
+          };
+        }
+      }
+    }
+
+    const events = Array.isArray(row?.treatment_events) ? row.treatment_events : [];
+    for (const event of events) {
+      const eventTs =
+        toScheduledTimestampForConflict(event?.startAt) ??
+        toScheduledTimestampForConflict(event?.scheduledAt) ??
+        toScheduledTimestampForConflict(event?.timestamp) ??
+        (event?.date ? toScheduledTimestampForConflict(`${event.date}T${event.time || "00:00"}:00`) : null);
+      if (!Number.isFinite(eventTs)) continue;
+      if (Math.floor(eventTs / 60000) !== targetMinute) continue;
+
+      const doctor = resolveDoctorFromEntry(event, patientDoctorId, patientDoctorName);
+      const eventChair = normalizeChairValueForConflict(
+        event?.chairNo || event?.chair_no || event?.chair || event?.chairId || event?.chair_id
+      );
+
+      const doctorBusy = Boolean(
+        targetDoctorName &&
+        ((doctor.name && doctor.name === targetDoctorName) ||
+          (targetDoctorId && doctor.id && doctor.id === targetDoctorId))
+      );
+      const chairBusy = Boolean(targetChair && eventChair && eventChair === targetChair);
+
+      if (doctorBusy || chairBusy) {
+        return {
+          ok: false,
+          error: "schedule_conflict",
+          message: "Bu tarih/saatte doktor veya chair müsait değil.",
+          doctorBusy,
+          chairBusy,
+          conflictingPatientId: rowPatientId || null,
+          conflictingProcedureId: String(event?.id || "") || null,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+async function syncProcedureSchedulingAlert({
+  patientId,
+  clinicId,
+  procedureId,
+  toothId,
+  procedureType,
+  missingDate,
+  autoAssignedDate,
+}) {
+  const safePatientId = String(patientId || "").trim();
+  const safeProcedureId = String(procedureId || "").trim();
+  if (!safePatientId || !safeProcedureId) {
+    return { ok: false, error: "invalid_alert_context" };
+  }
+
+  const alertId = `sched_alert_${safeProcedureId}`;
+  const nowIso = new Date().toISOString();
+  const eventDate = nowIso.slice(0, 10);
+  const eventTime = nowIso.slice(11, 16);
+  const safeToothId = String(toothId || "").trim();
+  const safeProcedureType = String(procedureType || "TREATMENT").trim();
+
+  const normalizeEvents = (input) => (Array.isArray(input) ? input : []);
+
+  const cleanAndAppend = (events) => {
+    const cleaned = normalizeEvents(events).filter((event) => {
+      const sameId = String(event?.id || "") === alertId;
+      const isMissingDateAlert =
+        String(event?.meta?.kind || "") === "MISSING_TREATMENT_DATE_ALERT" &&
+        String(event?.meta?.procedureId || "") === safeProcedureId;
+      return !sameId && !isMissingDateAlert;
+    });
+
+    if (autoAssignedDate) {
+      cleaned.push({
+        id: alertId,
+        date: eventDate,
+        time: eventTime,
+        type: "SCHEDULING_AUTO_ASSIGNED",
+        title: "Tedavi tarihi otomatik atandı",
+        desc: `Diş ${safeToothId || "-"} • ${safeProcedureType}. Tarih ${autoAssignedDate} olarak otomatik atandı; gerekirse düzeltin.`,
+        status: "PLANNED",
+        createdAt: nowIso,
+        meta: {
+          kind: "MISSING_TREATMENT_DATE_ALERT",
+          patientId: safePatientId,
+          procedureId: safeProcedureId,
+          toothId: safeToothId || null,
+          procedureType: safeProcedureType,
+          missingDate: false,
+          autoAssignedDate,
+        },
+      });
+    }
+
+    return cleaned;
+  };
+
+  if (isSupabaseEnabled()) {
+    const { data, error } = await fetchPatientTreatmentEventsRowSupabase(safePatientId, clinicId || null);
+    if (error && !isMissingColumnError(error, "treatment_events")) {
+      throw error;
+    }
+
+    if (!error) {
+      const nextEvents = cleanAndAppend(data?.treatment_events);
+      const saveResult = await updatePatientTreatmentEventsRowSupabase(safePatientId, clinicId || null, nextEvents);
+      if (saveResult.error) throw saveResult.error;
+      return { ok: true, saved: true, via: "supabase" };
+    }
+  }
+
+  if (canUseFileFallback()) {
+    const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
+    if (!fs.existsSync(TREATMENTS_DIR)) fs.mkdirSync(TREATMENTS_DIR, { recursive: true });
+    const eventsFile = path.join(TREATMENTS_DIR, `${safePatientId}.events.json`);
+    const current = readJson(eventsFile, []);
+    const nextEvents = cleanAndAppend(current);
+    writeJson(eventsFile, nextEvents);
+    return { ok: true, saved: true, via: "file" };
+  }
+
+  return { ok: false, error: "treatment_events_unavailable" };
+}
+
 app.get("/api/patient/:patientId/treatment-events", requireAdminOrPatientToken, async (req, res) => {
   try {
     const patientId = String(req.params.patientId || "").trim();
@@ -6231,7 +10172,21 @@ async function saveTreatmentV1Handler(req, res) {
       return res.status(500).json({ ok: false, error: "treatment_save_failed" });
     }
 
-    return res.json({ ok: true, saved: true, patient: updatedPatient });
+    const canonicalPayload = treatmentV1ToLegacyTreatments(updated, patientId);
+    const syncResult = await saveTreatmentsSupabaseWithFallback(patientId, canonicalPayload, actor);
+    if (!syncResult.ok) {
+      console.error("[TREATMENT] Canonical treatments sync failed", {
+        message: syncResult.error?.message || String(syncResult.error || "unknown_error"),
+      });
+    }
+
+    return res.json({
+      ok: true,
+      saved: true,
+      patient: updatedPatient,
+      canonicalEndpoint: "/api/patient/:patientId/treatments",
+      syncWarning: syncResult.ok ? null : "canonical_treatments_sync_failed",
+    });
   } catch (e) {
 
     return res.status(500).json({ ok: false, error: "internal_error" });
@@ -6360,35 +10315,74 @@ async function patientHealthGetHandler(req, res) {
 
     // PRODUCTION: Supabase is source of truth
     if (isSupabaseEnabled()) {
-      const { data: p, error } = await fetchPatientHealthRowSupabase(patientId);
+      const UUID_RE_H = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isUuidH = UUID_RE_H.test(patientId);
 
-      if (error) {
-        console.error("[HEALTH] Supabase fetch failed", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-        });
-        if (isMissingColumnError(error, "health")) {
-          return res.status(500).json({
-            ok: false,
-            error: "health_column_missing",
-            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
-          });
-        }
-        if (String(error.code || "") === "PGRST116") {
-          return res.status(404).json({ ok: false, error: "patient_not_found" });
-        }
+      // ── Source 1: patients.health JSONB column ─────────────────────────────
+      const { data: p, error } = await fetchPatientHealthRowSupabase(patientId);
+      console.log("[HEALTH GET] patientId:", patientId, "| patients row found:", !!p, "| health col:", p ? JSON.stringify(p.health).substring(0, 80) : "null", "| error:", error ? error.message : "none");
+
+      if (error && !isMissingColumnError(error, "health") && String(error.code || "") !== "PGRST116") {
+        console.error("[HEALTH] Supabase fetch failed", { message: error.message, code: error.code });
         return res.status(500).json({ ok: false, error: "health_fetch_failed" });
       }
 
-      const health = p?.health || {};
+      const patientUuid  = (p && p.id) || (isUuidH ? patientId : null);
+      const patientTextId = (p && p.patient_id) || (!isUuidH ? patientId : null);
+
+      let fd = {};
+      let healthMeta = {};
+
+      const rawHealth = p && p.health;
+      if (rawHealth && typeof rawHealth === "object" && rawHealth.formData) {
+        fd = rawHealth.formData || {};
+        healthMeta = rawHealth;
+      }
+
+      // ── Source 2: patient_health_forms table (fallback / alternative storage) ─
+      if (!fd || Object.keys(fd).length === 0) {
+        const candidates = Array.from(new Set([patientUuid, patientTextId].filter(Boolean)));
+        for (let ci = 0; ci < candidates.length; ci++) {
+          const cid = candidates[ci];
+          const { data: hfRows } = await supabase.from("patient_health_forms")
+            .select("*")
+            .eq("patient_id", cid)
+            .order("updated_at", { ascending: false })
+            .limit(1);
+          const hf = hfRows && hfRows[0];
+          console.log("[HEALTH GET] patient_health_forms lookup pid=" + cid + " found:", !!hf);
+          if (hf) {
+            // This table stores fields directly or in form_data
+            const raw = hf.form_data || hf;
+            fd = {
+              allergies:       raw.allergies,
+              medications:     raw.medications,
+              chronicDiseases: raw.chronicDiseases,
+              conditions:      raw.conditions,
+              medicationsList: raw.medicationsList,
+              notes:           raw.notes,
+              submittedAt:     raw.submittedAt,
+            };
+            healthMeta = { isComplete: hf.is_complete, completedAt: hf.completed_at, updatedAt: hf.updated_at };
+            break;
+          }
+        }
+      }
+
+      const hasData = fd && Object.values(fd).some(function(v) {
+        return v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
+      });
+      const isComplete = healthMeta.isComplete === true || hasData;
+
+      console.log("[HEALTH GET] returning isComplete:", isComplete, "hasData:", hasData, "fd keys:", Object.keys(fd));
       return res.json({
         ok: true,
-        formData: health.formData || {},
-        isComplete: health.isComplete === true,
-        completedAt: health.completedAt || null,
-        updatedAt: health.updatedAt || null,
-        createdAt: health.createdAt || null,
+        form: fd,
+        formData: fd,
+        isComplete: isComplete,
+        completedAt: healthMeta.completedAt || null,
+        updatedAt: healthMeta.updatedAt || null,
+        createdAt: healthMeta.createdAt || null,
       });
     }
 
@@ -6430,8 +10424,27 @@ async function patientHealthPostHandler(req, res) {
       return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
     }
 
-    const formData = req.body?.formData || {};
-    const isComplete = req.body?.isComplete === true;
+    // Accept both formats:
+    // 1. Legacy: { formData: {...}, isComplete: true }
+    // 2. Mobile app: raw fields { allergies, medications, conditions, ... }
+    const rawBody = req.body || {};
+    const formData = rawBody.formData
+      ? rawBody.formData
+      : {
+          allergies:       rawBody.allergies,
+          medications:     rawBody.medications,
+          chronicDiseases: rawBody.chronicDiseases,
+          conditions:      rawBody.conditions,
+          medicationsList: rawBody.medicationsList,
+          notes:           rawBody.notes,
+          submittedAt:     rawBody.submittedAt,
+        };
+
+    // Default isComplete to true when submitting (mobile app doesn't send this field)
+    const isComplete = rawBody.isComplete !== undefined
+      ? rawBody.isComplete === true
+      : true;
+
     const nowTs = now();
 
     const payload = {
@@ -6637,16 +10650,22 @@ async function patientHealthPutHandler(req, res) {
 
 // GET /api/patient/:patientId/health (canonical)
 app.get("/api/patient/:patientId/health", requireToken, patientHealthGetHandler);
+// Alias: /medical-form (used by current mobile app)
+app.get("/api/patient/:patientId/medical-form", requireToken, patientHealthGetHandler);
 // Legacy: GET /p_xxx/health (app client)
 app.get("/:patientId(p_[^/]+)/health", requireToken, patientHealthGetHandler);
 
 // POST /api/patient/:patientId/health
 app.post("/api/patient/:patientId/health", requireToken, patientHealthPostHandler);
+// Alias: /medical-form (used by current mobile app)
+app.post("/api/patient/:patientId/medical-form", requireToken, patientHealthPostHandler);
 // Legacy: POST /p_xxx/health (app client)
 app.post("/:patientId(p_[^/]+)/health", requireToken, patientHealthPostHandler);
 
 // PUT /api/patient/:patientId/health
 app.put("/api/patient/:patientId/health", requireToken, patientHealthPutHandler);
+// Alias: /medical-form (used by current mobile app)
+app.put("/api/patient/:patientId/medical-form", requireToken, patientHealthPutHandler);
 // Legacy: PUT /p_xxx/health (app client)
 app.put("/:patientId(p_[^/]+)/health", requireToken, patientHealthPutHandler);
 
@@ -6679,11 +10698,42 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
         return res.status(500).json({ ok: false, error: "health_fetch_failed" });
       }
 
-      const health = isPlainObject(p?.health) ? p.health : {};
+      let health = isPlainObject(p && p.health) ? p.health : {};
+      let fd2 = health.formData || {};
+
+      // Fallback to patient_health_forms table if patients.health is empty
+      if (!fd2 || Object.keys(fd2).length === 0) {
+        const pUuid   = (p && p.id) || null;
+        const pTextId = (p && p.patient_id) || null;
+        const cands2 = Array.from(new Set([pUuid, pTextId, patientId].filter(Boolean)));
+        for (let ci2 = 0; ci2 < cands2.length; ci2++) {
+          const cid2 = cands2[ci2];
+          const qr2 = await supabase.from('patient_health_forms')
+            .select('*').eq('patient_id', cid2)
+            .order('updated_at', { ascending: false }).limit(1);
+          const hf2 = qr2.data && qr2.data[0];
+          if (hf2) {
+            const raw2 = hf2.form_data || hf2;
+            fd2 = {
+              allergies: raw2.allergies, medications: raw2.medications,
+              chronicDiseases: raw2.chronicDiseases, conditions: raw2.conditions,
+              medicationsList: raw2.medicationsList, notes: raw2.notes,
+              submittedAt: raw2.submittedAt,
+            };
+            health = { isComplete: hf2.is_complete, completedAt: hf2.completed_at, updatedAt: hf2.updated_at, formData: fd2 };
+            break;
+          }
+        }
+      }
+
+      const hasData2 = fd2 && Object.values(fd2).some(function(v) {
+        return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0);
+      });
       return res.json({
         ok: true,
-        formData: health.formData || {},
-        isComplete: health.isComplete === true,
+        form: fd2,
+        formData: fd2,
+        isComplete: health.isComplete === true || hasData2,
         completedAt: health.completedAt || null,
         updatedAt: health.updatedAt || null,
         createdAt: health.createdAt || null,
@@ -7017,16 +11067,10 @@ function updatePatientOralHealthScores(patientId) {
 }
 
 // ================== PATIENT TREATMENTS ==================
-// GET /api/patient/:patientId/treatments
-// Optional auth: Admin token OR patient token accepted
-app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
+// Admin / doktor / hasta JWT — GET ve mutasyon (POST/PUT/DELETE) için ortak
+async function requirePatientTreatmentsAuth(req, res, next) {
   const patientId = req.params.patientId;
-  const method = req.method;
-  const url = req.url;
   const headers = req.headers;
-  
-
-
 
 
   console.log(`[TREATMENTS GET] Headers:`, {
@@ -7075,6 +11119,22 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
             return next();
           }
         }
+        // Doctor (or admin) JWT carries clinicId from login; code lookup can fail if clinics table out of sync
+        if (decoded.clinicId) {
+          req.clinicId = String(decoded.clinicId).trim();
+          req.clinicCode = String(clinicCode || "").trim();
+          req.clinicStatus = "ACTIVE";
+          req.isAdmin = true;
+          return next();
+        }
+      }
+
+      // Doctor without clinicCode but with clinicId (legacy tokens)
+      if (String(decoded.role || "").toUpperCase() === "DOCTOR" && decoded.clinicId) {
+        req.clinicId = String(decoded.clinicId).trim();
+        req.clinicCode = decoded.clinicCode ? String(decoded.clinicCode).trim() : null;
+        req.isAdmin = true;
+        return next();
       }
       
       // Check if it's a patient token (has patientId)
@@ -7118,9 +11178,33 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   // No valid token found
 
   return res.status(401).json({ ok: false, error: "unauthorized", message: "Token bulunamadı veya geçersiz." });
-}, async (req, res) => {
-  // Continue with endpoint logic
+}
+
+// GET /api/patient/:patientId/treatments
+app.get("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, async (req, res) => {
   const patientId = req.params.patientId;
+  const debugTreatments = String(req.query?.debug || "").trim() === "1";
+  const explicitPlanId = String(req.query?.planId || "").trim();
+  const skipTreatmentsCache = debugTreatments || String(req.query?.nocache || "").trim() === "1";
+  const treatmentsCacheKey = buildTreatmentsCacheKey({
+    patientId,
+    planId: explicitPlanId,
+    isAdmin: Boolean(req.isAdmin),
+    clinicId: req.clinicId,
+    actorPatientId: req.patientId,
+  });
+
+  if (!skipTreatmentsCache) {
+    const cachedPayload = getCachedTreatmentsPayload(treatmentsCacheKey);
+    if (cachedPayload) {
+      await mergeEncounterTreatmentsIntoPatientTreatmentsData(cachedPayload, patientId);
+      const cacheClinicId = await resolveClinicIdForPatientTreatmentPrices(req, patientId);
+      await applyPatientTreatmentsAppointmentsOverlay(cachedPayload, patientId, cacheClinicId);
+      await enrichTreatmentsDataDoctorDisplayFields(cachedPayload, patientId);
+      await applyClinicCatalogPricesToTreatmentsData(cachedPayload, cacheClinicId);
+      return res.json(cachedPayload);
+    }
+  }
 
   // Do not read from disk unless explicitly enabled
   if (!isSupabaseEnabled() && !canUseFileFallback()) {
@@ -7149,11 +11233,21 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
 
   const warnings = [];
   let source = defaultData;
+  let patientUuidForLegacyTreatments = null;
 
   if (isSupabaseEnabled()) {
     try {
-      const clinicFilter = req.isAdmin ? req.clinicId : null;
-      const { data: row, error } = await fetchPatientTreatmentsRowSupabase(patientId, clinicFilter);
+      const clinicFilter = null;
+      let { data: row, error } = await fetchPatientTreatmentsRowSupabase(patientId, clinicFilter);
+      const hasPrimaryTeeth = Array.isArray(row?.treatments?.teeth) && row.treatments.teeth.length > 0;
+
+      if (!error && clinicFilter && !hasPrimaryTeeth) {
+        const fallbackResult = await fetchPatientTreatmentsRowSupabase(patientId, null);
+        const hasFallbackTeeth = Array.isArray(fallbackResult?.data?.treatments?.teeth) && fallbackResult.data.treatments.teeth.length > 0;
+        if (!fallbackResult.error && hasFallbackTeeth) {
+          row = fallbackResult.data;
+        }
+      }
       if (error) {
         if (isMissingColumnError(error, "treatments")) {
           return res.status(500).json({
@@ -7173,6 +11267,8 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
         });
         return res.status(500).json({ ok: false, error: "treatments_fetch_failed" });
       }
+
+      patientUuidForLegacyTreatments = row?.id ? String(row.id) : null;
 
       const supaPayload = isPlainObject(row?.treatments) ? row.treatments : null;
       const hasSupabaseTeeth = Array.isArray(supaPayload?.teeth) && supaPayload.teeth.length > 0;
@@ -7196,6 +11292,70 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
       } else {
         source = supaPayload || defaultData;
       }
+
+      // Always merge patient_treatments.treatments_data (doctor app data) into source.
+      // Previously this only ran when patients.treatments was empty, causing procedures saved
+      // by the doctor app to be invisible in the admin treatment page when other teeth existed.
+      const hasCurrentTeeth = Array.isArray(source?.teeth) && source.teeth.length > 0;
+      if (patientUuidForLegacyTreatments) {
+        try {
+          const { data: legacyRow, error: legacyError } = await supabase
+            .from("patient_treatments")
+            .select("treatments_data, updated_at")
+            .eq("patient_id", patientUuidForLegacyTreatments)
+            .maybeSingle();
+
+          if (!legacyError && legacyRow?.treatments_data) {
+            const legacyPayload =
+              typeof legacyRow.treatments_data === "string"
+                ? JSON.parse(legacyRow.treatments_data)
+                : legacyRow.treatments_data;
+
+            const hasLegacyTeeth = Array.isArray(legacyPayload?.teeth) && legacyPayload.teeth.length > 0;
+            if (hasLegacyTeeth) {
+              if (!hasCurrentTeeth) {
+                // No current teeth: replace source with legacy data entirely
+                source = {
+                  ...legacyPayload,
+                  patientId,
+                  updatedAt: legacyRow.updated_at ? new Date(legacyRow.updated_at).getTime() : (legacyPayload.updatedAt || now()),
+                };
+                warnings.push("treatments_loaded_from_patient_treatments");
+              } else {
+                // Has current teeth: merge legacy teeth in without overwriting existing procedures
+                const sourceTeethMap = new Map(
+                  (Array.isArray(source.teeth) ? source.teeth : []).map(t => [String(t?.toothId ?? t?.id ?? ""), t])
+                );
+                legacyPayload.teeth.forEach(legTooth => {
+                  const legToothId = String(legTooth?.toothId ?? legTooth?.id ?? "").trim();
+                  if (!legToothId) return;
+                  if (!sourceTeethMap.has(legToothId)) {
+                    sourceTeethMap.set(legToothId, { toothId: legToothId, procedures: [], diagnoses: [] });
+                  }
+                  const tooth = sourceTeethMap.get(legToothId);
+                  if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
+                  const existingProcIds = new Set(
+                    tooth.procedures.map(p => String(p.id || p.procedureId || "")).filter(Boolean)
+                  );
+                  (Array.isArray(legTooth.procedures) ? legTooth.procedures : []).forEach(legProc => {
+                    const legProcId = String(legProc?.id || legProc?.procedureId || "").trim();
+                    if (!legProcId || !existingProcIds.has(legProcId)) {
+                      tooth.procedures.push(legProc);
+                      if (legProcId) existingProcIds.add(legProcId);
+                    }
+                  });
+                });
+                source = { ...source, teeth: Array.from(sourceTeethMap.values()) };
+                warnings.push("treatments_merged_from_patient_treatments");
+              }
+            }
+          } else if (legacyError && !["42P01", "42703", "PGRST204", "PGRST116"].includes(String(legacyError.code || ""))) {
+            console.error("[TREATMENTS GET] legacy patient_treatments fetch failed", legacyError);
+          }
+        } catch (legacyReadError) {
+          console.error("[TREATMENTS GET] legacy patient_treatments read failed", legacyReadError);
+        }
+      }
     } catch (e) {
 
       return res.status(500).json({ ok: false, error: "treatments_fetch_failed" });
@@ -7208,11 +11368,106 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
   if (warnings.length > 0) {
     data.warning = warnings.join(",");
   }
+
+  if (isSupabaseEnabled()) {
+    try {
+      const clinicFilter = null;
+      let { data: v1Row, error: v1Error } = await fetchPatientTreatmentRowSupabase(patientId, clinicFilter);
+
+      if (!v1Error && clinicFilter && (!isPlainObject(v1Row?.treatment) || !isPlainObject(v1Row.treatment.teeth))) {
+        const fallbackV1 = await fetchPatientTreatmentRowSupabase(patientId, null);
+        if (!fallbackV1.error && isPlainObject(fallbackV1?.data?.treatment) && isPlainObject(fallbackV1.data.treatment.teeth)) {
+          v1Row = fallbackV1.data;
+        }
+      }
+
+      if (!v1Error && isPlainObject(v1Row?.treatment) && isPlainObject(v1Row.treatment.teeth)) {
+        const existingTeethMap = new Map((Array.isArray(data.teeth) ? data.teeth : []).map((tooth) => [String(tooth?.toothId || ""), tooth]));
+        const v1Entries = Object.entries(v1Row.treatment.teeth);
+
+        for (const [toothIdRaw, procedureList] of v1Entries) {
+          const toothId = String(toothIdRaw || "").trim();
+          if (!toothId) continue;
+          const v1Procedures = Array.isArray(procedureList) ? procedureList : [];
+          if (!existingTeethMap.has(toothId)) {
+            existingTeethMap.set(toothId, { toothId, procedures: [], diagnosis: [] });
+          }
+
+          const tooth = existingTeethMap.get(toothId);
+          if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
+          if (!Array.isArray(tooth.diagnosis)) tooth.diagnosis = [];
+
+          for (const proc of v1Procedures) {
+            const normalizedType = String(proc?.procedure || proc?.procedure_name || proc?.type || "PROCEDURE").trim();
+            const statusRaw = String(proc?.status || "planned").trim().toLowerCase();
+            const normalizedStatus = statusRaw === "completed"
+              ? "COMPLETED"
+              : (statusRaw === "in_progress" ? "ACTIVE" : "PLANNED");
+
+            const normalizedDate = proc?.date || null;
+            const procedureId = String(proc?.id || `${patientId}-${toothId}-${normalizedType}-${normalizedDate || now()}`);
+
+            const exists = tooth.procedures.some((item) => String(item?.procedureId || item?.id || "") === procedureId);
+            if (!exists) {
+              tooth.procedures.push({
+                id: procedureId,
+                procedureId,
+                type: normalizedType.toUpperCase(),
+                category: procedures.categoryForType(String(normalizedType).toUpperCase()),
+                status: normalizedStatus,
+                scheduledAt: normalizedDate,
+                date: normalizedDate,
+                notes: String(proc?.clinicNote || proc?.note || proc?.notes || ""),
+                meta: {},
+                createdAt: normalizedDate || now(),
+              });
+            }
+
+            const diagnosisList = [
+              ...(Array.isArray(proc?.diagnosis) ? proc.diagnosis : []),
+              ...(Array.isArray(proc?.diagnoses) ? proc.diagnoses : []),
+            ];
+
+            for (const diagnosis of diagnosisList) {
+              const code = String(diagnosis?.code || diagnosis?.icd10_code || "").trim();
+              const description = String(diagnosis?.description || diagnosis?.icd10_description || "").trim();
+              if (!code && !description) continue;
+
+              const existsDiagnosis = tooth.diagnosis.some((item) => {
+                const existingCode = String(item?.code || item?.icd10_code || "").trim();
+                const existingDesc = String(item?.description || item?.icd10_description || "").trim();
+                return existingCode === code && existingDesc === description;
+              });
+
+              if (!existsDiagnosis) {
+                tooth.diagnosis.push({
+                  code: code || null,
+                  description: description || null,
+                });
+              }
+            }
+          }
+        }
+
+        data.teeth = Array.from(existingTeethMap.values());
+      } else if (
+        v1Error &&
+        String(v1Error.code || "") !== "PGRST116" &&
+        !isMissingColumnError(v1Error, "treatment")
+      ) {
+        console.error("[TREATMENTS GET] treatment(v1) fetch failed", {
+          message: v1Error.message,
+          code: v1Error.code,
+          details: v1Error.details,
+        });
+      }
+    } catch (error) {
+      console.error("[TREATMENTS GET] treatment(v1) merge failed", error);
+    }
+  }
   
   // Ensure data structure is correct
-  if (!data.patientId) {
-    data.patientId = patientId;
-  }
+  data.patientId = patientId;
   if (!Array.isArray(data.teeth)) {
     data.teeth = [];
   }
@@ -7265,8 +11520,652 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     data.formCompletedAt = data.updatedAt || now();
   }
   
-  const teethCount = data.teeth?.length || 0;
-  const totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
+  let legacyTeeth = Array.isArray(data.teeth) ? data.teeth : [];
+  let encounterTeeth = [];
+  let teethCount = data.teeth?.length || 0;
+  let totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
+  const debugTrace = {
+    patientLookupIds: [],
+    encounterIds: [],
+    planIds: [],
+    treatmentItemsCount: 0,
+    treatmentItemsTooth44: 0,
+    finalTooth44Procedures: 0,
+  };
+
+  let visitRows = [];
+  let diagnosisRows = [];
+  let patientLookupIds = [String(patientId)];
+
+  // ── FAST PATH: if legacy teeth already have all data, skip encounter-heavy lookup ─────
+  const hasLegacyTeethData = legacyTeeth.length > 0 && legacyTeeth.some(t => Array.isArray(t.procedures) && t.procedures.length > 0);
+
+  if (isSupabaseEnabled()) {
+    try {
+      const patientRecord = await getPatientById(patientId);
+      const candidates = [
+        String(patientId || "").trim(),
+        String(patientRecord?.id || "").trim(),
+        String(patientRecord?.patient_id || "").trim(),
+      ].filter(Boolean);
+      patientLookupIds = [...new Set(candidates)];
+      const encExpand = await encounterPatientIdMatchSet(
+        String(patientRecord?.id || "").trim() || String(patientId).trim(),
+        patientId
+      );
+      patientLookupIds = [...new Set([...patientLookupIds, ...encExpand])];
+      debugTrace.patientLookupIds = [...patientLookupIds];
+    } catch (error) {
+      try {
+        const encExpand = await encounterPatientIdMatchSet(String(patientId).trim(), patientId);
+        patientLookupIds = [...new Set([String(patientId), ...encExpand])];
+      } catch (_) {
+        patientLookupIds = [String(patientId)];
+      }
+      debugTrace.patientLookupIds = [...patientLookupIds];
+    }
+  }
+
+  if (isSupabaseEnabled()) {
+    try {
+      const clinicFilter = null;
+
+      // Parallel: visits + diagnoses (fast — always run)
+      const [visitsResult, diagnosesResult] = await Promise.all([
+        supabase.from("visits")
+          .select("id, clinic_id, patient_id, visit_date, notes, created_at, updated_at")
+          .in("patient_id", patientLookupIds)
+          .order("visit_date", { ascending: false })
+          .order("created_at", { ascending: false }),
+        supabase.from("visit_diagnoses")
+          .select("id, clinic_id, patient_id, visit_id, icd10_code, icd10_description, created_at")
+          .in("patient_id", patientLookupIds)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (visitsResult.error && !["42P01", "PGRST205", "42703", "PGRST204"].includes(String(visitsResult.error.code || ""))) {
+        console.error("[TREATMENTS GET] visits fetch failed", visitsResult.error);
+      } else {
+        visitRows = Array.isArray(visitsResult.data) ? visitsResult.data : [];
+      }
+
+      if (diagnosesResult.error && !["42P01", "PGRST205", "42703", "PGRST204"].includes(String(diagnosesResult.error.code || ""))) {
+        console.error("[TREATMENTS GET] visit_diagnoses fetch failed", diagnosesResult.error);
+      } else {
+        diagnosisRows = Array.isArray(diagnosesResult.data) ? diagnosesResult.data : [];
+      }
+
+      const encounterRows = [];
+      const encounterIdMap = new Map();
+
+      // ── If legacy data is sufficient, skip the expensive encounter/plan/item probe ──
+      if (hasLegacyTeethData) {
+        console.log(`[TREATMENTS GET] Fast path: legacy teeth present (${legacyTeeth.length}), skipping encounter lookup`);
+        // Still need encounterIds for diagnosis lookup — do a lightweight fetch only
+        try {
+          const encResult = await supabase
+            .from("patient_encounters")
+            .select("id, patient_id, created_at")
+            .in("patient_id", patientLookupIds)
+            .order("created_at", { ascending: false });
+
+          if (!encResult.error) {
+            for (const row of encResult.data || []) {
+              const rowId = String(row?.id || "").trim();
+              if (!rowId || encounterIdMap.has(rowId)) continue;
+              const mappedVisitId = `encounter-${rowId}`;
+              encounterIdMap.set(rowId, mappedVisitId);
+              encounterRows.push({ id: mappedVisitId, patient_id: patientId, created_at: row.created_at, encounter_id: rowId });
+            }
+          }
+        } catch (_) { /* ignore */ }
+      } else {
+        // ── Full encounter probe — run all 3 table attempts in PARALLEL ──────────────
+        const encounterSources = [
+          { table: "encounter",          select: "id, patient_id, encounter_type, status, created_at, updated_at" },
+          { table: "encounters",         select: "id, patient_id, status, created_at, updated_at" },
+          { table: "patient_encounters", select: "id, patient_id, encounter_type, status, created_at, updated_at" },
+        ];
+
+        const encounterResults = await Promise.all(
+          encounterSources.map(async (source) => {
+            try {
+              let q = supabase.from(source.table).select(source.select)
+                .in("patient_id", patientLookupIds)
+                .order("created_at", { ascending: false });
+              if (clinicFilter) q = q.or(`clinic_id.eq.${clinicFilter},clinic_id.is.null`);
+              const result = await q;
+              return { source, result };
+            } catch (e) {
+              return { source, result: { error: e, data: [] } };
+            }
+          })
+        );
+
+        for (const { source, result } of encounterResults) {
+          if (result.error) {
+            if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
+              console.error(`[TREATMENTS GET] ${source.table} fetch failed`, result.error);
+            }
+            continue;
+          }
+          for (const row of result.data || []) {
+            const rowId = String(row?.id || "").trim();
+            if (!rowId || encounterIdMap.has(rowId)) continue;
+            const mappedVisitId = `encounter-${rowId}`;
+            encounterIdMap.set(rowId, mappedVisitId);
+            encounterRows.push({
+              id: mappedVisitId,
+              clinic_id: req.clinicId || null,
+              patient_id: patientId,
+              visit_date: row?.created_at || row?.updated_at || null,
+              notes: row?.encounter_type ? `Encounter: ${String(row.encounter_type).toUpperCase()}` : "Doctor Encounter",
+              created_at: row?.created_at || null,
+              updated_at: row?.updated_at || row?.created_at || null,
+              source: source.table,
+              encounter_id: rowId,
+              status: row?.status || null,
+            });
+          }
+        }
+      }
+
+      // Fast path can leave encounterIdMap empty if the lightweight query failed (caught) or returned nothing spuriously.
+      // Without encounter ids, encounter_diagnoses are never merged — diagnoses "vanish" on refresh.
+      if (encounterIdMap.size === 0) {
+        try {
+          const refill = await supabase
+            .from("patient_encounters")
+            .select("id, patient_id, encounter_type, status, created_at, updated_at")
+            .in("patient_id", patientLookupIds)
+            .order("created_at", { ascending: false });
+          if (!refill.error && Array.isArray(refill.data)) {
+            for (const row of refill.data) {
+              const rowId = String(row?.id || "").trim();
+              if (!rowId || encounterIdMap.has(rowId)) continue;
+              const mappedVisitId = `encounter-${rowId}`;
+              encounterIdMap.set(rowId, mappedVisitId);
+              encounterRows.push({
+                id: mappedVisitId,
+                clinic_id: req.clinicId || null,
+                patient_id: patientId,
+                visit_date: row?.created_at || row?.updated_at || null,
+                notes: row?.encounter_type ? `Encounter: ${String(row.encounter_type).toUpperCase()}` : "Doctor Encounter",
+                created_at: row?.created_at || null,
+                updated_at: row?.updated_at || row?.created_at || null,
+                source: "patient_encounters_refill",
+                encounter_id: rowId,
+                status: row?.status || null,
+              });
+            }
+            if (refill.data.length > 0) {
+              console.log(`[TREATMENTS GET] patient_encounters refill: ${refill.data.length} row(s) for diagnoses merge`);
+            }
+          }
+        } catch (e) {
+          console.warn("[TREATMENTS GET] patient_encounters refill failed:", e?.message || e);
+        }
+      }
+
+      const encounterIds = Array.from(encounterIdMap.keys());
+      debugTrace.encounterIds = [...encounterIds];
+      if (encounterIds.length > 0) {
+        if (encounterRows.length > 0) {
+          visitRows = [...visitRows, ...encounterRows];
+        }
+
+        try {
+          const encounterDiagnosisResult = await supabase
+            .from("encounter_diagnoses")
+            .select("id, encounter_id, icd10_code, icd10_description, tooth_number, notes, created_at")
+            .in("encounter_id", encounterIds)
+            .order("created_at", { ascending: false });
+
+          if (encounterDiagnosisResult.error) {
+            if (!["42P01", "42703", "PGRST204"].includes(String(encounterDiagnosisResult.error.code || ""))) {
+              console.error("[TREATMENTS GET] encounter_diagnoses fetch failed", encounterDiagnosisResult.error);
+            }
+          } else {
+            const mappedEncounterDiagnoses = (encounterDiagnosisResult.data || []).map((row) => ({
+              id: `encdiag-${row.id}`,
+              clinic_id: req.clinicId || null,
+              patient_id: patientId,
+              encounter_id: row.encounter_id || null,
+              visit_id: encounterIdMap.get(String(row.encounter_id)) || null,
+              icd10_code: row.icd10_code || null,
+              icd10_description: row.icd10_description || row.notes || null,
+              tooth_number: row.tooth_number || null,
+              created_at: row.created_at || null,
+              source: "encounter_diagnoses",
+            })).filter((item) => item.visit_id || item.encounter_id);
+
+            diagnosisRows = [...diagnosisRows, ...mappedEncounterDiagnoses];
+          }
+        } catch (error) {
+          console.error("[TREATMENTS GET] encounter_diagnoses merge failed", error);
+        }
+
+        try {
+          // Run both encounter-level and patient-level plan queries in parallel
+          const [encPlansResult, patPlansResult] = await Promise.all([
+            supabase.from("treatment_plans").select("id, encounter_id, created_at").in("encounter_id", encounterIds),
+            supabase.from("treatment_plans").select("id, encounter_id, patient_id, created_at")
+              .in("patient_id", patientLookupIds).order("created_at", { ascending: false }),
+          ]);
+
+          let plans = [];
+          const skipCodes = ["42P01", "42703", "PGRST204", "PGRST205"];
+          if (!encPlansResult.error && Array.isArray(encPlansResult.data) && encPlansResult.data.length > 0) {
+            plans = encPlansResult.data;
+          } else if (!patPlansResult.error && Array.isArray(patPlansResult.data) && patPlansResult.data.length > 0) {
+            plans = patPlansResult.data;
+          } else {
+            if (encPlansResult.error && !skipCodes.includes(String(encPlansResult.error.code || ""))) {
+              console.error("[TREATMENTS GET] treatment_plans (encounter) fetch failed", encPlansResult.error);
+            }
+            if (patPlansResult.error && !skipCodes.includes(String(patPlansResult.error.code || ""))) {
+              console.error("[TREATMENTS GET] treatment_plans (patient) fetch failed", patPlansResult.error);
+            }
+          }
+
+          let plansResult = { data: plans, error: null };
+
+          if (!plansResult.error) {
+
+            const planIdToEncounter = new Map();
+            const planIds = [];
+
+            for (const plan of plans) {
+              const planId = String(plan?.id || "").trim();
+              const encounterId = String(plan?.encounter_id || "").trim();
+              if (!planId || !encounterId) continue;
+              planIds.push(planId);
+              planIdToEncounter.set(planId, encounterId);
+            }
+            debugTrace.planIds = [...planIds];
+
+            if (planIds.length > 0) {
+              // Try both item tables in parallel, use most-selective select first
+              const itemSelect = "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, status, category, type, scheduled_at, appointment_date, date, created_at, updated_at";
+              const [piResult, tiResult] = await Promise.all([
+                supabase.from("treatment_plan_items").select(itemSelect).in("treatment_plan_id", planIds).order("created_at", { ascending: false }),
+                supabase.from("treatment_items").select(itemSelect).in("treatment_plan_id", planIds).order("created_at", { ascending: false }),
+              ]);
+
+              let treatmentItems = [];
+              if (!piResult.error && Array.isArray(piResult.data)) {
+                treatmentItems.push(...piResult.data.map(r => ({ ...r, __source_table: "treatment_plan_items" })));
+              } else if (piResult.error && !skipCodes.includes(String(piResult.error.code || ""))) {
+                console.error("[TREATMENTS GET] treatment_plan_items fetch failed", piResult.error);
+              }
+              if (!tiResult.error && Array.isArray(tiResult.data)) {
+                treatmentItems.push(...tiResult.data.map(r => ({ ...r, __source_table: "treatment_items" })));
+              } else if (tiResult.error && !skipCodes.includes(String(tiResult.error.code || ""))) {
+                console.error("[TREATMENTS GET] treatment_items fetch failed", tiResult.error);
+              }
+
+              debugTrace.treatmentItemsCount = treatmentItems.length;
+              debugTrace.treatmentItemsTooth44 = treatmentItems.filter((item) => {
+                const toothRaw = item?.tooth_fdi_code ?? item?.tooth_number ?? item?.tooth ?? item?.tooth_id;
+                const tooth = String(toothRaw ?? "").trim();
+                return tooth === "44" || tooth === "44.0" || tooth === "044";
+              }).length;
+
+              if (treatmentItems.length > 0) {
+                const encounterTeethMap = new Map();
+
+                for (const item of treatmentItems) {
+                  const planId = String(item?.treatment_plan_id || "").trim();
+                  const encounterId = planIdToEncounter.get(planId);
+                  const mappedVisitId = encounterId ? encounterIdMap.get(encounterId) : null;
+                  const rawTooth =
+                    item?.tooth_fdi_code ??
+                    item?.tooth_number ??
+                    item?.toothNumber ??
+                    item?.tooth ??
+                    item?.tooth_id ??
+                    item?.fdiTooth;
+
+                  if (!rawTooth) continue;
+
+                  const toothNo = String(rawTooth).trim();
+
+                  if (!encounterTeethMap.has(toothNo)) {
+                    encounterTeethMap.set(toothNo, { toothId: toothNo, procedures: [] });
+                  }
+
+                  const tooth = encounterTeethMap.get(toothNo);
+                  if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
+
+                  const procId = String(item?.id || `${planId}-${toothNo}-${item?.procedure_code || "PROCEDURE"}`);
+                  const statusRaw = String(item?.status || "").toUpperCase();
+                  const mappedStatus = statusRaw === "DONE" || statusRaw === "COMPLETED"
+                    ? "COMPLETED"
+                    : statusRaw === "PLANNED"
+                      ? "PLANNED"
+                      : "ACTIVE";
+                  const createdAtMs = item?.created_at ? new Date(item.created_at).getTime() : Date.now();
+                  const scheduledRaw =
+                    item?.scheduled_at ??
+                    item?.scheduledAt ??
+                    item?.scheduled_for ??
+                    item?.appointment_at ??
+                    item?.appointment_date ??
+                    item?.date ??
+                    null;
+                  const scheduledAtMs =
+                    typeof scheduledRaw === 'number'
+                      ? (Number.isFinite(scheduledRaw) ? scheduledRaw : null)
+                      : (scheduledRaw ? new Date(scheduledRaw).getTime() : null);
+
+                  const exists = tooth.procedures.some((proc) => String(proc?.procedureId || proc?.id || "") === procId);
+                  if (exists) continue;
+
+                  tooth.procedures.push({
+                    id: procId,
+                    procedureId: procId,
+                    type: item?.procedure_code || null,
+                    status: mappedStatus,
+                    scheduledAt: Number.isFinite(scheduledAtMs) ? scheduledAtMs : null,
+                    date: Number.isFinite(scheduledAtMs) ? scheduledAtMs : createdAtMs,
+                    createdAt: createdAtMs,
+                    meta: {
+                      source: String(item?.__source_table || "treatment_plan_items"),
+                      treatment_plan_id: planId,
+                      visit_id: mappedVisitId || null,
+                    },
+                  });
+                }
+
+                encounterTeeth = Array.from(encounterTeethMap.values());
+
+                const mergedTeethMap = {};
+
+                legacyTeeth.forEach((t) => {
+                  const key = String(t?.toothId || "").trim();
+                  if (!key) return;
+                  mergedTeethMap[key] = {
+                    ...(t || {}),
+                    toothId: key,
+                    procedures: [...(Array.isArray(t?.procedures) ? t.procedures : [])],
+                  };
+                });
+
+                encounterTeeth.forEach((t) => {
+                  const key = String(t?.toothId || "").trim();
+                  if (!key) return;
+
+                  if (!mergedTeethMap[key]) {
+                    mergedTeethMap[key] = {
+                      toothId: key,
+                      procedures: [],
+                    };
+                  }
+
+                  mergedTeethMap[key].procedures.push(...(Array.isArray(t?.procedures) ? t.procedures : []));
+                });
+
+                data.teeth = Object.values(mergedTeethMap);
+              }
+            }
+          } else if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(plansResult.error.code || ""))) {
+            console.error("[TREATMENTS GET] treatment_plans fetch failed", plansResult.error);
+          }
+        } catch (error) {
+          console.error("[TREATMENTS GET] treatment_plan_items merge failed", error);
+        }
+      }
+    } catch (error) {
+      console.error("[TREATMENTS GET] diagnoses query failed", error);
+    }
+  }
+
+  if (isSupabaseEnabled() && explicitPlanId) {
+    try {
+      const itemTableSources = ["treatment_items", "treatment_plan_items"];
+      const itemSelectCandidates = [
+        "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, procedure_description, status, category, type, scheduled_at, scheduled_for, appointment_at, appointment_date, date, created_at, updated_at, chair_no, chair",
+        "id, treatment_plan_id, tooth_fdi_code, procedure_code, procedure_name, status, scheduled_at, appointment_date, date, created_at, updated_at, chair_no, chair",
+        "id, treatment_plan_id, tooth_number, procedure_code, procedure_name, status, scheduled_at, appointment_date, date, created_at, updated_at, chair_no, chair",
+        "id, treatment_plan_id, tooth_fdi_code, procedure_code, status, scheduled_at, appointment_date, date, created_at, updated_at",
+        "id, treatment_plan_id, tooth_number, procedure_code, status, scheduled_at, appointment_date, date, created_at, updated_at",
+      ];
+
+      let explicitItems = [];
+      for (const tableName of itemTableSources) {
+        for (const selectClause of itemSelectCandidates) {
+          const result = await supabase
+            .from(tableName)
+            .select(selectClause)
+            .eq("treatment_plan_id", explicitPlanId)
+            .order("created_at", { ascending: false });
+
+          if (!result.error) {
+            const rows = Array.isArray(result.data) ? result.data : [];
+            if (rows.length > 0) {
+              explicitItems.push(...rows.map((row) => ({ ...row, __source_table: tableName })));
+            }
+            break;
+          }
+
+          if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(result.error.code || ""))) {
+            console.error(`[TREATMENTS GET] explicit plan ${tableName} fetch failed`, result.error);
+            break;
+          }
+        }
+      }
+
+      if (explicitItems.length > 0) {
+        const mergedTeethMap = {};
+
+        (Array.isArray(data.teeth) ? data.teeth : []).forEach((t) => {
+          const key = String(t?.toothId || t?.tooth_id || t?.tooth_number || "").trim();
+          if (!key) return;
+          mergedTeethMap[key] = {
+            ...(t || {}),
+            toothId: key,
+            procedures: [...(Array.isArray(t?.procedures) ? t.procedures : [])],
+          };
+        });
+
+        for (const item of explicitItems) {
+          const rawTooth = item?.tooth_fdi_code ?? item?.tooth_number ?? item?.tooth ?? item?.tooth_id;
+          const toothNo = String(rawTooth || "").trim();
+          if (!toothNo) continue;
+
+          if (!mergedTeethMap[toothNo]) {
+            mergedTeethMap[toothNo] = { toothId: toothNo, procedures: [] };
+          }
+
+          const tooth = mergedTeethMap[toothNo];
+          if (!Array.isArray(tooth.procedures)) tooth.procedures = [];
+
+          const procId = String(item?.id || `${explicitPlanId}-${toothNo}-${item?.procedure_code || "PROCEDURE"}`);
+          if (tooth.procedures.some((proc) => String(proc?.procedureId || proc?.id || "") === procId)) {
+            continue;
+          }
+
+          const statusRaw = String(item?.status || "").toUpperCase();
+          const mappedStatus = statusRaw === "DONE" || statusRaw === "COMPLETED"
+            ? "COMPLETED"
+            : statusRaw === "PLANNED"
+              ? "PLANNED"
+              : "ACTIVE";
+          const createdAtMs = item?.created_at ? new Date(item.created_at).getTime() : Date.now();
+          const scheduledRaw =
+            item?.scheduled_at ??
+            item?.scheduledAt ??
+            item?.scheduled_for ??
+            item?.appointment_at ??
+            item?.appointment_date ??
+            item?.date ??
+            null;
+          const scheduledAtMs =
+            typeof scheduledRaw === 'number'
+              ? (Number.isFinite(scheduledRaw) ? scheduledRaw : null)
+              : (scheduledRaw ? new Date(scheduledRaw).getTime() : null);
+
+          tooth.procedures.push({
+            id: procId,
+            procedureId: procId,
+            type: item?.procedure_code || item?.procedure_name || item?.procedure_description || null,
+            status: mappedStatus,
+            scheduledAt: Number.isFinite(scheduledAtMs) ? scheduledAtMs : null,
+            date: Number.isFinite(scheduledAtMs) ? scheduledAtMs : createdAtMs,
+            createdAt: createdAtMs,
+            chairNo: String(item?.chair_no || item?.chair || "").trim() || null,
+            chair: String(item?.chair || item?.chair_no || "").trim() || null,
+            meta: {
+              source: String(item?.__source_table || "treatment_plan_items"),
+              treatment_plan_id: explicitPlanId,
+            },
+          });
+        }
+
+        data.teeth = Object.values(mergedTeethMap);
+      }
+    } catch (error) {
+      console.error("[TREATMENTS GET] explicit plan merge failed", error);
+    }
+  }
+
+  if (diagnosisRows.length === 0) {
+    const legacyVisitId = `legacy-${patientId}`;
+    const legacyDate = data.updatedAt || now();
+    const diagnosisUnique = new Set();
+
+    (Array.isArray(data.teeth) ? data.teeth : []).forEach((tooth) => {
+      const toothDiagnosis = [
+        ...(Array.isArray(tooth?.diagnosis) ? tooth.diagnosis : []),
+        ...(Array.isArray(tooth?.diagnoses) ? tooth.diagnoses : []),
+      ];
+
+      toothDiagnosis.forEach((diag, index) => {
+        const code = String(diag?.code || diag?.icd10_code || "").trim();
+        const description = String(diag?.description || diag?.icd10_description || "").trim();
+        if (!code && !description) return;
+        const uniqueKey = `${code}__${description}`;
+        if (diagnosisUnique.has(uniqueKey)) return;
+        diagnosisUnique.add(uniqueKey);
+
+        diagnosisRows.push({
+          id: `${legacyVisitId}-diag-${diagnosisRows.length + index + 1}`,
+          clinic_id: req.clinicId || null,
+          patient_id: patientId,
+          visit_id: legacyVisitId,
+          icd10_code: code || null,
+          icd10_description: description || null,
+          created_at: legacyDate,
+          source: "legacy",
+        });
+      });
+    });
+
+    if (diagnosisRows.length > 0 && !visitRows.find((visit) => String(visit.id) === legacyVisitId)) {
+      visitRows.push({
+        id: legacyVisitId,
+        clinic_id: req.clinicId || null,
+        patient_id: patientId,
+        visit_date: legacyDate,
+        notes: "Legacy Diagnosis",
+        created_at: legacyDate,
+        updated_at: legacyDate,
+      });
+    }
+  }
+
+  // Extract diagnoses stored in teeth JSONB (from patient_treatments / legacy patients.treatments).
+  // These are saved by the doctor app but never reached diagnosisRows because they live inside
+  // the teeth array, not in visit_diagnoses / encounter_diagnoses tables.
+  const seenDiagKeys = new Set(
+    diagnosisRows.map((d) => `${String(d.tooth_number || "")}-${String(d.icd10_code || "")}`)
+  );
+  for (const tooth of Array.isArray(data.teeth) ? data.teeth : []) {
+    const toothId = String(tooth?.toothId || tooth?.toothNumber || tooth?.fdiNumber || tooth?.tooth_number || "").trim();
+    const toothDiags = Array.isArray(tooth?.diagnosis)
+      ? tooth.diagnosis
+      : Array.isArray(tooth?.diagnoses)
+      ? tooth.diagnoses
+      : [];
+    for (const d of toothDiags) {
+      const code = String(d?.code || d?.icd10_code || "").trim();
+      const desc = String(d?.description || d?.icd10_description || d?.label || "").trim();
+      if (!code && !desc) continue;
+      const dedupeKey = `${toothId}-${code}`;
+      if (seenDiagKeys.has(dedupeKey)) continue;
+      seenDiagKeys.add(dedupeKey);
+      diagnosisRows.push({
+        id: `jsonb-${toothId}-${code || desc.slice(0, 12)}`,
+        clinic_id: req.clinicId || null,
+        patient_id: patientId,
+        visit_id: null,
+        icd10_code: code || null,
+        icd10_description: desc || code || null,
+        tooth_number: toothId || null,
+        notes: d?.notes || null,
+        created_at: d?.savedAt || null,
+        source: "patient_treatments_jsonb",
+      });
+    }
+  }
+
+  const visitMap = new Map((visitRows || []).map((visit) => [String(visit.id), visit]));
+  const icdCodeList = [...new Set((diagnosisRows || []).map((diag) => diag.icd10_code).filter(Boolean))];
+  const icdCodeMap = new Map();
+
+  if (isSupabaseEnabled() && icdCodeList.length > 0) {
+    try {
+      const icdSelectCandidates = [
+        "code, title_tr, title_en, title_ru, title_ka, description_tr, description_en, description_ru, description_ka",
+        "code, title_tr, title_en, description_tr, description_en",
+        "code, title_en, description_en",
+        "code, title, description",
+        "code",
+      ];
+
+      for (const selectClause of icdSelectCandidates) {
+        const icdResult = await supabase
+          .from("icd10_codes")
+          .select(selectClause)
+          .in("code", icdCodeList);
+
+        if (!icdResult.error) {
+          (icdResult.data || []).forEach((row) => {
+            icdCodeMap.set(row.code, row);
+          });
+          break;
+        }
+
+        if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(icdResult.error.code || ""))) {
+          console.error("[TREATMENTS GET] icd10_codes fetch failed", icdResult.error);
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("[TREATMENTS GET] icd10_codes query failed", error);
+    }
+  }
+
+  data.visits = Array.isArray(visitRows) ? visitRows : [];
+  data.diagnoses = (Array.isArray(diagnosisRows) ? diagnosisRows : []).map((diagnosis) => ({
+    ...diagnosis,
+    source: diagnosis.source || "visit_diagnoses",
+    icdCode: diagnosis.icd10_code ? (icdCodeMap.get(diagnosis.icd10_code) || null) : null,
+    visit: diagnosis.visit_id ? (visitMap.get(String(diagnosis.visit_id)) || null) : null,
+  }));
+
+  console.log("ENCOUNTER TEETH:", encounterTeeth);
+  console.log("LEGACY TEETH:", legacyTeeth);
+
+  debugTrace.finalTooth44Procedures = (Array.isArray(data.teeth) ? data.teeth : [])
+    .filter((tooth) => {
+      const id = String(tooth?.toothId ?? tooth?.tooth_id ?? tooth?.tooth_number ?? "").trim();
+      return id === "44" || id === "44.0" || id === "044";
+    })
+    .reduce((sum, tooth) => sum + (Array.isArray(tooth?.procedures) ? tooth.procedures.length : 0), 0);
+
+  teethCount = data.teeth?.length || 0;
+  totalProcedures = data.teeth?.reduce((sum, t) => sum + (t.procedures?.length || 0), 0) || 0;
   
   console.log(`[TREATMENTS GET] Response data:`, {
     patientId: data.patientId,
@@ -7275,6 +12174,7 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
     formCompleted: data.formCompleted,
     formCompletedAt: data.formCompletedAt,
     sampleTooth: data.teeth[0] || null,
+    diagnosesCount: data.diagnoses.length,
   });
   
   // Log full teeth array for debugging
@@ -7315,19 +12215,188 @@ app.get("/api/patient/:patientId/treatments", async (req, res, next) => {
 
   if (isSupabaseEnabled() && clinicIdForPrices) {
     const priceMap = await fetchTreatmentPricesMap(clinicIdForPrices);
-    data.events = applyEventPrices(treatmentEvents, priceMap);
+    data.events = applyEventPrices(
+      treatmentEvents.filter(
+        (event) => String(event?.meta?.kind || "") !== "MISSING_TREATMENT_DATE_ALERT"
+      ),
+      priceMap
+    );
   } else {
-    data.events = treatmentEvents;
+    data.events = treatmentEvents.filter(
+      (event) => String(event?.meta?.kind || "") !== "MISSING_TREATMENT_DATE_ALERT"
+    );
+  }
+
+  if (debugTreatments) {
+    data.debug_treatments = debugTrace;
+    console.log("[TREATMENTS GET][DEBUG]", debugTrace);
   }
   
 
   
   // Return data directly (matching the format saved by POST)
-  res.json(data);
+  // Detailed debug log before returning response
+  try {
+    console.log('[TREATMENTS GET][FULL DATA]', {
+      patientId: data.patientId,
+      encounterIds: debugTrace.encounterIds,
+      teeth: Array.isArray(data.teeth)
+        ? data.teeth.map((tooth) => ({
+            toothId: tooth.toothId,
+            procedures: Array.isArray(tooth.procedures)
+              ? tooth.procedures.map((proc) => ({
+                  id: proc.id,
+                  type: proc.type,
+                  status: proc.status,
+                  date: proc.date,
+                  scheduledAt: proc.scheduledAt,
+                  notes: proc.notes,
+                  meta: proc.meta,
+                }))
+              : [],
+            diagnosis: Array.isArray(tooth.diagnosis) ? tooth.diagnosis : [],
+          }))
+        : [],
+    });
+  } catch (e) {
+    console.error('[TREATMENTS GET][DEBUG LOG ERROR]', e);
+  }
+
+  // Doktor uygulaması: encounter_treatments — JSON ile birleştir (önbellek isabetinde de uygulanır)
+  await mergeEncounterTreatmentsIntoPatientTreatmentsData(data, patientId);
+  let priceClinicId = clinicIdForPrices;
+  if (!priceClinicId && isSupabaseEnabled()) {
+    priceClinicId = await resolveClinicIdForPatientTreatmentPrices(req, patientId);
+  }
+  await applyPatientTreatmentsAppointmentsOverlay(data, patientId, priceClinicId);
+  await enrichTreatmentsDataDoctorDisplayFields(data, patientId);
+
+  if (!skipTreatmentsCache) {
+    setCachedTreatmentsPayload(treatmentsCacheKey, data);
+  }
+
+  // Klinik fiyatlarını yanıtta uygula (önbelleğe yazma — admin fiyat güncellemesi her istekte güncel kalsın)
+  await applyClinicCatalogPricesToTreatmentsData(data, priceClinicId);
+  // Ensure all escape sequences in JSON are valid before sending
+  function safeStringify(obj) {
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'string') {
+        // Replace backslashes with double backslash, fix invalid unicode escapes
+        return value
+          .replace(/\\/g, '\\\\')
+          .replace(/\\u([0-9a-fA-F]{0,3})([^0-9a-fA-F]|$)/g, (m, hex, tail) => {
+            // If not exactly 4 hex digits, escape the backslash
+            if (hex.length !== 4) return '\\\\u' + hex + tail;
+            return m;
+          });
+      }
+      return value;
+    });
+  }
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.end(safeStringify(data));
 });
 
+/** patients.treatments prosedür id: encounter-treatment-<uuid> veya düz encounter_treatments.id */
+function encounterTreatmentRowIdFromPatientProcedureId(procedureIdRaw) {
+  const s = String(procedureIdRaw || "").trim();
+  const m =
+    /^encounter-treatment-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(s);
+  if (m) return m[1];
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return s;
+  return "";
+}
+
+function patientTreatmentsDateToScheduledIso(dateFinal) {
+  if (dateFinal == null || dateFinal === "") return null;
+  if (typeof dateFinal === "number" && Number.isFinite(dateFinal)) {
+    return new Date(dateFinal).toISOString();
+  }
+  const str = String(dateFinal).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return new Date(`${str}T12:00:00.000Z`).toISOString();
+  }
+  return null;
+}
+
+function patientJsonProcedureStatusToEncounterTreatmentDbStatus(statusUpper) {
+  const s = String(statusUpper || "").toUpperCase().replace(/-/g, "_");
+  if (s === "COMPLETED" || s === "DONE") return "completed";
+  if (s === "CANCELLED" || s === "CANCELED") return "cancelled";
+  if (s === "PLANNED") return "planned";
+  if (s === "SCHEDULED") return "scheduled";
+  return "active";
+}
+
+/**
+ * Admin / hasta POST ile JSON güncellenince aynı encounter_treatments satırını da güncelle (doktor ekranı kaynağı).
+ */
+async function syncEncounterTreatmentRowFromPatientTreatmentsUpsert({
+  procedureIdFinal,
+  dateFinal,
+  statusFinal,
+  chairNo,
+  assignedDoctorRaw,
+}) {
+  if (!isSupabaseEnabled()) return;
+  const etId = encounterTreatmentRowIdFromPatientProcedureId(procedureIdFinal);
+  if (!etId) return;
+  const { data: existing, error: lookErr } = await supabase
+    .from("encounter_treatments")
+    .select("id, encounter_id")
+    .eq("id", etId)
+    .maybeSingle();
+  if (lookErr || !existing?.id) {
+    if (lookErr && String(lookErr.code || "") !== "PGRST116") {
+      console.warn("[TREATMENTS POST] encounter_treatment lookup:", lookErr.message || lookErr);
+    }
+    return;
+  }
+  const schedIso = patientTreatmentsDateToScheduledIso(dateFinal);
+  const dbStatus = patientJsonProcedureStatusToEncounterTreatmentDbStatus(statusFinal);
+  let docVal =
+    assignedDoctorRaw == null || String(assignedDoctorRaw).trim() === ""
+      ? null
+      : String(assignedDoctorRaw).trim();
+  if (docVal) {
+    const resolved = await resolveDoctorsIdByClinicDoctorCode(docVal);
+    if (resolved) docVal = resolved;
+  }
+  const updateFields = {
+    updated_at: new Date().toISOString(),
+    status: dbStatus,
+    scheduled_at: schedIso,
+    chair: chairNo != null && String(chairNo).trim() !== "" ? String(chairNo).trim() : null,
+    assigned_doctor_id: docVal,
+  };
+  const { data, error } = await supabase
+    .from("encounter_treatments")
+    .update(updateFields)
+    .eq("id", etId)
+    .select()
+    .single();
+  if (error) {
+    console.warn("[TREATMENTS POST] encounter_treatments sync:", error.message || error);
+    return;
+  }
+  const encId = String(data?.encounter_id || existing.encounter_id || "").trim();
+  if (encId && data) {
+    await mirrorEncounterTreatmentRowToPatientTreatmentsJson(encId, data);
+    bumpTreatmentsCache();
+    if (docVal) {
+      try {
+        await syncTreatmentDoctorFromProcedureAssign(encId, docVal);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+  }
+}
+
 // POST /api/patient/:patientId/treatments
-app.post("/api/patient/:patientId/treatments", async (req, res) => {
+app.post("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, async (req, res) => {
   const patientId = req.params.patientId;
 
 
@@ -7385,8 +12454,21 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   const createdAtFinal = procedure.createdAt ? Number(procedure.createdAt) : now();
   const typeFinal = procedures.normalizeType(procedure.type || "");
   const statusFinal = procedures.normalizeStatus(procedure.status || "PLANNED");
-  const categoryFinal = procedures.categoryForType(typeFinal);
-  const dateFinal = procedures.normalizeDate(procedure.date ?? procedure.scheduledAt);
+  const existingProcPre = tooth.procedures.find((p) => String(p.procedureId || p.id || "") === procedureIdFinal);
+  const categoryFinal =
+    procedures.categoryForType(typeFinal) ||
+    (existingProcPre ? procedures.categoryForType(existingProcPre.type) : null) ||
+    procedures.DEFAULT_PROCEDURE_CATEGORY;
+  const missingDatePolicy = resolveMissingDatePolicy(
+    procedure.missingDatePolicy || procedure.datePolicy || req.body?.missingDatePolicy || req.body?.datePolicy
+  );
+  const rawDateFinal = procedures.normalizeDate(procedure.date ?? procedure.scheduledAt);
+  let dateFinal = rawDateFinal;
+  let autoAssignedDate = null;
+  if (!dateFinal && missingDatePolicy === "AUTO") {
+    dateFinal = todayYmdUtc();
+    autoAssignedDate = dateFinal;
+  }
 
   const validation = procedures.validateToothUpsert(tooth.procedures, {
     procedureId: procedureIdFinal,
@@ -7408,9 +12490,61 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   const quantity = procedure.quantity !== undefined ? Number(procedure.quantity) : 1;
   const totalPrice = procedure.total_price !== undefined ? Number(procedure.total_price) : (unitPrice !== null ? unitPrice * quantity : null);
   const currency = procedure.currency ? String(procedure.currency).trim().toUpperCase() : null;
+  const assignedDoctorId = String(
+    procedure.assignedDoctorId ||
+    procedure.assigned_doctor_id ||
+    procedure.doctorId ||
+    procedure.doctor_id ||
+    procedure.meta?.doctorId ||
+    procedure.meta?.doctor_id ||
+    ""
+  ).trim();
+  const assignedDoctorName = String(
+    procedure.assignedDoctorName ||
+    procedure.doctorName ||
+    procedure.doctor ||
+    ""
+  ).trim();
+  const chairNo = normalizeChairValueForConflict(
+    procedure.chairNo ||
+    procedure.chair_no ||
+    procedure.chair ||
+    procedure.chairId ||
+    procedure.chair_id ||
+    procedure.meta?.chairNo ||
+    procedure.meta?.chair_no
+  );
+
+  // Skip schedule conflict check when only updating an existing procedure at the same time slot
+  const prevProcForSchedule = existingProcPre;
+  let skipScheduleCheck = false;
+  if (prevProcForSchedule && dateFinal) {
+    const tsPrev = toScheduledTimestampForConflict(
+      prevProcForSchedule.scheduledAt ?? prevProcForSchedule.date ?? prevProcForSchedule.createdAt
+    );
+    const tsNew = toScheduledTimestampForConflict(dateFinal);
+    if (Number.isFinite(tsPrev) && Number.isFinite(tsNew) && Math.floor(tsPrev / 60000) === Math.floor(tsNew / 60000)) {
+      skipScheduleCheck = true;
+    }
+  }
+
+  if (dateFinal && !skipScheduleCheck) {
+    const availability = await checkTreatmentScheduleAvailability({
+      clinicId: req.isAdmin ? req.clinicId : null,
+      patientId,
+      procedureId: procedureIdFinal,
+      scheduledAt: dateFinal,
+      doctorId: assignedDoctorId,
+      doctorName: assignedDoctorName,
+      chairNo,
+    });
+    if (!availability.ok) {
+      return res.status(409).json({ ok: false, ...availability });
+    }
+  }
 
   // Upsert by procedureId (history preserved; no hard limit)
-  const existingProc = tooth.procedures.find((p) => String(p.procedureId || p.id || "") === procedureIdFinal);
+  const existingProc = existingProcPre;
   if (existingProc) {
     existingProc.id = procedureIdFinal;
     existingProc.procedureId = procedureIdFinal;
@@ -7422,6 +12556,18 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     existingProc.notes = String(procedure.notes || existingProc.notes || "");
     existingProc.meta = procedure.meta || existingProc.meta || {};
     existingProc.replacesProcedureId = procedure.replacesProcedureId || existingProc.replacesProcedureId;
+    if (assignedDoctorId) {
+      existingProc.assignedDoctorId = assignedDoctorId;
+      existingProc.assigned_doctor_id = assignedDoctorId;
+    }
+    if (assignedDoctorName) {
+      existingProc.assignedDoctorName = assignedDoctorName;
+      existingProc.assigned_doctor_name = assignedDoctorName;
+    }
+    if (chairNo) {
+      existingProc.chairNo = chairNo;
+      existingProc.chair = chairNo;
+    }
     // Update pricing fields if provided
     if (unitPrice !== null) existingProc.unit_price = unitPrice;
     if (procedure.quantity !== undefined) existingProc.quantity = quantity;
@@ -7443,6 +12589,18 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
       replacesProcedureId: procedure.replacesProcedureId,
       createdAt: createdAtFinal,
     };
+    if (assignedDoctorId) {
+      newProc.assignedDoctorId = assignedDoctorId;
+      newProc.assigned_doctor_id = assignedDoctorId;
+    }
+    if (assignedDoctorName) {
+      newProc.assignedDoctorName = assignedDoctorName;
+      newProc.assigned_doctor_name = assignedDoctorName;
+    }
+    if (chairNo) {
+      newProc.chairNo = chairNo;
+      newProc.chair = chairNo;
+    }
     // Add pricing fields if provided
     if (unitPrice !== null) newProc.unit_price = unitPrice;
     if (procedure.quantity !== undefined) newProc.quantity = quantity;
@@ -7477,6 +12635,14 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
     payload.formCompletedAt = null;
   }
 
+  const schedulingAlertContext = {
+    procedureId: procedureIdFinal,
+    toothId: String(toothId),
+    procedureType: typeFinal,
+    missingDate: !dateFinal,
+    autoAssignedDate,
+  };
+
   // SUPABASE: Update patient treatments data (PRIMARY - production source of truth)
   if (isSupabaseEnabled()) {
     try {
@@ -7486,6 +12652,17 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
       console.log(
         `[TREATMENTS POST] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
+      try {
+        await syncEncounterTreatmentRowFromPatientTreatmentsUpsert({
+          procedureIdFinal,
+          dateFinal,
+          statusFinal,
+          chairNo,
+          assignedDoctorRaw: assignedDoctorId || null,
+        });
+      } catch (etSyncErr) {
+        console.warn("[TREATMENTS POST] encounter_treatments sync exception:", etSyncErr?.message || etSyncErr);
+      }
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
@@ -7500,17 +12677,19 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
       const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
       const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
       if (fetchErr) {
-        console.error("[TREATMENTS POST] treatment(v1) fetch failed (ignored)", {
-          message: fetchErr.message,
-          code: fetchErr.code,
-          details: fetchErr.details,
-        });
+        if (!isMissingColumnError(fetchErr, "treatment")) {
+          console.error("[TREATMENTS POST] treatment(v1) fetch failed (ignored)", {
+            message: fetchErr.message,
+            code: fetchErr.code,
+            details: fetchErr.details,
+          });
+        }
       } else {
         const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
         const mergedV1 = deepMerge(existingV1, patchV1);
         mergedV1.lastUpdatedAt = new Date().toISOString();
         const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
-        if (saveErr) {
+        if (saveErr && !isMissingColumnError(saveErr, "treatment")) {
           console.error("[TREATMENTS POST] treatment(v1) save failed (ignored)", {
             message: saveErr.message,
             code: saveErr.code,
@@ -7535,13 +12714,45 @@ app.post("/api/patient/:patientId/treatments", async (req, res) => {
   
   // Update patient oral health scores after treatment plan change
   updatePatientOralHealthScores(patientId);
+
+  let schedulingAlert = { ok: true, skipped: true };
+  try {
+    schedulingAlert = await syncProcedureSchedulingAlert({
+      patientId,
+      clinicId: req.isAdmin ? req.clinicId : null,
+      ...schedulingAlertContext,
+    });
+  } catch (alertError) {
+    console.error("[TREATMENTS POST] scheduling alert sync failed", {
+      message: alertError?.message,
+      code: alertError?.code,
+      details: alertError?.details,
+    });
+    schedulingAlert = {
+      ok: false,
+      error: "scheduling_alert_sync_failed",
+      details: alertError?.message || null,
+    };
+  }
   
   // Return the updated data in the same format as GET endpoint
-  res.json({ ok: true, saved: true, treatments: payload, teeth: payload.teeth });
+  bumpTreatmentsCache();
+  res.json({
+    ok: true,
+    saved: true,
+    treatments: payload,
+    teeth: payload.teeth,
+    scheduling: {
+      policy: missingDatePolicy,
+      requiresDate: !dateFinal,
+      autoAssignedDate: autoAssignedDate || null,
+      alert: schedulingAlert,
+    },
+  });
 });
 
 // PUT /api/patient/:patientId/treatments/:procedureId
-app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
+app.put("/api/patient/:patientId/treatments/:procedureId", requirePatientTreatmentsAuth, async (req, res) => {
   const patientId = req.params.patientId;
   const procedureId = req.params.procedureId;
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
@@ -7557,6 +12768,7 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   
   let teeth = Array.isArray(existing.teeth) ? existing.teeth : [];
   let found = false;
+  let schedulingAlertContext = null;
   
   // Procedure'ü bul ve güncelle
   for (const tooth of teeth) {
@@ -7565,8 +12777,18 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
         if (String(proc.id) === String(procedureId)) {
           const nextType = procedures.normalizeType(req.body?.type || proc.type);
           const nextStatus = procedures.normalizeStatus(req.body?.status || proc.status);
-          const nextCategory = procedures.categoryForType(nextType);
-          const nextDate = procedures.normalizeDate(req.body?.date ?? req.body?.scheduledAt ?? proc.scheduledAt);
+          const nextCategory =
+            procedures.categoryForType(nextType) ||
+            procedures.categoryForType(proc.type) ||
+            procedures.DEFAULT_PROCEDURE_CATEGORY;
+          const missingDatePolicy = resolveMissingDatePolicy(req.body?.missingDatePolicy || req.body?.datePolicy);
+          const requestedDate = procedures.normalizeDate(req.body?.date ?? req.body?.scheduledAt ?? proc.scheduledAt);
+          let nextDate = requestedDate;
+          let autoAssignedDate = null;
+          if (!nextDate && missingDatePolicy === "AUTO") {
+            nextDate = todayYmdUtc();
+            autoAssignedDate = nextDate;
+          }
 
           const validation = procedures.validateToothUpsert(tooth.procedures, {
             procedureId: String(proc.procedureId || proc.id || procedureId),
@@ -7583,6 +12805,50 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
             return res.status(409).json({ ok: false, error: validation.error, ...validation });
           }
 
+          const nextAssignedDoctorId = String(
+            req.body?.assignedDoctorId ||
+            req.body?.assigned_doctor_id ||
+            req.body?.doctorId ||
+            req.body?.doctor_id ||
+            req.body?.meta?.doctorId ||
+            req.body?.meta?.doctor_id ||
+            proc.assignedDoctorId ||
+            ""
+          ).trim();
+          const nextAssignedDoctorName = String(
+            req.body?.assignedDoctorName ||
+            req.body?.doctorName ||
+            req.body?.doctor ||
+            proc.assignedDoctorName ||
+            ""
+          ).trim();
+          const nextChairNo = normalizeChairValueForConflict(
+            req.body?.chairNo ||
+            req.body?.chair_no ||
+            req.body?.chair ||
+            req.body?.chairId ||
+            req.body?.chair_id ||
+            req.body?.meta?.chairNo ||
+            req.body?.meta?.chair_no ||
+            proc.chairNo ||
+            proc.chair
+          );
+
+          if (nextDate) {
+            const availability = await checkTreatmentScheduleAvailability({
+              clinicId: req.isAdmin ? req.clinicId : null,
+              patientId,
+              procedureId: String(proc.procedureId || proc.id || procedureId),
+              scheduledAt: nextDate,
+              doctorId: nextAssignedDoctorId,
+              doctorName: nextAssignedDoctorName,
+              chairNo: nextChairNo,
+            });
+            if (!availability.ok) {
+              return res.status(409).json({ ok: false, ...availability });
+            }
+          }
+
           proc.id = String(proc.procedureId || proc.id || procedureId);
           proc.procedureId = proc.id;
           proc.type = nextType;
@@ -7593,7 +12859,21 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
           proc.notes = String(req.body?.notes || proc.notes || "");
           proc.meta = req.body?.meta || proc.meta || {};
           proc.replacesProcedureId = req.body?.replacesProcedureId || proc.replacesProcedureId;
+          if (nextAssignedDoctorId) proc.assignedDoctorId = nextAssignedDoctorId;
+          if (nextAssignedDoctorName) proc.assignedDoctorName = nextAssignedDoctorName;
+          if (nextChairNo) {
+            proc.chairNo = nextChairNo;
+            proc.chair = nextChairNo;
+          }
           found = true;
+          schedulingAlertContext = {
+            procedureId: String(proc.procedureId || proc.id || procedureId),
+            toothId: String(tooth?.toothId || ""),
+            procedureType: nextType,
+            missingDate: !nextDate,
+            autoAssignedDate,
+            policy: missingDatePolicy,
+          };
           break;
         }
       }
@@ -7653,17 +12933,19 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
       const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
       const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
       if (fetchErr) {
-        console.error("[TREATMENTS PUT] treatment(v1) fetch failed (ignored)", {
-          message: fetchErr.message,
-          code: fetchErr.code,
-          details: fetchErr.details,
-        });
+        if (!isMissingColumnError(fetchErr, "treatment")) {
+          console.error("[TREATMENTS PUT] treatment(v1) fetch failed (ignored)", {
+            message: fetchErr.message,
+            code: fetchErr.code,
+            details: fetchErr.details,
+          });
+        }
       } else {
         const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
         const mergedV1 = deepMerge(existingV1, patchV1);
         mergedV1.lastUpdatedAt = new Date().toISOString();
         const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
-        if (saveErr) {
+        if (saveErr && !isMissingColumnError(saveErr, "treatment")) {
           console.error("[TREATMENTS PUT] treatment(v1) save failed (ignored)", {
             message: saveErr.message,
             code: saveErr.code,
@@ -7686,12 +12968,45 @@ app.put("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
   
   // Update patient oral health scores after treatment plan update
   updatePatientOralHealthScores(patientId);
+
+  let schedulingAlert = { ok: true, skipped: true };
+  if (schedulingAlertContext) {
+    try {
+      schedulingAlert = await syncProcedureSchedulingAlert({
+        patientId,
+        clinicId: req.isAdmin ? req.clinicId : null,
+        ...schedulingAlertContext,
+      });
+    } catch (alertError) {
+      console.error("[TREATMENTS PUT] scheduling alert sync failed", {
+        message: alertError?.message,
+        code: alertError?.code,
+        details: alertError?.details,
+      });
+      schedulingAlert = {
+        ok: false,
+        error: "scheduling_alert_sync_failed",
+        details: alertError?.message || null,
+      };
+    }
+  }
   
-  res.json({ ok: true, updated: true, treatments: payload });
+  bumpTreatmentsCache();
+  res.json({
+    ok: true,
+    updated: true,
+    treatments: payload,
+    scheduling: {
+      policy: schedulingAlertContext?.policy || "MANUAL",
+      requiresDate: schedulingAlertContext ? Boolean(schedulingAlertContext.missingDate) : false,
+      autoAssignedDate: schedulingAlertContext?.autoAssignedDate || null,
+      alert: schedulingAlert,
+    },
+  });
 });
 
 // DELETE /api/patient/:patientId/treatments/:procedureId
-app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) => {
+app.delete("/api/patient/:patientId/treatments/:procedureId", requirePatientTreatmentsAuth, async (req, res) => {
   const patientId = req.params.patientId;
   const procedureId = req.params.procedureId;
   const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
@@ -7775,17 +13090,19 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
       const patchV1 = legacyTreatmentsToTreatmentV1(payload, "clinic");
       const { data: p, error: fetchErr } = await fetchPatientTreatmentRowSupabase(patientId, null);
       if (fetchErr) {
-        console.error("[TREATMENTS DELETE] treatment(v1) fetch failed (ignored)", {
-          message: fetchErr.message,
-          code: fetchErr.code,
-          details: fetchErr.details,
-        });
+        if (!isMissingColumnError(fetchErr, "treatment")) {
+          console.error("[TREATMENTS DELETE] treatment(v1) fetch failed (ignored)", {
+            message: fetchErr.message,
+            code: fetchErr.code,
+            details: fetchErr.details,
+          });
+        }
       } else {
         const existingV1 = isPlainObject(p?.treatment) ? p.treatment : {};
         const mergedV1 = deepMerge(existingV1, patchV1);
         mergedV1.lastUpdatedAt = new Date().toISOString();
         const { error: saveErr } = await updatePatientTreatmentRowSupabase(patientId, null, mergedV1);
-        if (saveErr) {
+        if (saveErr && !isMissingColumnError(saveErr, "treatment")) {
           console.error("[TREATMENTS DELETE] treatment(v1) save failed (ignored)", {
             message: saveErr.message,
             code: saveErr.code,
@@ -7809,6 +13126,7 @@ app.delete("/api/patient/:patientId/treatments/:procedureId", async (req, res) =
   // Update patient oral health scores after procedure deletion
   updatePatientOralHealthScores(patientId);
   
+  bumpTreatmentsCache();
   res.json({ ok: true, deleted: true, treatments: payload });
 });
 
@@ -7821,7 +13139,7 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
 
     if (isSupabaseEnabled()) {
       fetchMessagesFromSupabase(patientId)
-        .then(({ data, error }) => {
+        .then(({ data, error, preMapped }) => {
           if (error) {
             const supabasePublic = supabaseErrorPublic(error);
             console.error("[MESSAGES] Supabase fetch failed", {
@@ -7839,7 +13157,11 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
             }
             return res.status(500).json({ ok: false, error: "messages_fetch_failed", supabase: supabasePublic });
           }
-          const messages = (data || []).map(mapDbMessageToLegacyMessage).filter(Boolean);
+          const messages = preMapped
+            ? Array.isArray(data)
+              ? data
+              : []
+            : (data || []).map(mapDbMessageToLegacyMessage).filter(Boolean);
           return res.json({ ok: true, messages });
         })
         .catch((e) => {
@@ -7867,19 +13189,18 @@ app.get("/api/patient/me/messages", requireToken, (req, res) => {
 });
 
 // POST /api/patient/me/messages (mobile convenience)
-app.post("/api/patient/me/messages", requireToken, (req, res) => {
+app.post("/api/patient/me/messages", requireToken, async (req, res) => {
   try {
     const patientId = String(req.patientId || "").trim();
     if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
 
     const body = req.body || {};
-    const text = String(body.text || "").trim();
+    const text = String(body.text || body.message || body.content || "").trim();
     const msgType = String(body.type || "text").trim() || "text";
     if (!text) return res.status(400).json({ ok: false, error: "text_required" });
 
     if (!isSupabaseEnabled()) {
       if (!canUseFileFallback()) return res.status(500).json(supabaseDisabledPayload("messages"));
-      // dev fallback
       const CHAT_DIR = path.join(DATA_DIR, "chats");
       if (!fs.existsSync(CHAT_DIR)) fs.mkdirSync(CHAT_DIR, { recursive: true });
       const chatFile = path.join(CHAT_DIR, `${patientId}.json`);
@@ -7897,34 +13218,39 @@ app.post("/api/patient/me/messages", requireToken, (req, res) => {
       return res.json({ ok: true, message: newMessage });
     }
 
-    insertMessageToSupabase({ patientId, sender: "patient", message: text, attachments: null, type: msgType })
-      .then(({ data, error }) => {
-        if (error) {
-          const supabasePublic = supabaseErrorPublic(error);
-          console.error("[MESSAGES] Supabase save failed", {
-            message: error.message,
-            code: error.code,
-            details: error.details,
-          });
-          if (isMissingTableError(error, "messages")) {
-            return res.status(500).json({
-              ok: false,
-              error: "messages_table_missing",
-              message: "Supabase schema missing: messages table. Run migration 008_create_messages_table.sql",
-              supabase: supabasePublic,
-            });
-          }
-          return res.status(500).json({ ok: false, error: "messages_save_failed", supabase: supabasePublic });
-        }
-        const msg = mapDbMessageToLegacyMessage(data);
-        return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
-      })
-      .catch((e) => {
-
-        return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
+    const { data, error } = await insertMessageToSupabase({
+      patientId,
+      sender: "patient",
+      message: text,
+      attachments: null,
+      type: msgType,
+    });
+    if (error) {
+      const supabasePublic = supabaseErrorPublic(error);
+      console.error("[MESSAGES] Supabase save failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
       });
+      if (String(error?.message || "") === "patient_not_found_for_messages") {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+      if (String(error?.message || "") === "patient_clinic_unknown_for_messages") {
+        return res.status(422).json({ ok: false, error: "patient_clinic_required" });
+      }
+      if (isMissingTableError(error, "messages")) {
+        return res.status(500).json({
+          ok: false,
+          error: "messages_table_missing",
+          message: "Supabase schema missing: messages table. Run migration 008_create_messages_table.sql",
+          supabase: supabasePublic,
+        });
+      }
+      return res.status(500).json({ ok: false, error: "messages_save_failed", supabase: supabasePublic });
+    }
+    const msg = mapDbMessageToLegacyMessage(data);
+    return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
   } catch (error) {
-
     return res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -7947,7 +13273,7 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
 
     if (isSupabaseEnabled()) {
       fetchMessagesFromSupabase(patientId)
-        .then(({ data, error }) => {
+        .then(({ data, error, preMapped }) => {
           if (error) {
             const supabasePublic = supabaseErrorPublic(error);
             console.error("[MESSAGES] Supabase fetch failed", {
@@ -7967,7 +13293,9 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
           }
 
           if (Array.isArray(data) && data.length > 0) {
-            const messages = data.map(mapDbMessageToLegacyMessage).filter(Boolean);
+            const messages = preMapped
+              ? data
+              : data.map(mapDbMessageToLegacyMessage).filter(Boolean);
             return res.json({ ok: true, messages });
           }
 
@@ -8010,34 +13338,34 @@ app.get("/api/patient/:patientId/messages", (req, res) => {
 });
 
 // POST /api/patient/:patientId/messages
-app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
+app.post("/api/patient/:patientId/messages", requireToken, async (req, res) => {
   try {
     const rawPid = String(req.params.patientId || "").trim();
     const patientId = rawPid === "me" ? String(req.patientId || "").trim() : rawPid;
-    
+
     if (!patientId) {
       return res.status(400).json({ ok: false, error: "patientId_required" });
     }
-    
-    // Body'yi güvenli şekilde oku
-    const body = req.body || {};
-    const text = String(body.text || "").trim();
-    const msgType = String(body.type || "text").trim() || "text";
-    
 
-    
+    const body = req.body || {};
+    const text = String(body.text || body.message || "").trim();
+    const msgType = String(body.type || "text").trim() || "text";
+
     if (!text) {
       return res.status(400).json({ ok: false, error: "text_required", received: body });
     }
 
-    // Token'dan gelen patientId ile URL'deki patientId eşleşmeli
-    if (req.patientId !== patientId) {
+    const tokenPid = String(req.patientId || "").trim();
+    const internalToken = await resolveMessagesPatientDbId(tokenPid);
+    const internalParam = await resolveMessagesPatientDbId(patientId);
+    const samePatient =
+      (internalToken && internalParam && internalToken === internalParam) || tokenPid === patientId;
+    if (!samePatient) {
       return res.status(403).json({ ok: false, error: "patientId_mismatch" });
     }
 
     if (!isSupabaseEnabled()) {
       if (!canUseFileFallback()) return res.status(500).json(supabaseDisabledPayload("messages"));
-      // dev fallback
       const CHAT_DIR = path.join(DATA_DIR, "chats");
       if (!fs.existsSync(CHAT_DIR)) fs.mkdirSync(CHAT_DIR, { recursive: true });
       const chatFile = path.join(CHAT_DIR, `${patientId}.json`);
@@ -8055,34 +13383,39 @@ app.post("/api/patient/:patientId/messages", requireToken, (req, res) => {
       return res.json({ ok: true, message: newMessage });
     }
 
-    insertMessageToSupabase({ patientId, sender: "patient", message: String(text).trim(), attachments: null, type: msgType })
-      .then(({ data, error }) => {
-        if (error) {
-          const supabasePublic = supabaseErrorPublic(error);
-          console.error("[MESSAGES] Supabase save failed", {
-            message: error.message,
-            code: error.code,
-            details: error.details,
-          });
-          if (isMissingTableError(error, "messages")) {
-            return res.status(500).json({
-              ok: false,
-              error: "messages_table_missing",
-              message: "Supabase schema missing: messages table. Run migration 008_create_messages_table.sql",
-              supabase: supabasePublic,
-            });
-          }
-          return res.status(500).json({ ok: false, error: "messages_save_failed", supabase: supabasePublic });
-        }
-        const msg = mapDbMessageToLegacyMessage(data);
-        return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
-      })
-      .catch((e) => {
-
-        return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
+    const { data, error } = await insertMessageToSupabase({
+      patientId,
+      sender: "patient",
+      message: String(text).trim(),
+      attachments: null,
+      type: msgType,
+    });
+    if (error) {
+      const supabasePublic = supabaseErrorPublic(error);
+      console.error("[MESSAGES] Supabase save failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
       });
+      if (String(error?.message || "") === "patient_not_found_for_messages") {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
+      }
+      if (String(error?.message || "") === "patient_clinic_unknown_for_messages") {
+        return res.status(422).json({ ok: false, error: "patient_clinic_required" });
+      }
+      if (isMissingTableError(error, "messages")) {
+        return res.status(500).json({
+          ok: false,
+          error: "messages_table_missing",
+          message: "Supabase schema missing: messages table. Run migration 008_create_messages_table.sql",
+          supabase: supabasePublic,
+        });
+      }
+      return res.status(500).json({ ok: false, error: "messages_save_failed", supabase: supabasePublic });
+    }
+    const msg = mapDbMessageToLegacyMessage(data);
+    return res.json({ ok: true, message: msg || { text, from: "PATIENT", createdAt: now(), patientId } });
   } catch (error) {
-
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -8138,8 +13471,23 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
       return sendAndRespond(newMessage);
     }
 
-    insertMessageToSupabase({ patientId, sender: "clinic", message: String(text).trim(), attachments: null, type: msgType })
-      .then(({ data, error }) => {
+    (async () => {
+      try {
+        const pmTry = await insertClinicMessageViaPatientMessages(
+          patientId,
+          String(text).trim(),
+          msgType
+        );
+        if (!pmTry.error && pmTry.data) {
+          return sendAndRespond(pmTry.data);
+        }
+        const { data, error } = await insertMessageToSupabase({
+          patientId,
+          sender: "clinic",
+          message: String(text).trim(),
+          attachments: null,
+          type: msgType,
+        });
         if (error) {
           const supabasePublic = supabaseErrorPublic(error);
           console.error("[MESSAGES] Supabase save failed", {
@@ -8164,11 +13512,10 @@ app.post("/api/patient/:patientId/messages/admin", (req, res) => {
           createdAt: now(),
         };
         return sendAndRespond(msg);
-      })
-      .catch((e) => {
-
+      } catch (e) {
         return res.status(500).json({ ok: false, error: "messages_save_failed", exception: String(e?.message || e) });
-      });
+      }
+    })();
     
   } catch (error) {
 
@@ -8226,7 +13573,971 @@ app.post("/api/patient/:patientId/push-subscription", requireToken, (req, res) =
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
+//================== INTRAORAL PHOTOS UPLOAD ==================
+// Dedicated endpoint for patient intraoral photos (separate from chat uploads)
+// POST /api/patient/upload-intraoral-photos
+app.post('/api/patient/upload-intraoral-photos', chatUpload.array('photos', 5), async (req, res) => {
+  try {
+    const patientId = String(req.body?.patientId || '').trim();
+    
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: 'patientId_required', message: 'Patient ID is required' });
+    }
 
+    // Verify patient token matches
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const altToken = req.headers['x-patient-token'] || '';
+    const finalToken = token || altToken;
+    
+    if (!finalToken) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: 'Token required' });
+    }
+
+    // Validate token and patientId match
+    let tokenPatientId = null;
+    try {
+      if (finalToken.startsWith('eyJ')) {
+        const decoded = jwt.verify(finalToken, JWT_SECRET);
+        tokenPatientId = decoded?.patientId;
+      } else {
+        const tokens = readJson(TOK_FILE, {});
+        tokenPatientId = tokens[finalToken]?.patientId;
+      }
+    } catch (e) {
+      return res.status(401).json({ ok: false, error: 'invalid_token' });
+    }
+
+    if (tokenPatientId !== patientId) {
+      return res.status(403).json({ ok: false, error: 'patientId_mismatch', message: 'Token does not match patientId' });
+    }
+
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      return res.status(400).json({ ok: false, error: 'no_files', message: 'No photos uploaded' });
+    }
+
+    const allowedImageMimes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif']);
+    const maxFileSize = 10 * 1024 * 1024; // 10MB per image
+
+    // Create upload directory
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
+    if (!fs.existsSync(INTRAORAL_DIR)) {
+      fs.mkdirSync(INTRAORAL_DIR, { recursive: true });
+    }
+
+    const uploadedPhotos = [];
+
+    for (const file of files) {
+      const mime = String(file.mimetype || '').toLowerCase();
+      const size = Number(file.size || 0);
+      const originalName = String(file.originalname || 'photo');
+
+      // Validate image type
+      if (!allowedImageMimes.has(mime)) {
+        return res.status(400).json({ 
+          ok: false, 
+          error: 'invalid_file_type', 
+          message: `Invalid image format: ${mime}. Allowed: JPEG, PNG, HEIC` 
+        });
+      }
+
+      // Validate file size
+      if (size > maxFileSize) {
+        return res.status(400).json({ 
+          ok: false, 
+          error: 'file_too_large', 
+          message: `Image too large: ${(size / 1024 / 1024).toFixed(1)}MB. Max: 10MB` 
+        });
+      }
+
+      // Determine extension
+      let ext = path.extname(originalName).toLowerCase();
+      if (!ext) {
+        if (mime === 'image/png') ext = '.png';
+        else if (mime === 'image/heic' || mime === 'image/heif') ext = '.heic';
+        else ext = '.jpg';
+      }
+
+      // Generate safe filename with timestamp
+      const timestamp = Date.now();
+      const safeName = `intraoral_${patientId}_${timestamp}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+      const diskPath = path.join(INTRAORAL_DIR, safeName);
+      
+      // Save file
+      fs.writeFileSync(diskPath, file.buffer);
+
+      // Generate URL (relative for mobile compatibility)
+      const photoUrl = `/uploads/intraoral/${encodeURIComponent(patientId)}/${encodeURIComponent(safeName)}`;
+      
+      uploadedPhotos.push({
+        name: originalName,
+        filename: safeName,
+        url: photoUrl,
+        mimeType: mime,
+        size: size,
+        uploadedAt: new Date().toISOString()
+      });
+    }
+
+    // Return success with photo URLs
+    res.json({
+      ok: true,
+      patientId: patientId,
+      photos: uploadedPhotos,
+      count: uploadedPhotos.length,
+      message: `${uploadedPhotos.length} intraoral photo(s) uploaded successfully`
+    });
+
+  } catch (error) {
+    console.error('[INTRAORAL UPLOAD] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: 'upload_failed', 
+      message: error?.message || 'Failed to upload intraoral photos' 
+    });
+  }
+});
+
+// ─── Helper: resolve patient UUID from any patientId format ───────────────────
+async function resolvePatientUUID(patientId) {
+  const UUID_RE_F = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  // Always try to resolve via patient_id column first (could be UUID or short text)
+  // This handles the case where patients.patient_id is UUID-formatted but different from patients.id
+  const { data: row } = await supabase.from('patients').select('id')
+    .eq('patient_id', patientId).maybeSingle();
+  if (row && row.id) return row.id;
+  // If no match via patient_id, treat patientId as the real id directly
+  if (UUID_RE_F.test(patientId)) return patientId;
+  // Short text ID with no match — return as-is
+  return patientId;
+}
+
+// ─── Helper: collect files from all sources for a patient ─────────────────────
+async function collectPatientFiles(patientId) {
+  const filesMap = new Map(); // id → FileItem (dedup)
+
+  const addFile = (f) => { if (f && f.id && f.url) filesMap.set(f.id, f); };
+
+  const patientUUID = isSupabaseEnabled() ? await resolvePatientUUID(patientId) : patientId;
+
+  // ── Source 1: messages table (chat uploads) ───────────────────────────────
+  if (isSupabaseEnabled()) {
+    try {
+      // Try primary schema (sender column)
+      let msgRows = [];
+      const r1 = await supabase.from('messages')
+        .select('id, patient_id, sender, attachments, attachment, created_at')
+        .eq('patient_id', patientUUID)
+        .not('attachments', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (!r1.error) {
+        msgRows = r1.data || [];
+      } else {
+        // Fallback schema (from_patient column)
+        const r2 = await supabase.from('messages')
+          .select('id, patient_id, from_patient, attachment, created_at')
+          .eq('patient_id', patientUUID)
+          .not('attachment', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (!r2.error) msgRows = r2.data || [];
+      }
+
+      for (const row of msgRows) {
+        const att = row.attachments || row.attachment;
+        if (!att || !att.url) continue;
+        const isClinic = row.sender === 'clinic' || row.sender === 'admin' || row.from_patient === false;
+        const ft = att.fileType || (att.mimeType && att.mimeType.startsWith('image/') ? 'image' : 'pdf');
+        addFile({
+          id: String(row.id),
+          name: att.name || 'file',
+          url: att.url,
+          mimeType: att.mimeType || '',
+          fileType: ft,
+          subtype: att.subtype || null,
+          size: att.size || 0,
+          createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+          from: isClinic ? 'CLINIC' : 'PATIENT',
+          source: 'chat',
+        });
+      }
+    } catch (_) {}
+
+    // ── Source 2: patient_files table ─────────────────────────────────────────
+    try {
+      const { data: pfRows, error: pfErr } = await supabase.from('patient_files')
+        .select('id, file_url, file_name, file_type, file_subtype, mime_type, file_size, from_role, source, created_at')
+        .eq('patient_id', patientUUID)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (pfErr) console.error('[FILES] patient_files query error:', pfErr.message);
+      for (const row of (pfRows || [])) {
+        if (!row.file_url) continue;
+        addFile({
+          id: String(row.id),
+          name: row.file_name || 'file',
+          url: row.file_url,
+          mimeType: row.mime_type || '',
+          fileType: row.file_type || 'image',
+          subtype: row.file_subtype || null,
+          size: row.file_size || 0,
+          createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+          from: row.from_role === 'clinic' || row.from_role === 'admin' ? 'CLINIC' : 'PATIENT',
+          source: row.source || 'upload',
+        });
+      }
+    } catch (pfCatch) { console.error('[FILES] patient_files catch:', pfCatch.message); }
+  }
+
+  // ── Source 3: local disk — intraoral photos ───────────────────────────────
+  try {
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
+    if (fs.existsSync(INTRAORAL_DIR)) {
+      const diskFiles = fs.readdirSync(INTRAORAL_DIR).filter((f) => /\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f));
+      for (const fname of diskFiles) {
+        const fpath = path.join(INTRAORAL_DIR, fname);
+        const stat = fs.statSync(fpath);
+        const fileId = 'intraoral_' + fname;
+        addFile({
+          id: fileId,
+          name: fname,
+          url: `/uploads/intraoral/${encodeURIComponent(patientId)}/${encodeURIComponent(fname)}`,
+          mimeType: 'image/jpeg',
+          fileType: 'image',
+          subtype: null,
+          size: stat.size,
+          createdAt: stat.mtimeMs,
+          from: 'PATIENT',
+          source: 'intraoral',
+        });
+      }
+    }
+  } catch (_) {}
+
+  // ── Source 4: local disk — chat uploads ───────────────────────────────────
+  try {
+    const CHAT_UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'chat', patientId);
+    if (fs.existsSync(CHAT_UPLOAD_DIR)) {
+      const diskFiles = fs.readdirSync(CHAT_UPLOAD_DIR).filter((f) => /\.(jpg|jpeg|png|heic|heif|webp|pdf)$/i.test(f));
+      for (const fname of diskFiles) {
+        const fpath = path.join(CHAT_UPLOAD_DIR, fname);
+        const stat = fs.statSync(fpath);
+        const isPdf = /\.pdf$/i.test(fname);
+        const fileId = 'chat_disk_' + fname;
+        if (filesMap.has(fileId)) continue; // already in Supabase messages
+        addFile({
+          id: fileId,
+          name: fname,
+          url: `/uploads/chat/${encodeURIComponent(patientId)}/${encodeURIComponent(fname)}`,
+          mimeType: isPdf ? 'application/pdf' : 'image/jpeg',
+          fileType: isPdf ? 'pdf' : 'image',
+          subtype: null,
+          size: stat.size,
+          createdAt: stat.mtimeMs,
+          from: 'PATIENT',
+          source: 'chat',
+        });
+      }
+    }
+  } catch (_) {}
+
+  return Array.from(filesMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+// GET /api/patient/:patientId/files — Patient views their own files
+app.get('/api/patient/:patientId/files', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (req.patientId !== patientId) {
+      return res.status(403).json({ ok: false, error: 'patient_id_mismatch' });
+    }
+    const files = await collectPatientFiles(patientId);
+    return res.json({ ok: true, files });
+  } catch (err) {
+    console.error('[PATIENT FILES] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error', files: [] });
+  }
+});
+
+// GET /api/doctor/patient/:patientId/files — Doctor views patient files
+app.get('/api/doctor/patient/:patientId/files', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patient_id_required' });
+    const files = await collectPatientFiles(patientId);
+    return res.json({ ok: true, files });
+  } catch (err) {
+    console.error('[DOCTOR PATIENT FILES] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error', files: [] });
+  }
+});
+
+// POST /api/patient/profile-photo — patient avatar (multipart field: photo | file | image)
+app.post(
+  "/api/patient/profile-photo",
+  requireToken,
+  chatUpload.fields([
+    { name: "photo", maxCount: 1 },
+    { name: "file", maxCount: 1 },
+    { name: "image", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      const tokenPid = String(req.patientId || "").trim();
+      if (!tokenPid) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+
+      const files = req.files || {};
+      const f =
+        (files.photo && files.photo[0]) ||
+        (files.file && files.file[0]) ||
+        (files.image && files.image[0]);
+      if (!f) {
+        return res.status(400).json({
+          ok: false,
+          error: "no_file",
+          message: "Multipart alan photo, file veya image gerekli.",
+        });
+      }
+
+      const mime = String(f.mimetype || "").toLowerCase();
+      if (!mime.startsWith("image/")) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Sadece resim yüklenebilir." });
+      }
+      const allowed = new Set([
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/webp",
+        "image/heic",
+        "image/heif",
+      ]);
+      if (!allowed.has(mime)) {
+        return res.status(400).json({ ok: false, error: "invalid_file_type" });
+      }
+      if (Number(f.size || 0) > 8 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: "En fazla 8MB." });
+      }
+
+      const patientUUID = await resolvePatientUUID(tokenPid);
+      let ext = path.extname(f.originalname || "").toLowerCase();
+      if (!ext) {
+        if (mime.includes("png")) ext = ".png";
+        else if (mime.includes("webp")) ext = ".webp";
+        else ext = ".jpg";
+      }
+      const safeName = `profile_${Date.now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+      const UPLOAD_DIR = path.join(__dirname, "public", "uploads", "patient", tokenPid);
+      if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+      const diskPath = path.join(UPLOAD_DIR, safeName);
+      fs.writeFileSync(diskPath, f.buffer);
+
+      const fileUrl = `/uploads/patient/${encodeURIComponent(tokenPid)}/${encodeURIComponent(safeName)}`;
+
+      if (isSupabaseEnabled()) {
+        let upErr = null;
+        const byId = await supabase
+          .from("patients")
+          .update({ profile_photo_url: fileUrl })
+          .eq("id", patientUUID)
+          .select("id");
+        if (byId.error) upErr = byId.error;
+        else if (!byId.data || byId.data.length === 0) {
+          const byPid = await supabase
+            .from("patients")
+            .update({ profile_photo_url: fileUrl })
+            .eq("patient_id", tokenPid)
+            .select("id");
+          if (byPid.error) upErr = byPid.error;
+        }
+        if (upErr) {
+          if (isMissingColumnError(upErr, "profile_photo_url")) {
+            return res.status(501).json({
+              ok: false,
+              error: "schema_missing_profile_photo_url",
+              message: "patients.profile_photo_url sütunu yok; migration ekleyin.",
+              url: fileUrl,
+            });
+          }
+          console.error("[PROFILE PHOTO] patients update failed:", upErr.message);
+          return res.status(500).json({ ok: false, error: "update_failed", details: upErr.message });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        profilePhotoUrl: fileUrl,
+        url: fileUrl,
+      });
+    } catch (err) {
+      console.error("[PROFILE PHOTO]", err);
+      return res.status(500).json({ ok: false, error: "server_error" });
+    }
+  }
+);
+
+// POST /api/patient/:patientId/upload — Guided photo / general upload (saves to patient_files table)
+app.post('/api/patient/:patientId/upload', requireToken, chatUpload.single('file'), async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'patient_id_mismatch' });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ ok: false, error: 'no_file' });
+
+    const mime = String(file.mimetype || '').toLowerCase();
+    const isImg = mime.startsWith('image/');
+    const isPdf = mime.includes('pdf');
+
+    let ext = path.extname(file.originalname || '').toLowerCase();
+    if (!ext) ext = isImg ? '.jpg' : isPdf ? '.pdf' : '.bin';
+
+    const subtype    = String(req.body && req.body.subtype    || '').trim() || null;
+    const source     = String(req.body && req.body.source     || 'guided_camera').trim();
+    const angleType  = String(req.body && req.body.angle_type || '').trim().toUpperCase() || null;
+
+    const VALID_ANGLES = ['FRONT', 'LEFT', 'RIGHT', 'UPPER', 'LOWER'];
+    const normalizedAngle = VALID_ANGLES.includes(angleType) ? angleType : null;
+
+    // Auto-detect angle from filename (intraoral_front_..., intraoral_left_...)
+    const filenameLower = (file.originalname || '').toLowerCase();
+    let detectedAngle = normalizedAngle;
+    if (!detectedAngle) {
+      for (const a of VALID_ANGLES) {
+        if (filenameLower.includes(a.toLowerCase())) { detectedAngle = a; break; }
+      }
+    }
+
+    const safeName = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+    const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    const diskPath = path.join(UPLOAD_DIR, safeName);
+    fs.writeFileSync(diskPath, file.buffer);
+    const fileUrl = `/uploads/patient/${encodeURIComponent(patientId)}/${encodeURIComponent(safeName)}`;
+
+    const fileType = isImg ? (subtype && subtype.includes('xray') ? 'xray' : 'image') : isPdf ? 'pdf' : 'file';
+
+    // Run quick validation if this is an intraoral photo
+    let validationResult = null;
+    if (isImg && detectedAngle) {
+      validationResult = validateIntraoralBuffer(file.buffer);
+    }
+
+    let savedId = `upload_${safeName}`;
+    if (isSupabaseEnabled()) {
+      const patientUUID = await resolvePatientUUID(patientId);
+      let clinicIdForFile = null;
+      try {
+        const { data: pr } = await supabase.from('patients').select('clinic_id').eq('id', patientUUID).maybeSingle();
+        clinicIdForFile = pr && pr.clinic_id ? pr.clinic_id : null;
+      } catch (_) {}
+
+      if (clinicIdForFile) {
+        const { data: pfRow } = await supabase.from('patient_files').insert({
+          patient_id: patientUUID,
+          clinic_id: clinicIdForFile,
+          file_url: fileUrl,
+          file_name: file.originalname || safeName,
+          file_type: fileType,
+          file_subtype: subtype,
+          mime_type: mime,
+          file_size: file.size,
+          from_role: 'patient',
+          source,
+          angle_type: detectedAngle,
+          validation_status: validationResult ? validationResult.status : null,
+          validation_score: validationResult ? validationResult.score : null,
+          validation_issues: validationResult ? validationResult.issues : null,
+        }).select('id').maybeSingle();
+        if (pfRow && pfRow.id) savedId = String(pfRow.id);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      id: savedId,
+      url: fileUrl,
+      name: file.originalname || safeName,
+      mimeType: mime,
+      fileType,
+      subtype,
+      size: file.size,
+      angle_type: detectedAngle,
+      validation: validationResult,
+    });
+  } catch (err) {
+    console.error('[PATIENT UPLOAD] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// GET /api/admin/patient/:patientId/files — Admin views patient files (alias)
+app.get('/api/admin/patient/:patientId/files', requireAdminAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patient_id_required' });
+
+    const debug = req.query.debug === '1';
+    const debugInfo = {};
+
+    if (debug) {
+      // Raw data from patient_files table
+      const patientUUID = isSupabaseEnabled() ? await resolvePatientUUID(patientId) : patientId;
+      debugInfo.resolvedUUID = patientUUID;
+      debugInfo.supabaseEnabled = isSupabaseEnabled();
+
+      if (isSupabaseEnabled()) {
+        const { data: pfRaw, error: pfErr } = await supabase
+          .from('patient_files')
+          .select('id, file_url, file_name, file_type, from_role, source, created_at')
+          .eq('patient_id', patientUUID)
+          .limit(50);
+        debugInfo.patient_files_rows = pfRaw || [];
+        debugInfo.patient_files_error = pfErr ? pfErr.message : null;
+
+        const { data: msgRaw, error: msgErr } = await supabase
+          .from('messages')
+          .select('id, attachment, created_at')
+          .eq('patient_id', patientUUID)
+          .not('attachment', 'is', null)
+          .limit(20);
+        debugInfo.messages_with_attachments = (msgRaw || []).length;
+        debugInfo.messages_error = msgErr ? msgErr.message : null;
+        debugInfo.sample_attachments = (msgRaw || []).slice(0, 3).map(r => r.attachment);
+      }
+
+      const intraoralDir = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
+      debugInfo.intraoral_disk_exists = fs.existsSync(intraoralDir);
+      debugInfo.intraoral_files = fs.existsSync(intraoralDir) ? fs.readdirSync(intraoralDir) : [];
+
+      const patientDir = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
+      debugInfo.patient_disk_exists = fs.existsSync(patientDir);
+      debugInfo.patient_disk_files = fs.existsSync(patientDir) ? fs.readdirSync(patientDir) : [];
+    }
+
+    const files = await collectPatientFiles(patientId);
+    const resp = { ok: true, files };
+    if (debug) resp.debug = debugInfo;
+    return res.json(resp);
+  } catch (err) {
+    console.error('[ADMIN PATIENT FILES] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error', files: [] });
+  }
+});
+
+// ── Admin patient file upload ──────────────────────────────────────────────────
+app.post('/api/admin/patient/:patientId/upload', requireAdminAuth, chatUpload.single('file'), async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patient_id_required' });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ ok: false, error: 'no_file' });
+
+    const mime = String(file.mimetype || '').toLowerCase();
+    const isImg = mime.startsWith('image/');
+    const isPdf = mime.includes('pdf');
+
+    let ext = path.extname(file.originalname || '').toLowerCase();
+    if (!ext) ext = isImg ? '.jpg' : isPdf ? '.pdf' : '.bin';
+
+    const fileType = String(req.body && req.body.fileType || '').trim();
+    const resolvedType = fileType === 'xray' ? 'xray' : isImg ? 'image' : isPdf ? 'pdf' : 'file';
+
+    const safeName = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+    const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    const diskPath = path.join(UPLOAD_DIR, safeName);
+    fs.writeFileSync(diskPath, file.buffer);
+    const fileUrl = `/uploads/patient/${encodeURIComponent(patientId)}/${encodeURIComponent(safeName)}`;
+
+    let savedId = `upload_${safeName}`;
+    if (isSupabaseEnabled()) {
+      const patientUUID = await resolvePatientUUID(patientId);
+      let clinicId = null;
+      try {
+        const { data: pr } = await supabase.from('patients').select('clinic_id').eq('id', patientUUID).maybeSingle();
+        clinicId = pr && pr.clinic_id ? pr.clinic_id : null;
+      } catch (_) {}
+
+      if (clinicId) {
+        const { data: pfRow } = await supabase.from('patient_files').insert({
+          patient_id: patientUUID,
+          clinic_id: clinicId,
+          file_url: fileUrl,
+          file_name: file.originalname || safeName,
+          file_type: resolvedType,
+          mime_type: file.mimetype,
+          file_size: file.size,
+          from_role: 'admin',
+          source: 'upload',
+        }).select('id').maybeSingle();
+        if (pfRow && pfRow.id) savedId = pfRow.id;
+      }
+    }
+
+    return res.json({ ok: true, fileUrl, fileType: resolvedType, id: savedId });
+  } catch (err) {
+    console.error('[ADMIN UPLOAD] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// ── Intraoral photo validation helpers ─────────────────────────────────────────
+
+function parseJpegInfo(buffer) {
+  if (!buffer || buffer.length < 4) return null;
+  if (buffer[0] !== 0xFF || buffer[1] !== 0xD8) return null;
+
+  let offset = 2;
+  let width = 0, height = 0, avgQuantization = -1;
+
+  while (offset < buffer.length - 3) {
+    if (buffer[offset] !== 0xFF) break;
+    const marker = buffer[offset + 1];
+    if (marker === 0xD9) break;
+    if (marker === 0x00 || (marker >= 0xD0 && marker <= 0xD7)) { offset += 2; continue; }
+    if (offset + 3 >= buffer.length) break;
+    const segLen = (buffer[offset + 2] << 8) | buffer[offset + 3];
+    if (segLen < 2) break;
+
+    // SOF0 / SOF1 / SOF2 — image dimensions
+    if (marker >= 0xC0 && marker <= 0xC3 && offset + 8 < buffer.length) {
+      height = (buffer[offset + 5] << 8) | buffer[offset + 6];
+      width  = (buffer[offset + 7] << 8) | buffer[offset + 8];
+    }
+
+    // DQT — quantization table (low values = higher quality)
+    if (marker === 0xDB) {
+      let qOff = offset + 4;
+      const qEnd = offset + 2 + segLen;
+      while (qOff < qEnd && qOff < buffer.length) {
+        const precision = buffer[qOff] >> 4;
+        qOff++;
+        const tableSize = precision === 0 ? 64 : 128;
+        if (qOff + tableSize > buffer.length) break;
+        let sum = 0;
+        for (let i = 0; i < 64; i++) sum += buffer[qOff + i];
+        avgQuantization = sum / 64;
+        qOff += tableSize;
+        break; // first table is enough
+      }
+    }
+
+    offset += 2 + segLen;
+  }
+
+  return { width, height, avgQuantization };
+}
+
+function validateIntraoralBuffer(buffer) {
+  const issues = [];
+  const sizeKB = buffer.length / 1024;
+  const info = parseJpegInfo(buffer);
+  const pixels = info && info.width > 0 && info.height > 0 ? (info.width * info.height) : 0;
+  const bytesPerPixel = pixels > 0 ? buffer.length / pixels : 0;
+
+  let score = 1.0;
+
+  // Darkness: very small files or low byte density indicate dark photos
+  if (sizeKB < 8) {
+    issues.push('DARK');
+    score -= 0.5;
+  } else if (bytesPerPixel > 0 && bytesPerPixel < 0.04) {
+    issues.push('DARK');
+    score -= 0.35;
+  }
+
+  // Blur: blurry images have lower entropy → compress more tightly
+  if (sizeKB < 20 && !issues.includes('DARK')) {
+    issues.push('BLUR');
+    score -= 0.35;
+  } else if (info && info.avgQuantization > 45 && !issues.includes('DARK')) {
+    issues.push('BLUR');
+    score -= 0.25;
+  }
+
+  // Low quality JPEG encoding
+  if (info && info.avgQuantization > 60) {
+    score -= 0.15;
+  }
+
+  const finalScore = Math.max(0, Math.min(1, score));
+  const status = finalScore >= 0.6 && issues.length === 0 ? 'VALID' : 'RETAKE_REQUIRED';
+
+  return {
+    score: Math.round(finalScore * 100) / 100,
+    issues: [...new Set(issues)],
+    isBlurry: issues.includes('BLUR'),
+    isDark: issues.includes('DARK'),
+    isCentered: true,
+    status,
+  };
+}
+
+// POST /api/patient/:patientId/validate-intraoral-image
+app.post('/api/patient/:patientId/validate-intraoral-image', requireToken, chatUpload.single('file'), async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'patient_id_mismatch' });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ ok: false, error: 'no_file' });
+
+    const result = validateIntraoralBuffer(file.buffer);
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[INTRAORAL VALIDATE] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// GET /api/patient/:patientId/intraoral-photos — grouped by angle with validation status
+app.get('/api/patient/:patientId/intraoral-photos', requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'patient_id_mismatch' });
+
+    const REQUIRED_ANGLES = ['FRONT', 'LEFT', 'RIGHT', 'UPPER', 'LOWER'];
+    const byAngle = {};
+    const allPhotos = [];
+
+    // ── Source 1: Supabase patient_files table ─────────────────────────────
+    if (isSupabaseEnabled()) {
+      const patientUUID = await resolvePatientUUID(patientId);
+      const { data: rows } = await supabase
+        .from('patient_files')
+        .select('id, file_url, file_name, angle_type, validation_status, validation_score, validation_issues, created_at, mime_type')
+        .eq('patient_id', patientUUID)
+        .not('angle_type', 'is', null)
+        .order('created_at', { ascending: false });
+
+      for (const row of (rows || [])) {
+        const angle = String(row.angle_type || '').toUpperCase();
+        if (!REQUIRED_ANGLES.includes(angle)) continue;
+        if (byAngle[angle]) continue; // keep most recent per angle
+        byAngle[angle] = {
+          id: String(row.id),
+          angle_type: angle,
+          url: row.file_url,
+          name: row.file_name,
+          validation_status: row.validation_status || 'UNKNOWN',
+          score: row.validation_score != null ? row.validation_score : null,
+          issues: Array.isArray(row.validation_issues) ? row.validation_issues : [],
+          created_at: row.created_at,
+          source: 'supabase',
+        };
+      }
+    }
+
+    // ── Source 2: local disk uploads/patient/:patientId/ ──────────────────
+    const LOCAL_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
+    if (fs.existsSync(LOCAL_DIR)) {
+      const files = fs.readdirSync(LOCAL_DIR).sort().reverse();
+      for (const fname of files) {
+        const fnameLow = fname.toLowerCase();
+        if (!fnameLow.match(/\.(jpg|jpeg|png)$/)) continue;
+        const angle = REQUIRED_ANGLES.find(a => fnameLow.includes(a.toLowerCase()));
+        if (!angle || byAngle[angle]) continue;
+        const stat = fs.statSync(path.join(LOCAL_DIR, fname));
+        const buf = fs.readFileSync(path.join(LOCAL_DIR, fname));
+        const vr = validateIntraoralBuffer(buf);
+        byAngle[angle] = {
+          id: 'local_' + fname,
+          angle_type: angle,
+          url: `/uploads/patient/${encodeURIComponent(patientId)}/${encodeURIComponent(fname)}`,
+          name: fname,
+          validation_status: vr.status,
+          score: vr.score,
+          issues: vr.issues,
+          created_at: stat.mtime.toISOString(),
+          source: 'local',
+        };
+      }
+    }
+
+    // ── Source 3: local intraoral dir ─────────────────────────────────────
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
+    if (fs.existsSync(INTRAORAL_DIR)) {
+      const files = fs.readdirSync(INTRAORAL_DIR).sort().reverse();
+      for (const fname of files) {
+        const fnameLow = fname.toLowerCase();
+        if (!fnameLow.match(/\.(jpg|jpeg|png)$/)) continue;
+        const angle = REQUIRED_ANGLES.find(a => fnameLow.includes(a.toLowerCase()));
+        if (!angle || byAngle[angle]) continue;
+        const stat = fs.statSync(path.join(INTRAORAL_DIR, fname));
+        const buf = fs.readFileSync(path.join(INTRAORAL_DIR, fname));
+        const vr = validateIntraoralBuffer(buf);
+        byAngle[angle] = {
+          id: 'intraoral_' + fname,
+          angle_type: angle,
+          url: `/uploads/intraoral/${encodeURIComponent(patientId)}/${encodeURIComponent(fname)}`,
+          name: fname,
+          validation_status: vr.status,
+          score: vr.score,
+          issues: vr.issues,
+          created_at: stat.mtime.toISOString(),
+          source: 'intraoral',
+        };
+      }
+    }
+
+    for (const [, photo] of Object.entries(byAngle)) allPhotos.push(photo);
+    allPhotos.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    const missingAngles = REQUIRED_ANGLES.filter(a => !byAngle[a]);
+    const allPresent    = missingAngles.length === 0;
+    const allValid      = allPresent && allPhotos.every(p => p.validation_status === 'VALID');
+
+    return res.json({
+      ok: true,
+      photos: allPhotos,
+      byAngle,
+      missingAngles,
+      allPresent,
+      allValid,
+      requiredAngles: REQUIRED_ANGLES,
+    });
+  } catch (err) {
+    console.error('[INTRAORAL PHOTOS] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error', photos: [], byAngle: {}, missingAngles: [], allPresent: false, allValid: false });
+  }
+});
+
+// GET /api/doctor/patient/:patientId/intraoral-photos — Doctor views patient's intraoral photos
+app.get('/api/doctor/patient/:patientId/intraoral-photos', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    const REQUIRED_ANGLES = ['FRONT', 'LEFT', 'RIGHT', 'UPPER', 'LOWER'];
+    const byAngle = {};
+
+    if (isSupabaseEnabled()) {
+      const patientUUID = await resolvePatientUUID(patientId);
+      const { data: rows } = await supabase
+        .from('patient_files')
+        .select('id, file_url, file_name, angle_type, validation_status, validation_score, validation_issues, created_at')
+        .eq('patient_id', patientUUID)
+        .not('angle_type', 'is', null)
+        .order('created_at', { ascending: false });
+
+      for (const row of (rows || [])) {
+        const angle = String(row.angle_type || '').toUpperCase();
+        if (!REQUIRED_ANGLES.includes(angle) || byAngle[angle]) continue;
+        byAngle[angle] = {
+          id: String(row.id),
+          angle_type: angle,
+          url: row.file_url,
+          name: row.file_name,
+          validation_status: row.validation_status || 'UNKNOWN',
+          score: row.validation_score,
+          issues: row.validation_issues || [],
+          created_at: row.created_at,
+        };
+      }
+    }
+
+    // Fallback: local dirs
+    for (const dir of ['patient', 'intraoral']) {
+      const D = path.join(__dirname, 'public', 'uploads', dir, patientId);
+      if (!fs.existsSync(D)) continue;
+      for (const fname of fs.readdirSync(D).sort().reverse()) {
+        if (!fname.match(/\.(jpg|jpeg|png)$/i)) continue;
+        const angle = REQUIRED_ANGLES.find(a => fname.toLowerCase().includes(a.toLowerCase()));
+        if (!angle || byAngle[angle]) continue;
+        const buf = fs.readFileSync(path.join(D, fname));
+        const vr = validateIntraoralBuffer(buf);
+        byAngle[angle] = {
+          id: `${dir}_${fname}`,
+          angle_type: angle,
+          url: `/uploads/${dir}/${encodeURIComponent(patientId)}/${encodeURIComponent(fname)}`,
+          name: fname,
+          validation_status: vr.status,
+          score: vr.score,
+          issues: vr.issues,
+          created_at: fs.statSync(path.join(D, fname)).mtime.toISOString(),
+        };
+      }
+    }
+
+    const photos = Object.values(byAngle);
+    const missingAngles = REQUIRED_ANGLES.filter(a => !byAngle[a]);
+
+    return res.json({
+      ok: true,
+      photos,
+      byAngle,
+      missingAngles,
+      allPresent: missingAngles.length === 0,
+      allValid: photos.length === 5 && photos.every(p => p.validation_status === 'VALID'),
+      requiredAngles: REQUIRED_ANGLES,
+    });
+  } catch (err) {
+    console.error('[DOCTOR INTRAORAL PHOTOS] error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+function logPerfLine(message) {
+  if (!PERF_LOGS_ENABLED) return;
+  console.log(message);
+}
+
+async function timedDbQuery(label, queryFactory) {
+  const startedAt = Date.now();
+  const result = await queryFactory();
+  const duration = Date.now() - startedAt;
+  if (PERF_LOGS_ENABLED) {
+    const code = String(result?.error?.code || "").trim();
+    console.log(`[DB PERF] ${label} ${duration}ms${code ? ` code=${code}` : ""}`);
+  }
+  return result;
+}
+
+function canUseFileFallback() {
+  // Only allow file fallback when explicitly enabled.
+  // This prevents data loss on deploy/restart in ephemeral environments.
+  return ALLOW_FILE_FALLBACK === true;
+}
+
+function supabaseDisabledPayload(scope) {
+  const s = scope ? ` (${scope})` : "";
+  return {
+    ok: false,
+    error: "supabase_disabled",
+    message: `Supabase is disabled${s}. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in deploy environment.`,
+  };
+}
+
+function isMissingTableError(error, tableName) {
+  const msg = String(error?.message || "");
+  const details = String(error?.details || "");
+  const hint = String(error?.hint || "");
+  const combined = `${msg} ${details} ${hint}`.toLowerCase();
+  const t = String(tableName || "").toLowerCase();
+  return combined.includes("does not exist") && combined.includes(t);
+}
+
+function isMissingColumnError(error, columnName) {
+  const msg = String(error?.message || "");
+  const details = String(error?.details || "");
+  const hint = String(error?.hint || "");
+  const combined = `${msg} ${details} ${hint}`.toLowerCase();
+  const code = String(error?.code ?? "");
+  const isMissingCode =
+    code === "PGRST204" ||
+    code === "PGRST205" ||
+    code === "42703" ||
+    code.endsWith("42703");
+  if (!columnName) return isMissingCode;
+  const col = String(columnName || "").toLowerCase();
+  if (combined.includes(`patients.${col}`) && combined.includes("does not exist")) {
+    return true;
+  }
+  return isMissingCode && combined.includes(col);
+}
 // POST /api/chat/upload (patient uploads files/images to chat)
 app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (req, res) => {
   try {
@@ -8415,6 +14726,108 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
   }
 });
 
+// GET /api/admin/messages/unread-counts — unread counts for admin badge
+// ?totalOnly=1 — fast path: COUNT(*) only (no row transfer). Use for sidebar/badge polling.
+// (default) — per-patient counts; heavier; also cached briefly.
+app.get("/api/admin/messages/unread-counts", requireAdminAuth, async (req, res) => {
+  try {
+    res.setHeader("Cache-Control", "private, no-cache, must-revalidate");
+    if (!isSupabaseEnabled()) return res.json({ ok: true, total: 0, counts: {} });
+    const clinicId = req.clinicId;
+    const totalOnly = String(req.query.totalOnly || req.query.summary || "").trim() === "1";
+    const cacheKey = `${clinicId}:${totalOnly ? "1" : "0"}`;
+    const cached = unreadCountsCache.get(cacheKey);
+    if (cached && cached.expires > Date.now()) {
+      return res.json(cached.body);
+    }
+
+    const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
+
+    if (totalOnly) {
+      let countResult = null;
+      // Try clinic_code first (actual schema), fall back to clinic_id; prefer read_at IS NULL when column exists
+      outerTotal: for (const [field, value] of [[`clinic_code`, clinicCode], [`clinic_id`, clinicId]]) {
+        if (!value) continue;
+        for (const unreadOnly of [true, false]) {
+          let q = supabase
+            .from("messages")
+            .select("id", { count: "exact", head: true })
+            .eq("from_patient", true)
+            .eq(field, value);
+          if (unreadOnly) q = q.is("read_at", null);
+          const r = await q;
+          if (!r.error) {
+            countResult = r;
+            break outerTotal;
+          }
+          if (unreadOnly && isSupabaseSchemaMissingColumnError(r.error)) continue;
+          const errCode = String(r.error?.code || "");
+          if (["42P01", "42703", "PGRST204", "PGRST205"].includes(errCode) || isSupabaseSchemaMissingColumnError(r.error)) {
+            continue;
+          }
+          if (!errCode) {
+            continue;
+          }
+          if (!["42P01", "42703", "PGRST204"].includes(errCode)) {
+            const parts = [r.error?.message, r.error?.details, r.error?.hint].filter(Boolean);
+            const summary = parts.length ? parts.join(" | ") : JSON.stringify(r.error || {});
+            console.error("[UNREAD COUNTS] count error:", { code: r.error?.code, field, value: String(value).slice(0, 36), unreadOnly, summary });
+            break outerTotal;
+          }
+        }
+      }
+      const body = { ok: true, total: countResult?.count || 0, counts: {} };
+      unreadCountsCache.set(cacheKey, { body, expires: Date.now() + UNREAD_COUNTS_TTL_MS });
+      return res.json(body);
+    }
+
+    // Legacy: fetch patient_id for every unread row (can be slow with many rows)
+    let data = [], fetchError = null;
+    outerRows: for (const [field, value] of [[`clinic_code`, clinicCode], [`clinic_id`, clinicId]]) {
+      if (!value) continue;
+      for (const unreadOnly of [true, false]) {
+        let q = supabase
+          .from("messages")
+          .select("patient_id")
+          .eq("from_patient", true)
+          .eq(field, value);
+        if (unreadOnly) q = q.is("read_at", null);
+        const r = await q;
+        if (!r.error) {
+          data = r.data || [];
+          break outerRows;
+        }
+        fetchError = r.error;
+        if (unreadOnly && isSupabaseSchemaMissingColumnError(r.error)) continue;
+        const rowEc = String(r.error?.code || "");
+        if (["42P01", "42703", "PGRST204", "PGRST205"].includes(rowEc) || isSupabaseSchemaMissingColumnError(r.error) || !rowEc) {
+          continue;
+        }
+        if (!["42P01", "42703", "PGRST204"].includes(rowEc)) break outerRows;
+      }
+    }
+    const error = fetchError;
+
+    if (error && !["42P01", "42703", "PGRST204"].includes(String(error.code || ""))) {
+      console.error("[UNREAD COUNTS] messages fetch error:", error.message);
+      return res.json({ ok: true, total: 0, counts: {} });
+    }
+    const rows = Array.isArray(data) ? data : [];
+    const counts = {};
+    rows.forEach(r => {
+      const pid = String(r.patient_id || "");
+      if (pid) counts[pid] = (counts[pid] || 0) + 1;
+    });
+    const total = Object.values(counts).reduce((s, n) => s + n, 0);
+    const body = { ok: true, total, counts };
+    unreadCountsCache.set(cacheKey, { body, expires: Date.now() + UNREAD_COUNTS_TTL_MS });
+    return res.json(body);
+  } catch (e) {
+    console.error("[UNREAD COUNTS] error:", e.message);
+    return res.json({ ok: true, total: 0, counts: {} });
+  }
+});
+
 // POST /api/admin/chat/upload (Admin uploads files/images to patient chat)
 app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5), async (req, res) => {
   try {
@@ -8585,7 +14998,6 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
-
 // ================== CLINIC INFO ==================
 // GET /api/clinic (Public - mobile app için)
 // Supports ?code=XXX query parameter to get specific clinic from CLINICS_FILE
@@ -8749,15 +15161,438 @@ app.get("/api/clinic/:code", (req, res) => {
 });
 
 // ================== PROCEDURE DEFINITIONS (shared) ==================
-// Public endpoint: admin UI + backend share the same allowed list.
-app.get("/api/procedures", (req, res) => {
-  res.json({
+// Canonical list for pickers (id = procedure type code, name = human label).
+function buildProceduresCatalogPayload() {
+  const list = (procedures.PROCEDURE_TYPES || []).map((t) => ({
+    id: t.type,
+    name: t.label,
+    type: t.type,
+    label: t.label,
+    category: t.category,
+  }));
+  return {
     ok: true,
+    procedures: list,
+    data: list,
     types: procedures.PROCEDURE_TYPES,
     statuses: ["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"],
     categories: ["EVENTS", "PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"],
     extractionTypes: Array.from(procedures.EXTRACTION_TYPES),
-  });
+  };
+}
+
+async function ensureSpecialitiesSeededAdmin() {
+  if (!isSupabaseEnabled()) return false;
+  const rows = SPECIALITY_SEED_NAMES.map((name) => ({ name }));
+  const { error } = await supabase.from("specialities").upsert(rows, { onConflict: "name" });
+  if (error) {
+    console.warn("[ensureSpecialitiesSeededAdmin]", error.message || error);
+    return false;
+  }
+  return true;
+}
+
+async function ensureLanguagesSeededAdmin() {
+  if (!isSupabaseEnabled()) return false;
+  const rows = LANGUAGE_SEED_NAMES.map((name) => ({ name }));
+  const { error } = await supabase.from("languages").upsert(rows, { onConflict: "name" });
+  if (error) {
+    console.warn("[ensureLanguagesSeededAdmin]", error.message || error);
+    return false;
+  }
+  return true;
+}
+
+function doctorProfileProcedureItemsFromIds(profileProcedureIds) {
+  let ids = [];
+  if (Array.isArray(profileProcedureIds)) ids = profileProcedureIds;
+  else if (profileProcedureIds && typeof profileProcedureIds === "string") {
+    try {
+      const p = JSON.parse(profileProcedureIds);
+      if (Array.isArray(p)) ids = p;
+    } catch {
+      ids = [];
+    }
+  }
+  const catalog = (procedures.PROCEDURE_TYPES || []).map((t) => ({ id: t.type, name: t.label }));
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  return ids
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .map((id) => byId.get(id) || { id, name: id });
+}
+
+// Public + doctor-app: same catalog (doctor routes require auth)
+app.get("/api/procedures", (req, res) => {
+  res.json(buildProceduresCatalogPayload());
+});
+
+app.get("/api/doctor/procedures", requireDoctorAuth, (req, res) => {
+  res.json(buildProceduresCatalogPayload());
+});
+
+// Profile settings multi-select (expects { ok, procedures: [{ id, name }] })
+app.get("/api/doctor/procedures-list", requireDoctorAuth, (req, res) => {
+  const proceduresOnly = (procedures.PROCEDURE_TYPES || []).map((t) => ({
+    id: t.type,
+    name: t.label,
+    category: t.category,
+  }));
+  res.json({ ok: true, procedures: proceduresOnly });
+});
+
+// PUT — doctors.profile_procedure_ids (JSONB); mobil profil «Prosedürler» sekmesi
+app.put("/api/doctor/procedures-list", requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+    const { procedure_ids } = req.body || {};
+    if (!Array.isArray(procedure_ids)) {
+      return res.status(400).json({ ok: false, error: "procedure_ids_required" });
+    }
+    const docUuid = String(req.doctor?.id || req.doctorId || "").trim();
+    if (!docUuid) return res.status(404).json({ ok: false, error: "doctor_not_found" });
+    const clean = [...new Set(procedure_ids.map((x) => String(x || "").trim()).filter(Boolean))];
+    const { error } = await supabase
+      .from("doctors")
+      .update({ profile_procedure_ids: clean, updated_at: new Date().toISOString() })
+      .eq("id", docUuid);
+    if (error) {
+      console.error("[PUT /api/doctor/procedures-list]", error);
+      const msg = String(error.message || "");
+      if (msg.includes("profile_procedure_ids") || String(error.code || "") === "42703") {
+        return res.status(500).json({
+          ok: false,
+          error: "schema_missing",
+          message:
+            "Supabase: doctors.profile_procedure_ids kolonu yok. migrations/run_supabase_doctor_profile_reference_data.sql veya migrations/20260327_doctor_profile_procedure_ids.sql çalıştırın.",
+        });
+      }
+      return res.status(500).json({ ok: false, error: msg || "update_failed" });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[PUT /api/doctor/procedures-list]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// GET /api/doctor/specialities — referans liste (uzmanlık seçici)
+app.get("/api/doctor/specialities", requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, specialities: [] });
+    }
+    let { data, error } = await supabase.from("specialities").select("id, name").order("name");
+    if (error) {
+      console.warn("[GET /api/doctor/specialities] first query", error.message);
+      await ensureSpecialitiesSeededAdmin();
+      ({ data, error } = await supabase.from("specialities").select("id, name").order("name"));
+    }
+    if (!error && (!data || data.length === 0)) {
+      await ensureSpecialitiesSeededAdmin();
+      ({ data, error } = await supabase.from("specialities").select("id, name").order("name"));
+    }
+    if (error) {
+      console.warn("[GET /api/doctor/specialities]", error.message);
+      return res.json({ ok: true, specialities: [] });
+    }
+    return res.json({ ok: true, specialities: data || [] });
+  } catch (err) {
+    console.error("[GET /api/doctor/specialities]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// PUT — doctor_specialities junction
+app.put("/api/doctor/specialities", requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+    const { speciality_ids } = req.body || {};
+    if (!Array.isArray(speciality_ids)) {
+      return res.status(400).json({ ok: false, error: "speciality_ids_required" });
+    }
+    const docUuid = String(req.doctor?.id || req.doctorId || "").trim();
+    if (!docUuid) return res.status(404).json({ ok: false, error: "doctor_not_found" });
+
+    const { error: delErr } = await supabase.from("doctor_specialities").delete().eq("doctor_id", docUuid);
+    if (delErr) {
+      console.error("[PUT /api/doctor/specialities] delete", delErr);
+      return res.status(500).json({ ok: false, error: delErr.message || "delete_failed" });
+    }
+    const uniq = [...new Set(speciality_ids.map((x) => String(x || "").trim()).filter(Boolean))];
+    if (uniq.length > 0) {
+      const rows = uniq.map((sid) => ({ doctor_id: docUuid, speciality_id: sid }));
+      const { error: insErr } = await supabase.from("doctor_specialities").insert(rows);
+      if (insErr) {
+        console.error("[PUT /api/doctor/specialities] insert", insErr);
+        return res.status(500).json({ ok: false, error: insErr.message || "insert_failed" });
+      }
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[PUT /api/doctor/specialities]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.get("/api/doctor/languages", requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, languages: [] });
+    }
+    let { data, error } = await supabase.from("languages").select("id, name").order("name");
+    if (error) {
+      console.warn("[GET /api/doctor/languages] first query", error.message);
+      await ensureLanguagesSeededAdmin();
+      ({ data, error } = await supabase.from("languages").select("id, name").order("name"));
+    }
+    if (!error && (!data || data.length === 0)) {
+      await ensureLanguagesSeededAdmin();
+      ({ data, error } = await supabase.from("languages").select("id, name").order("name"));
+    }
+    if (error) {
+      console.warn("[GET /api/doctor/languages]", error.message);
+      return res.json({ ok: true, languages: [] });
+    }
+    return res.json({ ok: true, languages: data || [] });
+  } catch (err) {
+    console.error("[GET /api/doctor/languages]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.put("/api/doctor/languages", requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+    const { language_ids } = req.body || {};
+    if (!Array.isArray(language_ids)) {
+      return res.status(400).json({ ok: false, error: "language_ids_required" });
+    }
+    const docUuid = String(req.doctor?.id || req.doctorId || "").trim();
+    if (!docUuid) return res.status(404).json({ ok: false, error: "doctor_not_found" });
+
+    const { error: delErr } = await supabase.from("doctor_languages").delete().eq("doctor_id", docUuid);
+    if (delErr) {
+      console.error("[PUT /api/doctor/languages] delete", delErr);
+      return res.status(500).json({ ok: false, error: delErr.message || "delete_failed" });
+    }
+    const uniq = [...new Set(language_ids.map((x) => String(x || "").trim()).filter(Boolean))];
+    if (uniq.length > 0) {
+      const rows = uniq.map((lid) => ({ doctor_id: docUuid, language_id: lid }));
+      const { error: insErr } = await supabase.from("doctor_languages").insert(rows);
+      if (insErr) {
+        console.error("[PUT /api/doctor/languages] insert", insErr);
+        return res.status(500).json({ ok: false, error: insErr.message || "insert_failed" });
+      }
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("[PUT /api/doctor/languages]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+// Mobil profil dil butonları — UI dili (sunucuda kalıcı kolon yoksa yine de 200)
+app.patch("/api/doctor/language", requireDoctorAuth, async (req, res) => {
+  try {
+    const { language } = req.body || {};
+    if (language === undefined || language === null || String(language).trim() === "") {
+      return res.status(400).json({ ok: false, error: "language_required" });
+    }
+    const lang = String(language).trim().slice(0, 12);
+    return res.json({ ok: true, language: lang });
+  } catch (err) {
+    console.error("[PATCH /api/doctor/language]", err);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+/**
+ * Shared: clinic treatment_prices + clinics.settings.showTreatmentPrices (doctor + patient apps).
+ * @returns {{ showPrices: boolean, prices: Array<{type, price, currency}> }}
+ */
+async function loadTreatmentPricesForClinicId(clinicId) {
+  const cid = String(clinicId || '').trim();
+  if (!cid) {
+    return { showPrices: true, prices: [] };
+  }
+
+  let showPrices = true;
+  try {
+    const clin = await supabase.from('clinics').select('settings').eq('id', cid).maybeSingle();
+    const row = clin?.data;
+    if (row && row.settings != null) {
+      let s = row.settings;
+      if (typeof s === 'string') {
+        try {
+          s = JSON.parse(s);
+        } catch {
+          s = {};
+        }
+      }
+      showPrices = s && typeof s === 'object' ? s.showTreatmentPrices !== false : true;
+    }
+  } catch (e) {
+    showPrices = true;
+  }
+  if (!showPrices) {
+    return { showPrices: false, prices: [] };
+  }
+
+  let q = supabase.from('treatment_prices').select('type, price, currency, is_active').eq('clinic_id', cid);
+  const first = await q;
+  let rows = first.data;
+  let err = first.error;
+  if (err && String(err.message || '').toLowerCase().includes('is_active')) {
+    const retry = await supabase
+      .from('treatment_prices')
+      .select('type, price, currency')
+      .eq('clinic_id', cid);
+    rows = retry.data;
+    err = retry.error;
+  } else if (!err) {
+    rows = (rows || []).filter((r) => r.is_active !== false);
+  }
+
+  if (err) {
+    if (isMissingTableError(err, 'treatment_prices')) {
+      return { showPrices: true, prices: [] };
+    }
+    const er = new Error(err.message);
+    er.code = 'TREATMENT_PRICES_QUERY';
+    throw er;
+  }
+
+  const prices = (rows || [])
+    .map((row) => ({
+      type: String(row.type || '').trim().toUpperCase(),
+      price: row.price != null && row.price !== '' ? Number(row.price) : null,
+      currency: String(row.currency || 'TRY').trim() || 'TRY',
+    }))
+    .filter((r) => r.type && r.price != null && !Number.isNaN(r.price));
+
+  return { showPrices: true, prices };
+}
+
+/**
+ * Hasta tedavi JSON'u (teeth[].procedures) için klinik treatment_prices tutarlarını yazar.
+ * Doktor satıra fiyat girmediyse (price/unit_price yok veya ≤0) katalog fiyatı uygulanır.
+ * clinics.settings.showTreatmentPrices === false ise fiyat eklenmez (admin gizleyebilir).
+ */
+async function resolveClinicIdForPatientTreatmentPrices(req, patientId) {
+  let clinicId =
+    req.isAdmin && req.clinicId != null && String(req.clinicId).trim()
+      ? String(req.clinicId).trim()
+      : null;
+  if (!clinicId && isSupabaseEnabled()) {
+    try {
+      const patient = await getPatientById(patientId);
+      clinicId = patient?.clinic_id != null && String(patient.clinic_id).trim()
+        ? String(patient.clinic_id).trim()
+        : null;
+    } catch (_) {
+      clinicId = null;
+    }
+  }
+  return clinicId;
+}
+
+async function applyClinicCatalogPricesToTreatmentsData(data, clinicId) {
+  if (!data || !Array.isArray(data.teeth)) return;
+  const cid = String(clinicId || "").trim();
+  if (!cid || !isSupabaseEnabled()) return;
+
+  let priceByType = {};
+  try {
+    const result = await loadTreatmentPricesForClinicId(cid);
+    if (!result.showPrices) return;
+    for (const row of result.prices || []) {
+      const t = String(row.type || "").trim().toUpperCase();
+      if (!t || row.price == null || Number.isNaN(Number(row.price))) continue;
+      priceByType[t] = {
+        price: Number(row.price),
+        currency: String(row.currency || "TRY").trim() || "TRY",
+      };
+    }
+  } catch (e) {
+    console.warn("[TREATMENTS GET] applyClinicCatalogPrices failed:", e?.message || e);
+    return;
+  }
+
+  for (const tooth of data.teeth) {
+    if (!Array.isArray(tooth.procedures)) continue;
+    tooth.procedures = tooth.procedures.map((proc) => {
+      const typeU = String(proc.type || proc.procedure_type || "").trim().toUpperCase();
+      const rawP = proc.price ?? proc.unit_price;
+      const linePrice = rawP != null ? Number(rawP) : NaN;
+      if (Number.isFinite(linePrice) && linePrice > 0) {
+        return proc;
+      }
+      const pe = typeU ? priceByType[typeU] : null;
+      if (!pe) return proc;
+      return {
+        ...proc,
+        price: pe.price,
+        currency: pe.currency,
+        unit_price: pe.price,
+      };
+    });
+  }
+}
+
+/**
+ * Clinic price list for doctor app (treatment_prices — same source as admin treatment pricing).
+ */
+app.get('/api/doctor/treatment-prices', requireDoctorAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: 'supabase_not_configured' });
+    }
+    const clinicId =
+      req.doctor?.clinic_id != null && String(req.doctor.clinic_id).trim()
+        ? String(req.doctor.clinic_id).trim()
+        : '';
+    const result = await loadTreatmentPricesForClinicId(clinicId);
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    if (e && e.code === 'TREATMENT_PRICES_QUERY') {
+      console.error('[DOCTOR TREATMENT_PRICES] query failed:', e.message);
+      return res.status(500).json({ ok: false, error: 'fetch_failed', message: e.message });
+    }
+    console.error('[DOCTOR TREATMENT_PRICES] exception:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+/** Patient app: same prices as doctor, scoped by patient's clinic */
+app.get('/api/patient/:patientId/treatment-prices', requirePatientTreatmentsAuth, async (req, res) => {
+  try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: 'supabase_not_configured' });
+    }
+    const patientId = String(req.params.patientId || '').trim();
+    const pr = await supabase.from('patients').select('clinic_id').eq('id', patientId).maybeSingle();
+    if (pr.error) {
+      console.error('[PATIENT TREATMENT_PRICES] patient lookup:', pr.error.message);
+      return res.status(500).json({ ok: false, error: 'fetch_failed', message: pr.error.message });
+    }
+    const clinicId = String(pr.data?.clinic_id || '').trim();
+    const result = await loadTreatmentPricesForClinicId(clinicId);
+    return res.json({ ok: true, ...result });
+  } catch (e) {
+    if (e && e.code === 'TREATMENT_PRICES_QUERY') {
+      console.error('[PATIENT TREATMENT_PRICES] query failed:', e.message);
+      return res.status(500).json({ ok: false, error: 'fetch_failed', message: e.message });
+    }
+    console.error('[PATIENT TREATMENT_PRICES] exception:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
 });
 
 // Admin alias for deployments that expect scoped endpoint
@@ -8792,13 +15627,43 @@ app.get("/api/admin/clinic", requireAdminAuth, (req, res) => {
       };
     }
     const levels = safe.referralLevels || {};
+    const resolvedChairCount = Number.parseInt(
+      safe?.settings?.chairCount ??
+      safe?.settings?.chair_count ??
+      safe?.chairCount ??
+      safe?.chair_count,
+      10
+    );
+    const chairCount = Number.isFinite(resolvedChairCount)
+      ? Math.max(1, Math.min(50, resolvedChairCount))
+      : 3;
+    safe.chairCount = chairCount;
+    safe.chair_count = chairCount;
+    const showTreatmentPrices = (safe.settings || {}).showTreatmentPrices !== false;
     safe.settings = {
       ...(safe.settings || {}),
+      chairCount,
+      chair_count: chairCount,
       referralLevels: levels,
       referralLevel1Percent: levels.level1 ?? null,
       referralLevel2Percent: levels.level2 ?? null,
       referralLevel3Percent: levels.level3 ?? null,
+      showTreatmentPrices,
     };
+
+    // Single source for UI + limits: DB often has `plan` but not `subscriptionPlan` (legacy / partial writes)
+    const effectivePlan = normalizeClinicPlan(
+      safe.subscriptionPlan ||
+        safe.plan ||
+        safe.settings?.subscriptionPlan ||
+        "FREE"
+    );
+    safe.plan = effectivePlan;
+    safe.subscriptionPlan = effectivePlan;
+    const computedMax = planToMaxPatients(effectivePlan);
+    safe.max_patients = computedMax;
+    safe.maxPatients = computedMax;
+
     res.json(safe);
   } catch (error) {
 
@@ -8845,6 +15710,13 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
     const body = req.body || {};
     // Use req.clinic as existing data (no file lookup needed)
     const existing = req.clinic;
+    if (typeof existing.settings === "string") {
+      try {
+        existing.settings = JSON.parse(existing.settings);
+      } catch {
+        existing.settings = {};
+      }
+    }
 
     // Subscription plan (single-clinic mode)
     const rawPlan = normalizeClinicPlan(body.plan || existing.plan || existing.subscriptionPlan || "FREE");
@@ -8874,6 +15746,19 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
 
     const inviterPercent = referralLevels.level1 != null ? referralLevels.level1 : existing.defaultInviterDiscountPercent ?? null;
     const invitedPercent = referralLevels.level1 != null ? referralLevels.level1 : existing.defaultInvitedDiscountPercent ?? null;
+    const rawChairCount = Number.parseInt(
+      body?.chairCount ?? body?.chair_count ?? body?.settings?.chairCount ?? body?.settings?.chair_count,
+      10
+    );
+    const existingChairCount = Number.parseInt(existing?.settings?.chairCount ?? existing?.settings?.chair_count, 10);
+    const normalizedChairCount = Number.isFinite(rawChairCount)
+      ? Math.max(1, Math.min(50, rawChairCount))
+      : (Number.isFinite(existingChairCount) ? Math.max(1, Math.min(50, existingChairCount)) : 3);
+
+    const showTreatmentPrices =
+      body.settings && Object.prototype.hasOwnProperty.call(body.settings, "showTreatmentPrices")
+        ? Boolean(body.settings.showTreatmentPrices)
+        : existing.settings?.showTreatmentPrices !== false;
     
     // Handle password change
     let passwordHash = existing.password;
@@ -8916,6 +15801,8 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
       settings: {
         ...(existing.settings || {}),
         branding: updatedBranding,
+        chairCount: normalizedChairCount,
+        chair_count: normalizedChairCount,
         defaultInviterDiscountPercent: inviterPercent,
         defaultInvitedDiscountPercent: invitedPercent,
         referralLevels,
@@ -8923,6 +15810,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         googleMapsUrl: String(body.googleMapsUrl || bodyBranding.googleMapLink || existing.googleMapsUrl || existingBranding.googleMapLink || ""),
         googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
         trustpilotReviews: Array.isArray(body.trustpilotReviews) ? body.trustpilotReviews : (existing.trustpilotReviews || []),
+        showTreatmentPrices,
       },
       googleReviews: Array.isArray(body.googleReviews) ? body.googleReviews : (existing.googleReviews || []),
       trustpilotReviews: Array.isArray(body.trustpilotReviews) ? body.trustpilotReviews : (existing.trustpilotReviews || []),
@@ -8948,6 +15836,8 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
           website: updated.website,
           settings: {
             branding: updatedBranding,
+            chairCount: normalizedChairCount,
+            chair_count: normalizedChairCount,
             defaultInviterDiscountPercent: inviterPercent,
             defaultInvitedDiscountPercent: invitedPercent,
             referralLevels,
@@ -8956,6 +15846,7 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
             trustpilotReviews: updated.trustpilotReviews,
             logoUrl: updated.logoUrl,
             googleMapsUrl: updated.googleMapsUrl,
+            showTreatmentPrices,
           }
         };
         
@@ -8987,6 +15878,11 @@ app.put("/api/admin/clinic", requireAdminAuth, async (req, res) => {
         
 
         
+        // Invalidate cache so next GET fetches fresh data from Supabase
+        if (typeof clearClinicCache === 'function') {
+          clearClinicCache(req.clinicCode);
+        }
+
         // Return success response immediately for Supabase
         const { password_hash, ...safeData } = data || updated;
         return res.json({ ok: true, clinic: safeData });
@@ -9096,6 +15992,283 @@ app.post("/api/admin/reviews/import/trustpilot", async (req, res) => {
 });
 
 // ================== REFERRALS ==================
+// GET /api/patient/referral
+// Returns patient's own referral code + list of people they've referred
+app.get("/api/patient/referral", requireToken, async (req, res) => {
+  try {
+    const patientId = String(req.patientId || "").trim();
+    if (!patientId) return res.status(401).json({ ok: false, error: "unauthorized" });
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = UUID_RE.test(patientId);
+
+    if (!isSupabaseEnabled()) {
+      // File-based fallback
+      const patients = readJson(PAT_FILE, {});
+      const patient = patients[patientId] || Object.values(patients).find(
+        function(p) { return String(p && (p.patientId || p.patient_id) || "").trim() === patientId; }
+      );
+      const referralCode = (patient && (patient.referralCode || patient.referral_code)) || null;
+      const raw = readJson(REF_FILE, []);
+      const list = (Array.isArray(raw) ? raw : Object.values(raw)).filter(
+        function(r) { return r && (r.inviterPatientId || r.inviter_patient_id) === patientId; }
+      );
+      const referrals = list.map(function(r) {
+        const invId = r.invitedPatientId || r.invited_patient_id;
+        return {
+          id: r.id || r.referralId,
+          name: r.invitedName || r.invited_name || (patients[invId] && patients[invId].name) || "—",
+          status: String(r.status || "invited").toLowerCase(),
+          createdAt: r.createdAt || r.created_at || null,
+        };
+      });
+      return res.json({ ok: true, referralCode: referralCode, discountPercent: null, referrals: referrals });
+    }
+
+    // ── Supabase path ──────────────────────────────────────────────────────────
+
+    // 1. Fetch patient row (try UUID → then patient_id TEXT)
+    let patientRow = null;
+    if (isUuid) {
+      const r1 = await supabase.from("patients")
+        .select("id, patient_id, referral_code, clinic_id, name")
+        .eq("id", patientId).maybeSingle();
+      patientRow = r1.data || null;
+    }
+    if (!patientRow) {
+      const r2 = await supabase.from("patients")
+        .select("id, patient_id, referral_code, clinic_id, name")
+        .eq("patient_id", patientId).maybeSingle();
+      patientRow = r2.data || null;
+    }
+
+    // If patient has no referral_code yet (e.g. manually created by admin), generate and save one now
+    let referralCode = patientRow ? (patientRow.referral_code || null) : null;
+    if (patientRow && !referralCode) {
+      const newCode = generateReferralCodeV2();
+      try {
+        await supabase
+          .from("patients")
+          .update({ referral_code: newCode })
+          .eq("id", patientRow.id);
+        referralCode = newCode;
+      } catch (e) {
+        console.warn("[REFERRAL] Could not assign referral_code to patient:", e?.message);
+        referralCode = newCode; // still use it in response even if save failed
+      }
+    }
+    const clinicId = patientRow ? (patientRow.clinic_id || null) : null;
+
+    // JWT patientId + DB row ids — referrals may store UUID or legacy patient_id text
+    const patientTextId = patientRow ? (patientRow.patient_id || null) : null;
+    const patientUuid = patientRow ? (patientRow.id || null) : null;
+    let selfIds = Array.from(new Set([patientId, patientTextId, patientUuid].filter(Boolean)));
+
+    // Expand: map p_xxx ↔ UUID so referral rows match JWT (resolvePatientUuidForReferral)
+    try {
+      const expanded = new Set(selfIds.map(String));
+      for (const sid of [...selfIds]) {
+        const u = await resolvePatientUuidForReferral(sid);
+        if (u) expanded.add(String(u).trim());
+      }
+      selfIds = Array.from(expanded).filter(Boolean);
+    } catch (e) {
+      console.warn("[/api/patient/referral] expand selfIds:", e?.message || e);
+    }
+
+    // 2. Clinic discount percent
+    let discountPercent = null;
+    if (clinicId) {
+      const cr = await supabase.from("clinics").select("settings").eq("id", clinicId).maybeSingle();
+      const s = (cr.data && cr.data.settings) || {};
+      discountPercent = (s.referralLevels && s.referralLevels.level1 != null)
+        ? s.referralLevels.level1
+        : (s.referralLevel1Percent != null ? s.referralLevel1Percent : null);
+    }
+
+    // UUID columns reject non-UUID values in .in([...]) — one bad id clears the whole query.
+    async function queryReferralsByColumn(column, ids) {
+      const uniq = Array.from(new Set((ids || []).map(function (x) { return String(x || "").trim(); }).filter(Boolean)));
+      if (!uniq.length) return [];
+      const uuidList = uniq.filter(function (id) { return UUID_RE.test(id); });
+      const textList = uniq.filter(function (id) { return !UUID_RE.test(id); });
+      const merged = [];
+      const seenRow = new Set();
+      async function runChunk(chunk) {
+        if (!chunk.length) return;
+        const qr = await supabase
+          .from("referrals")
+          .select("*")
+          .in(column, chunk)
+          .order("created_at", { ascending: false });
+        if (qr.error) {
+          const msg = String(qr.error.message || "").toLowerCase();
+          const benign =
+            msg.includes("does not exist") ||
+            msg.includes("column") ||
+            msg.includes("invalid input syntax for type uuid");
+          if (!benign) {
+            console.error("[/api/patient/referral] query", column, qr.error.message);
+          }
+          return;
+        }
+        (qr.data || []).forEach(function (row) {
+          const rk = row && (row.id != null ? row.id : row.referral_id);
+          if (rk == null || seenRow.has(rk)) return;
+          seenRow.add(rk);
+          merged.push(row);
+        });
+      }
+      await runChunk(uuidList);
+      await runChunk(textList);
+      merged.sort(function (a, b) {
+        return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+      });
+      return merged;
+    }
+
+    async function queryInviterColumn(column) {
+      return queryReferralsByColumn(column, selfIds);
+    }
+
+    async function queryInvitedColumn(column) {
+      return queryReferralsByColumn(column, selfIds);
+    }
+
+    // 3a. Outgoing: this patient is inviter
+    let outgoingRows = await queryInviterColumn("inviter_patient_id");
+    if (outgoingRows.length === 0) {
+      outgoingRows = await queryInviterColumn("referrer_patient_id");
+    }
+
+    // 3b. Incoming: this patient was invited
+    let incomingRows = await queryInvitedColumn("invited_patient_id");
+    if (incomingRows.length === 0) {
+      incomingRows = await queryInvitedColumn("referred_patient_id");
+    }
+
+    function normalizeReferralRow(r) {
+      if (!r) return r;
+      const inv = r.inviter_patient_id || r.referrer_patient_id;
+      const invd = r.invited_patient_id || r.referred_patient_id;
+      return { ...r, inviter_patient_id: inv, invited_patient_id: invd };
+    }
+    outgoingRows = outgoingRows.map(normalizeReferralRow);
+    incomingRows = incomingRows.map(normalizeReferralRow);
+
+    const seenRef = new Set();
+    const combined = [];
+    for (let o = 0; o < outgoingRows.length; o++) {
+      const r = outgoingRows[o];
+      const rid = r && (r.id != null ? r.id : r.referral_id);
+      if (!r || rid == null || seenRef.has(rid)) continue;
+      seenRef.add(rid);
+      combined.push({ row: r, direction: "outgoing" });
+    }
+    for (let o = 0; o < incomingRows.length; o++) {
+      const r = incomingRows[o];
+      const rid = r && (r.id != null ? r.id : r.referral_id);
+      if (!r || rid == null || seenRef.has(rid)) continue;
+      seenRef.add(rid);
+      combined.push({ row: r, direction: "incoming" });
+    }
+
+    const needIds = new Set();
+    for (let c = 0; c < combined.length; c++) {
+      const r = combined[c].row;
+      const dir = combined[c].direction;
+      if (dir === "outgoing" && r.invited_patient_id != null) {
+        needIds.add(String(r.invited_patient_id).trim());
+      }
+      if (dir === "incoming" && r.inviter_patient_id != null) {
+        needIds.add(String(r.inviter_patient_id).trim());
+      }
+    }
+    const allNeed = Array.from(needIds).filter(Boolean);
+
+    const nameMap = {};
+    function ingestPatientRow(p) {
+      if (!p) return;
+      const nm = (p.name && String(p.name).trim()) || "—";
+      if (p.id != null) nameMap[String(p.id)] = nm;
+      if (p.patient_id != null) nameMap[String(p.patient_id)] = nm;
+    }
+    for (let i = 0; i < allNeed.length; i += 50) {
+      const chunk = allNeed.slice(i, i + 50);
+      const uuidChunk = chunk.filter(function(id) { return UUID_RE.test(id); });
+      const textChunk = chunk.filter(function(id) { return !UUID_RE.test(id); });
+      if (uuidChunk.length > 0) {
+        const pr = await supabase.from("patients").select("id, patient_id, name").in("id", uuidChunk);
+        (pr.data || []).forEach(ingestPatientRow);
+        const pr2 = await supabase.from("patients").select("id, patient_id, name").in("patient_id", uuidChunk);
+        (pr2.data || []).forEach(ingestPatientRow);
+      }
+      if (textChunk.length > 0) {
+        const pr = await supabase.from("patients").select("id, patient_id, name").in("patient_id", textChunk);
+        (pr.data || []).forEach(ingestPatientRow);
+        const pr2 = await supabase.from("patients").select("id, patient_id, name").in("id", textChunk);
+        (pr2.data || []).forEach(ingestPatientRow);
+      }
+    }
+    for (let mi = 0; mi < allNeed.length; mi++) {
+      const id = allNeed[mi];
+      if (!id || nameMap[id]) continue;
+      try {
+        const q1 = await supabase.from("patients").select("id, patient_id, name").eq("id", id).maybeSingle();
+        if (!q1.error && q1.data) ingestPatientRow(q1.data);
+        if (!nameMap[id]) {
+          const q2 = await supabase.from("patients").select("id, patient_id, name").eq("patient_id", id).maybeSingle();
+          if (!q2.error && q2.data) ingestPatientRow(q2.data);
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    const referrals = combined.map(function(entry) {
+      const r = entry.row;
+      const dir = entry.direction;
+      const otherRaw = dir === "outgoing" ? r.invited_patient_id : r.inviter_patient_id;
+      const sid = otherRaw != null ? String(otherRaw).trim() : "";
+      const displayName =
+        dir === "outgoing"
+          ? (
+              (sid && nameMap[sid]) ||
+              r.invited_patient_name ||
+              r.invitedPatientName ||
+              r.invited_name ||
+              "—"
+            )
+          : (
+              (sid && nameMap[sid]) ||
+              r.inviter_patient_name ||
+              r.inviterPatientName ||
+              r.inviter_name ||
+              "—"
+            );
+      return {
+        id: r.id != null ? r.id : r.referral_id,
+        name: displayName,
+        status: String(r.status || "invited").toLowerCase(),
+        createdAt: r.created_at ? new Date(r.created_at).getTime() : null,
+        direction: dir,
+      };
+    });
+    referrals.sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+
+    return res.json({
+      ok: true,
+      referralCode: referralCode,
+      discountPercent: discountPercent,
+      referrals: referrals,
+      friends: referrals,
+      items: referrals,
+    });
+
+  } catch (err) {
+    console.error("[/api/patient/referral] Error:", err.message);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
 // POST /api/referrals
 // Create a referral (file-based persistence)
 app.post("/api/referrals", requireToken, (req, res) => {
@@ -9467,6 +16640,8 @@ function mapReferralRowToLegacyItem(r) {
     status: normalizedStatus,
     inviterPatientId: r.inviter_patient_id || r.referrer_patient_id,
     invitedPatientId: r.invited_patient_id || r.referred_patient_id || null,
+    inviterPatientName: r.inviterPatientName || r.inviter_patient_name || null,
+    invitedPatientName: r.invitedPatientName || r.invited_patient_name || null,
     referralCode: r.referral_code,
     createdAt,
     // v2 reward fields (optional)
@@ -9546,6 +16721,22 @@ async function resolvePatientUuidForReferral(candidate) {
     // ignore
   }
   return null;
+}
+
+/** Persist optional display names when the referrals table has the columns; otherwise retry without them. */
+async function createReferralInDBFlexible(payload) {
+  try {
+    return await createReferralInDB(payload);
+  } catch (err) {
+    const msg = String(err?.message || "").toLowerCase();
+    if (msg.includes("inviter_patient_name") || msg.includes("invited_patient_name")) {
+      const copy = { ...(payload || {}) };
+      delete copy.inviter_patient_name;
+      delete copy.invited_patient_name;
+      return await createReferralInDB(copy);
+    }
+    throw err;
+  }
 }
 
 function generateReferralCodeV2() {
@@ -10807,12 +17998,362 @@ app.get("/api/admin/referral-events", requireAdminAuth, async (req, res) => {
 // GET /api/admin/events
 // Get all events from all patients (travel events + treatment events)
 // Filters: upcoming (next 14 days, excluding today), overdue (past but not completed)
+app.get("/api/admin/appointments", requireAdminAuth, async (req, res) => {
+  try {
+    const date = String(req.query.date || "").trim();
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+
+    const isSingleDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+    const isRange = /^\d{4}-\d{2}-\d{2}$/.test(startDate) && /^\d{4}-\d{2}-\d{2}$/.test(endDate);
+
+    if (!isSingleDate && !isRange) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_date",
+        message: "Use query param 'date' (YYYY-MM-DD) or 'startDate'+'endDate' (YYYY-MM-DD)",
+      });
+    }
+
+    if (isRange && startDate > endDate) {
+      return res.status(400).json({ ok: false, error: "invalid_date_range", message: "startDate must be <= endDate" });
+    }
+
+    const rangeStartDate = isSingleDate ? date : startDate;
+    const rangeEndDate = isSingleDate ? date : endDate;
+
+    if (!isSupabaseEnabled()) {
+      return res.json({
+        ok: true,
+        ...(isSingleDate ? { date: rangeStartDate } : { startDate: rangeStartDate, endDate: rangeEndDate }),
+        appointments: [],
+      });
+    }
+
+    const dayStartIso = `${rangeStartDate}T00:00:00.000Z`;
+    const rangeEndIsoBase = `${rangeEndDate}T00:00:00.000Z`;
+    const dayEndDate = new Date(rangeEndIsoBase);
+    if (Number.isNaN(dayEndDate.getTime()) || Number.isNaN(Date.parse(dayStartIso))) {
+      return res.status(400).json({ ok: false, error: "invalid_date" });
+    }
+    dayEndDate.setUTCDate(dayEndDate.getUTCDate() + 1);
+    const dayEndIso = dayEndDate.toISOString();
+
+    const clinicPatientIds = new Set();
+    try {
+      const patientAttempts = [
+        () => supabase.from("patients").select("id,patient_id").eq("clinic_id", req.clinicId),
+        () => req.clinicCode ? supabase.from("patients").select("id,patient_id").eq("clinic_code", req.clinicCode) : Promise.resolve({ data: [], error: null }),
+      ];
+      for (const run of patientAttempts) {
+        const { data, error } = await run();
+        if (error) continue;
+        (data || []).forEach((p) => {
+          if (p?.id) clinicPatientIds.add(String(p.id));
+          if (p?.patient_id) clinicPatientIds.add(String(p.patient_id));
+        });
+        if (clinicPatientIds.size > 0) break;
+      }
+    } catch (e) {
+      console.warn("[ADMIN APPOINTMENTS] clinic patient preload skipped:", e?.message || e);
+    }
+
+    const runTableFetch = async (tableName) => {
+      const idList = Array.from(clinicPatientIds);
+      const safePatientList = idList.slice(0, 1000);
+      const attempts = [];
+      const pushStartAtRangeAttempts = (builder) => {
+        attempts.push(() => builder().gte("start_at", dayStartIso).lt("start_at", dayEndIso));
+        attempts.push(() => builder().gte("startAt", dayStartIso).lt("startAt", dayEndIso));
+      };
+
+      if (isSingleDate) {
+        attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", req.clinicId).eq("date", rangeStartDate));
+        attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", req.clinicId).eq("appointment_date", rangeStartDate));
+      } else {
+        attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", req.clinicId).gte("date", rangeStartDate).lte("date", rangeEndDate));
+        attempts.push(() => supabase.from(tableName).select("*").eq("clinic_id", req.clinicId).gte("appointment_date", rangeStartDate).lte("appointment_date", rangeEndDate));
+      }
+
+      pushStartAtRangeAttempts(() => supabase.from(tableName).select("*").eq("clinic_id", req.clinicId));
+
+      if (req.clinicCode) {
+        if (isSingleDate) {
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", req.clinicCode).eq("date", rangeStartDate));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", req.clinicCode).eq("appointment_date", rangeStartDate));
+        } else {
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", req.clinicCode).gte("date", rangeStartDate).lte("date", rangeEndDate));
+          attempts.push(() => supabase.from(tableName).select("*").eq("clinic_code", req.clinicCode).gte("appointment_date", rangeStartDate).lte("appointment_date", rangeEndDate));
+        }
+        pushStartAtRangeAttempts(() => supabase.from(tableName).select("*").eq("clinic_code", req.clinicCode));
+      }
+
+      if (safePatientList.length) {
+        if (isSingleDate) {
+          attempts.push(() => supabase.from(tableName).select("*").in("patient_id", safePatientList).eq("date", rangeStartDate));
+          attempts.push(() => supabase.from(tableName).select("*").in("patient_id", safePatientList).eq("appointment_date", rangeStartDate));
+        } else {
+          attempts.push(() => supabase.from(tableName).select("*").in("patient_id", safePatientList).gte("date", rangeStartDate).lte("date", rangeEndDate));
+          attempts.push(() => supabase.from(tableName).select("*").in("patient_id", safePatientList).gte("appointment_date", rangeStartDate).lte("appointment_date", rangeEndDate));
+        }
+
+        pushStartAtRangeAttempts(() => supabase.from(tableName).select("*").in("patient_id", safePatientList));
+      }
+
+      let rows = null;
+      let lastError = null;
+      let sawNonSchemaError = false;
+      for (const run of attempts) {
+        const { data, error } = await run();
+        if (!error) {
+          rows = Array.isArray(data) ? data : [];
+          break;
+        }
+        const msg = String(error?.message || "").toLowerCase();
+        const code = String(error?.code || "");
+        const isMissingTable = msg.includes("does not exist") || code === "42P01";
+        const isSchemaMismatch = code === "42703" || code === "PGRST204" || msg.includes("column") || msg.includes("schema cache");
+
+        if (isMissingTable) {
+          return [];
+        }
+
+        if (isSchemaMismatch) {
+          lastError = error;
+          continue;
+        }
+
+        sawNonSchemaError = true;
+        lastError = error;
+      }
+
+      if (rows === null) {
+        if (!sawNonSchemaError) {
+          console.warn(`[ADMIN APPOINTMENTS] ${tableName} schema mismatch, returning empty`, lastError?.message || lastError);
+          return [];
+        }
+        console.error(`[ADMIN APPOINTMENTS] ${tableName} query failed`, lastError);
+        throw new Error(`${tableName}_query_failed`);
+      }
+      return rows;
+    };
+
+    const appointmentRows = await runTableFetch("appointments");
+    const requestRows = await runTableFetch("appointment_requests");
+    const rows = [...appointmentRows, ...requestRows];
+
+    const getField = (obj, keys) => {
+      for (const key of keys) {
+        if (obj && obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
+          return obj[key];
+        }
+      }
+      return null;
+    };
+
+    const doctorIds = [...new Set(rows.map((row) => String(getField(row, ["doctor_id", "doctorId", "doctor"]) || "")).filter(Boolean))];
+    const patientIds = [...new Set(rows.map((row) => String(getField(row, ["patient_id", "patientId", "patient"]) || "")).filter(Boolean))];
+    const chairIds = [...new Set(rows.map((row) => String(getField(row, ["chair_id", "chairId", "chair"]) || "")).filter(Boolean))];
+
+    const doctorMap = new Map();
+    const patientMap = new Map();
+    const chairMap = new Map();
+
+    if (doctorIds.length) {
+      const doctorAttempts = [
+        () => supabase.from("doctors").select("id,name,full_name,email").in("id", doctorIds),
+        () => supabase.from("doctors").select("doctor_id,name,full_name,email").in("doctor_id", doctorIds),
+      ];
+      for (const run of doctorAttempts) {
+        const { data, error } = await run();
+        if (error) continue;
+        (data || []).forEach((doc) => {
+          const key = String(getField(doc, ["id", "doctor_id"]) || "");
+          const label = String(getField(doc, ["name", "full_name", "email", "id", "doctor_id"]) || "");
+          if (key && label) doctorMap.set(key, label);
+        });
+        break;
+      }
+    }
+
+    if (patientIds.length) {
+      const patientAttempts = [
+        () => supabase.from("patients").select("id,patient_id,name,full_name,email").in("id", patientIds),
+        () => supabase.from("patients").select("id,patient_id,name,full_name,email").in("patient_id", patientIds),
+        () => supabase.from("patients").select("id,patient_id,name,email").in("id", patientIds),
+        () => supabase.from("patients").select("id,patient_id,name,email").in("patient_id", patientIds),
+      ];
+      for (const run of patientAttempts) {
+        const { data, error } = await run();
+        if (error) continue;
+        (data || []).forEach((p) => {
+          const keyA = String(getField(p, ["id"]) || "");
+          const keyB = String(getField(p, ["patient_id"]) || "");
+          const label = String(getField(p, ["name", "full_name", "email", "patient_id", "id"]) || "");
+          if (keyA && label) patientMap.set(keyA, label);
+          if (keyB && label) patientMap.set(keyB, label);
+        });
+        break;
+      }
+    }
+
+    if (chairIds.length) {
+      const chairAttempts = [
+        () => supabase.from("chairs").select("id,name,label,chair_number").in("id", chairIds),
+        () => supabase.from("chairs").select("chair_id,name,label,chair_number").in("chair_id", chairIds),
+      ];
+      for (const run of chairAttempts) {
+        const { data, error } = await run();
+        if (error) continue;
+        (data || []).forEach((c) => {
+          const key = String(getField(c, ["id", "chair_id"]) || "");
+          const label = String(getField(c, ["name", "label", "chair_number", "id", "chair_id"]) || "");
+          if (key && label) chairMap.set(key, label);
+        });
+        break;
+      }
+    }
+
+    const appointments = rows
+      .map((row) => {
+        const doctorId = String(getField(row, ["doctor_id", "doctorId"]) || "");
+        const patientId = String(getField(row, ["patient_id", "patientId"]) || "");
+        const chairId = String(getField(row, ["chair_id", "chairId"]) || "");
+
+        const toIsoSafe = (value) => {
+          if (!value) return null;
+          const ts = Date.parse(String(value));
+          if (!Number.isFinite(ts)) return null;
+          return new Date(ts).toISOString();
+        };
+
+        const startAt = getField(row, ["start_at", "startAt", "starts_at"]) ||
+          (getField(row, ["date"]) ? (() => {
+            const datePart = String(getField(row, ["date"]));
+            const timeRaw = String(getField(row, ["time"]) || "00:00");
+            const timePart = /^\d{2}:\d{2}$/.test(timeRaw) ? `${timeRaw}:00` : timeRaw;
+            return `${datePart}T${timePart}`;
+          })() : null);
+        const endAt = getField(row, ["end_at", "endAt", "ends_at"]) || null;
+        const status = String(getField(row, ["status"]) || "UNKNOWN").toUpperCase();
+        const treatment = String(getField(row, [
+          "treatment_code",
+          "treatment_name",
+          "procedure_code",
+          "procedure_name",
+          "appointment_type",
+          "service",
+          "type",
+          "procedure",
+        ]) || "").trim();
+        const durationMinutes = parseMinuteValue(getField(row, [
+          "duration_minutes",
+          "estimated_duration_minutes",
+          "duration",
+          "estimated_duration",
+        ]), 0);
+        const breakMinutes = parseMinuteValue(getField(row, [
+          "break_minutes",
+          "rest_minutes",
+          "break_duration",
+          "pause_minutes",
+        ]), 0);
+
+        const toothRaw = getField(row, [
+          "tooth_number",
+          "toothNumber",
+          "tooth_fdi_code",
+          "fdi_tooth",
+          "fdiTooth",
+          "tooth",
+          "tooth_id",
+          "toothId",
+          "toothID",
+        ]);
+        const tooth_number = (() => {
+          if (toothRaw == null || toothRaw === "") return "";
+          const s = String(toothRaw).trim();
+          const digits = s.replace(/\D/g, "");
+          const n = digits.length >= 2 ? Number.parseInt(digits.slice(0, 2), 10) : NaN;
+          if (Number.isFinite(n) && n >= 11 && n <= 48) return String(n);
+          return s;
+        })();
+
+        const appointmentDate = (() => {
+          const directDate = getField(row, ["date", "appointment_date"]);
+          if (directDate) return String(directDate).slice(0, 10);
+          const t = startAt ? Date.parse(String(startAt)) : NaN;
+          if (Number.isFinite(t)) return new Date(t).toISOString().slice(0, 10);
+          return "";
+        })();
+
+        return {
+          doctor: String(getField(row, ["doctor", "doctor_name", "doctorName"]) || doctorMap.get(doctorId) || doctorId || ""),
+          patient: String(getField(row, ["patient", "patient_name", "patientName"]) || patientMap.get(patientId) || patientId || ""),
+          chair: String(getField(row, ["chair", "chair_name", "chairName"]) || chairMap.get(chairId) || chairId || ""),
+          startAt: toIsoSafe(startAt),
+          endAt: toIsoSafe(endAt),
+          status,
+          treatment,
+          ...(tooth_number ? { tooth_number } : {}),
+          duration_minutes: durationMinutes,
+          break_minutes: breakMinutes,
+          _appointmentDate: appointmentDate,
+        };
+      })
+      .filter((item) => {
+        if (isSingleDate) return item._appointmentDate === rangeStartDate;
+        return item._appointmentDate >= rangeStartDate && item._appointmentDate <= rangeEndDate;
+      })
+      .sort((a, b) => {
+        const at = a.startAt ? Date.parse(a.startAt) : 0;
+        const bt = b.startAt ? Date.parse(b.startAt) : 0;
+        return at - bt;
+      })
+      .map(({ _appointmentDate, ...item }) => item);
+
+    return res.json({
+      ok: true,
+      ...(isSingleDate ? { date: rangeStartDate } : { startDate: rangeStartDate, endDate: rangeEndDate }),
+      appointments,
+    });
+  } catch (error) {
+    console.error("[ADMIN APPOINTMENTS] Error:", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
 app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
   try {
     const clinicCode = String(req.clinicCode || "").trim().toUpperCase();
     if (!clinicCode) {
       return res.status(401).json({ ok: false, error: "clinic_required" });
     }
+
+    const startDate = String(req.query.startDate || "").trim();
+    const endDate = String(req.query.endDate || "").trim();
+    const hasRangeFilter =
+      /^\d{4}-\d{2}-\d{2}$/.test(startDate) &&
+      /^\d{4}-\d{2}-\d{2}$/.test(endDate);
+
+    if ((startDate || endDate) && !hasRangeFilter) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_date_range",
+        message: "Use startDate and endDate in YYYY-MM-DD format",
+      });
+    }
+
+    if (hasRangeFilter && startDate > endDate) {
+      return res.status(400).json({
+        ok: false,
+        error: "invalid_date_range",
+        message: "startDate must be <= endDate",
+      });
+    }
+
+    const rangeStartTs = hasRangeFilter ? Date.parse(`${startDate}T00:00:00.000Z`) : null;
+    const rangeEndTs = hasRangeFilter ? Date.parse(`${endDate}T23:59:59.999Z`) : null;
 
     const now = Date.now();
     const today = new Date();
@@ -10853,6 +18394,16 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
       const iso = timelineAt || dateTimeToIso(evt.date, evt.time) || toIso(evt.timestamp);
       if (!iso) return;
       const ts = Date.parse(iso);
+      if (hasRangeFilter) {
+        const evtDateStr = String(evt?.date || "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(evtDateStr)) {
+          if (evtDateStr < startDate || evtDateStr > endDate) return;
+        } else if (Number.isFinite(ts)) {
+          // Tolerate timezone shifts for events that don't carry explicit YYYY-MM-DD.
+          const marginMs = 24 * 60 * 60 * 1000;
+          if (ts < (rangeStartTs - marginMs) || ts > (rangeEndTs + marginMs)) return;
+        }
+      }
       allEvents.push({
         ...evt,
         timelineAt: iso,
@@ -10867,12 +18418,394 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
       const TREATMENTS_DIR = path.join(DATA_DIR, "treatments");
 
       // Build events from Supabase patient JSON fields (travel / treatments / treatment_events)
-      const clinicPatients = await getPatientsByClinic(req.clinicId);
-      const list = Array.isArray(clinicPatients) ? clinicPatients : [];
+      const patientSelectCandidates = [
+        // With full_name + all optional columns
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id, treatments",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, doctor_id",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id, treatments",
+        "id, patient_id, clinic_id, name, full_name, primary_doctor_id",
+        "id, patient_id, clinic_id, name, full_name, doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, full_name, doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, doctor_id, treatments",
+        "id, patient_id, clinic_id, name, full_name, doctor_id",
+        "id, patient_id, clinic_id, name, full_name, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, travel, treatments",
+        "id, patient_id, clinic_id, name, full_name, treatment_events",
+        "id, patient_id, clinic_id, name, full_name, treatments",
+        "id, patient_id, clinic_id, name, full_name",
+        // Without full_name (name-only schema)
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id, treatments",
+        "id, patient_id, clinic_id, name, primary_doctor_id, doctor_id",
+        "id, patient_id, clinic_id, name, primary_doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, primary_doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, primary_doctor_id, treatments",
+        "id, patient_id, clinic_id, name, primary_doctor_id",
+        "id, patient_id, clinic_id, name, doctor_id, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, doctor_id, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, doctor_id, travel, treatments",
+        "id, patient_id, clinic_id, name, doctor_id, treatment_events",
+        "id, patient_id, clinic_id, name, doctor_id, treatments",
+        "id, patient_id, clinic_id, name, doctor_id",
+        "id, patient_id, clinic_id, name, travel, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, treatments, treatment_events",
+        "id, patient_id, clinic_id, name, travel, treatments",
+        "id, patient_id, clinic_id, name, treatment_events",
+        "id, patient_id, clinic_id, name, treatments",
+        "id, patient_id, clinic_id, name",
+      ];
 
-      list.forEach((p) => {
+      let list = [];
+      // Try cached clause first to avoid schema-discovery overhead on every request
+      const patientClausesToTry = _eventsPatientSelectClause
+        ? [_eventsPatientSelectClause, ...patientSelectCandidates.filter(c => c !== _eventsPatientSelectClause)]
+        : patientSelectCandidates;
+      for (const selectClause of patientClausesToTry) {
+        const result = await supabase
+          .from("patients")
+          .select(selectClause)
+          .eq("clinic_id", req.clinicId)
+          .order("created_at", { ascending: false });
+
+        if (!result.error) {
+          _eventsPatientSelectClause = selectClause; // cache the working clause
+          list = Array.isArray(result.data) ? result.data : [];
+          break;
+        }
+
+        if (!isMissingColumnError(result.error, "travel") &&
+            !isMissingColumnError(result.error, "treatments") &&
+            !isMissingColumnError(result.error, "treatment_events") &&
+            !["42703", "PGRST204"].includes(String(result.error.code || ""))) {
+          console.error("[ADMIN EVENTS] patients query failed", result.error);
+          break;
+        }
+      }
+
+      const doctorNameById = new Map();
+      const clinicDoctorIds = [...new Set(
+        (list || [])
+          .map((row) => String(row?.primary_doctor_id || row?.doctor_id || "").trim())
+          .filter(Boolean)
+      )];
+      if (clinicDoctorIds.length > 0) {
+        const doctorResult = await supabase
+          .from("doctors")
+          .select("id, doctor_id, name, full_name, email")
+          .in("id", clinicDoctorIds);
+
+        if (doctorResult.error && ["42703", "PGRST204"].includes(String(doctorResult.error.code || ""))) {
+          const fallbackDoctorResult = await supabase
+            .from("doctors")
+            .select("id, doctor_id, name, full_name, email")
+            .in("doctor_id", clinicDoctorIds);
+          if (!fallbackDoctorResult.error) {
+            (fallbackDoctorResult.data || []).forEach((doc) => {
+              const keyA = String(doc?.id || "").trim();
+              const keyB = String(doc?.doctor_id || "").trim();
+              const label = String(doc?.name || doc?.full_name || doc?.email || keyA || keyB || "").trim();
+              if (keyA && label) doctorNameById.set(keyA, label);
+              if (keyB && label) doctorNameById.set(keyB, label);
+            });
+          }
+        } else if (!doctorResult.error) {
+          (doctorResult.data || []).forEach((doc) => {
+            const keyA = String(doc?.id || "").trim();
+            const keyB = String(doc?.doctor_id || "").trim();
+            const label = String(doc?.name || doc?.full_name || doc?.email || keyA || keyB || "").trim();
+            if (keyA && label) doctorNameById.set(keyA, label);
+            if (keyB && label) doctorNameById.set(keyB, label);
+          });
+        }
+      }
+
+      console.log("[EVENTS] Fetch for clinic:", req.clinicId, "clinicCode:", req.clinicCode, "patients found:", list.length);
+
+      // ── patient_treatments bulk query ────────────────────────────────────────
+      // Doctor app saves treatments_data.teeth[].procedures[] here.
+      // We build a UUID→data map so the per-patient loop can access it cheaply.
+      const patientTreatmentsMap = new Map(); // patientUUID → treatments_data
+      try {
+        const allUuids = [...new Set(list.map((p) => String(p?.id || "").trim()).filter(Boolean))];
+        for (let i = 0; i < allUuids.length; i += 50) {
+          const chunk = allUuids.slice(i, i + 50);
+          const { data: ptRows, error: ptErr } = await supabase
+            .from("patient_treatments")
+            .select("patient_id, treatments_data")
+            .in("patient_id", chunk);
+          if (ptErr) {
+            if (!["42P01", "PGRST205", "PGRST204"].includes(String(ptErr.code || ""))) {
+              console.error("[EVENTS] patient_treatments query failed:", ptErr.message);
+            }
+            break;
+          }
+          (ptRows || []).forEach((row) => {
+            if (row?.treatments_data) patientTreatmentsMap.set(String(row.patient_id), row.treatments_data);
+          });
+        }
+        console.log("[EVENTS] patient_treatments loaded for", patientTreatmentsMap.size, "patients");
+      } catch (ptCatchErr) {
+        console.error("[EVENTS] patient_treatments bulk fetch error:", ptCatchErr.message);
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      const UUID_RE_EVENTS = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      // Pre-fetch all patient encounters in ONE parallel batch (avoids sequential N queries)
+      const allPatientUuids = [...new Set(
+        list.flatMap(p => [String(p?.id || ''), String(p?.patient_id || '')])
+          .filter(id => id && UUID_RE_EVENTS.test(id))
+      )];
+      const encountersByPatientId = new Map(); // patientUUID → encounter[]
+      if (allPatientUuids.length > 0) {
+        try {
+          for (let i = 0; i < allPatientUuids.length; i += 100) {
+            const chunk = allPatientUuids.slice(i, i + 100);
+            const { data: encRows } = await supabase
+              .from('patient_encounters')
+              .select('id, patient_id')
+              .in('patient_id', chunk);
+            (encRows || []).forEach(row => {
+              const pid = String(row.patient_id || '');
+              if (!encountersByPatientId.has(pid)) encountersByPatientId.set(pid, []);
+              encountersByPatientId.get(pid).push(row);
+            });
+          }
+        } catch (_) {}
+      }
+
+      // ── Batch pre-fetch treatment_plans for ALL patients ────────────────────
+      // Avoids N×2 sequential treatment_plans queries inside the patient loop.
+      const allEncounterIds = [...new Set(
+        allPatientUuids.flatMap(uid => (encountersByPatientId.get(uid) || []).map(e => String(e.id || '')))
+          .filter(Boolean)
+      )];
+      // patientId → Set<planId>
+      const planIdsByPatientId = new Map();
+      try {
+        const planFetches = [];
+        // by encounter_id (chunked)
+        for (let i = 0; i < allEncounterIds.length; i += 100) {
+          planFetches.push(
+            supabase.from('treatment_plans').select('id, encounter_id, patient_id')
+              .in('encounter_id', allEncounterIds.slice(i, i + 100))
+          );
+        }
+        // by patient_id (chunked)
+        for (let i = 0; i < allPatientUuids.length; i += 100) {
+          planFetches.push(
+            supabase.from('treatment_plans').select('id, encounter_id, patient_id')
+              .in('patient_id', allPatientUuids.slice(i, i + 100))
+          );
+        }
+        const planResults = await Promise.all(planFetches);
+
+        // Build encounter_id → patient_id reverse lookup from encountersByPatientId
+        const encIdToPatientId = new Map();
+        for (const [pid, encs] of encountersByPatientId) {
+          for (const enc of encs) encIdToPatientId.set(String(enc.id || ''), pid);
+        }
+
+        for (const result of planResults) {
+          if (result.error) continue;
+          (result.data || []).forEach(row => {
+            const planId = String(row?.id || '').trim();
+            if (!planId) return;
+            const pid = String(row?.patient_id || encIdToPatientId.get(String(row?.encounter_id || '')) || '').trim();
+            if (!pid) return;
+            if (!planIdsByPatientId.has(pid)) planIdsByPatientId.set(pid, new Set());
+            planIdsByPatientId.get(pid).add(planId);
+          });
+        }
+      } catch (planBatchErr) {
+        console.error('[ADMIN EVENTS] treatment_plans batch fetch error:', planBatchErr.message);
+      }
+
+      // ── Batch pre-fetch treatment_items for ALL plan IDs ────────────────────
+      // Avoids N×(up to 8) sequential treatment_items queries inside the patient loop.
+      const allPlanIds = [...new Set([...planIdsByPatientId.values()].flatMap(s => [...s]))];
+      // planId → items[]
+      const itemsByPlanId = new Map();
+      if (allPlanIds.length > 0) {
+        try {
+          const itemsTableCandidates = _eventsItemsTableName
+            ? [_eventsItemsTableName, ...['treatment_items', 'treatment_plan_items'].filter(t => t !== _eventsItemsTableName)]
+            : ['treatment_items', 'treatment_plan_items'];
+          const itemsSelectCandidates = _eventsItemsSelectClause
+            ? [_eventsItemsSelectClause]
+            : [
+                "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, status, scheduled_at, scheduled_date, due_date, appointment_at, appointment_date, date, time, doctor_id, assigned_doctor_id, chair_no, chair, created_at, updated_at",
+                "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, status, scheduled_at, scheduled_date, due_date, appointment_date, date, time, doctor_id, assigned_doctor_id, chair_no, chair, created_at, updated_at",
+                "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, status, scheduled_at, appointment_date, date, time, doctor_id, assigned_doctor_id, chair_no, chair, created_at, updated_at",
+                "id, treatment_plan_id, tooth_fdi_code, tooth_number, procedure_code, procedure_name, status, created_at, updated_at",
+              ];
+
+          outer: for (const tableName of itemsTableCandidates) {
+            for (const selectClause of itemsSelectCandidates) {
+              // Fetch in chunks of 100 plan IDs
+              let anySuccess = false;
+              let anyFatalError = false;
+              const chunkRows = [];
+              for (let i = 0; i < allPlanIds.length; i += 100) {
+                const chunk = allPlanIds.slice(i, i + 100);
+                const attempt = await supabase
+                  .from(tableName)
+                  .select(selectClause)
+                  .in('treatment_plan_id', chunk)
+                  .order('created_at', { ascending: false });
+                if (attempt.error) {
+                  if (['42703', 'PGRST204', 'PGRST205', '42P01'].includes(String(attempt.error.code || ''))) {
+                    break; // try next select/table
+                  }
+                  anyFatalError = true;
+                  break;
+                }
+                anySuccess = true;
+                chunkRows.push(...(attempt.data || []));
+              }
+              if (anySuccess && !anyFatalError) {
+                _eventsItemsTableName   = tableName;
+                _eventsItemsSelectClause = selectClause;
+                chunkRows.forEach(item => {
+                  const planId = String(item?.treatment_plan_id || '').trim();
+                  if (!planId) return;
+                  const itemId = String(item?.id || '').trim();
+                  const override = itemId ? readTreatmentItemOverride(itemId) : null;
+                  const finalItem = override ? applyTreatmentItemOverride(item, override) : item;
+                  if (!itemsByPlanId.has(planId)) itemsByPlanId.set(planId, []);
+                  itemsByPlanId.get(planId).push(finalItem);
+                });
+                break outer;
+              }
+            }
+          }
+        } catch (itemBatchErr) {
+          console.error('[ADMIN EVENTS] treatment_items batch fetch error:', itemBatchErr.message);
+        }
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
+      const encounterIdToPatientIdForDashboard = new Map();
+      for (const [pid, encs] of encountersByPatientId) {
+        for (const enc of encs || []) {
+          const eid = String(enc?.id || "").trim();
+          if (eid) encounterIdToPatientIdForDashboard.set(eid, pid);
+        }
+      }
+
+      const patientRowByLookupId = new Map();
+      for (const prow of list) {
+        const id = String(prow?.id || "").trim();
+        const pLegacy = String(prow?.patient_id || "").trim();
+        if (id) patientRowByLookupId.set(id, prow);
+        if (pLegacy) patientRowByLookupId.set(pLegacy, prow);
+      }
+
+      const isMirroredEncounterTreatmentProcedure = (proc) => {
+        const sid = String(proc?.id || proc?.procedureId || "").trim();
+        return sid.startsWith("encounter-treatment-");
+      };
+
+      // encounter_treatments (doktor uygulaması) — dashboard'ta JSON/stale mirror'dan bağımsız doğru zaman çizelgesi
+      try {
+        const etRows = [];
+        if (allEncounterIds.length > 0) {
+          for (let i = 0; i < allEncounterIds.length; i += 100) {
+            const chunk = allEncounterIds.slice(i, i + 100);
+            const { data: etData, error: etErr } = await supabase
+              .from("encounter_treatments")
+              .select(
+                "id, encounter_id, tooth_number, procedure_type, status, scheduled_at, created_at, updated_at, chair, assigned_doctor_id"
+              )
+              .in("encounter_id", chunk);
+            const ec = String(etErr?.code || "");
+            if (!etErr || ["42P01", "42703", "PGRST204"].includes(ec)) {
+              (etData || []).forEach((r) => etRows.push(r));
+            } else {
+              console.warn("[ADMIN EVENTS] encounter_treatments batch:", etErr.message);
+            }
+          }
+        }
+        for (const row of etRows) {
+          const encId = String(row.encounter_id || "").trim();
+          const lookupPid = encounterIdToPatientIdForDashboard.get(encId);
+          if (!lookupPid) continue;
+          const prow = patientRowByLookupId.get(lookupPid);
+          if (!prow) continue;
+          const patientId = String(prow?.patient_id || prow?.id || "").trim();
+          if (!patientId) continue;
+          const patientName = String(prow?.name || prow?.full_name || patientId).trim();
+          const prowDoctorId = String(prow?.primary_doctor_id || prow?.doctor_id || "").trim();
+          const prowDoctorName = String(doctorNameById.get(prowDoctorId) || "").trim();
+          const timelineAt =
+            toIso(row.scheduled_at) || toIso(row.updated_at) || toIso(row.created_at);
+          if (!timelineAt) continue;
+          const st = String(row.status || "").toUpperCase();
+          if (st === "CANCELLED" || st === "CANCELED") continue;
+          const dt = new Date(Date.parse(timelineAt));
+          const assignDoc = String(row.assigned_doctor_id || "").trim();
+          const docLabel = String(doctorNameById.get(assignDoc) || prowDoctorName || "").trim();
+          const procChair = String(row.chair || "").trim();
+          const procType = String(row.procedure_type || "TREATMENT").trim();
+          const toothNum = row.tooth_number;
+          const normalizedLabel = mapEncounterTreatmentStatusToPatientJsonStatus(row.status);
+          const enriched = applyEventPrices(
+            [
+              {
+                id: `encounter_treatment_${row.id}`,
+                patientId,
+                patient: patientName,
+                patientName,
+                doctor: docLabel,
+                chair: procChair,
+                type: "TREATMENT",
+                eventType: procType,
+                treatment: procType,
+                title: `${procType} - Tooth ${toothNum}`,
+                description: "",
+                date: dt.toISOString().split("T")[0],
+                time: dt.toTimeString().slice(0, 5),
+                status: procedures.normalizeStatus(normalizedLabel),
+                source: "encounter_treatments",
+                toothId: toothNum != null ? String(toothNum) : undefined,
+                timelineAt,
+              },
+            ],
+            priceMap
+          )[0];
+          addEvent(enriched);
+        }
+      } catch (etDashErr) {
+        console.warn("[ADMIN EVENTS] encounter_treatments dashboard merge:", etDashErr?.message || etDashErr);
+      }
+
+      for (const p of list) {
         const patientId = String(p?.patient_id || p?.id || "").trim();
-        if (!patientId) return;
+        if (!patientId) continue;
+        const patientName = String(p?.name || p?.full_name || patientId).trim();
+        const patientDoctorId = String(p?.primary_doctor_id || p?.doctor_id || "").trim();
+        const patientDoctorName = String(doctorNameById.get(patientDoctorId) || "").trim();
+        // Only include UUID-format IDs for queries that expect UUID columns (e.g. patient_encounters)
+        const patientLookupIds = [
+          String(p?.id || "").trim(),
+          String(p?.patient_id || "").trim(),
+        ].filter(id => id && UUID_RE_EVENTS.test(id));
 
         // TRAVEL (null-safe)
         const travel = p?.travel || {};
@@ -10969,15 +18902,46 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
           const toothId = tooth?.toothId;
           const procs = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
           procs.forEach((proc) => {
+            if (isMirroredEncounterTreatmentProcedure(proc)) return;
             // scheduledAt preferred, else createdAt (both are ms)
             const timelineAt = toIso(proc?.scheduledAt) || toIso(proc?.createdAt);
             if (!timelineAt) return;
             const dt = new Date(Date.parse(timelineAt));
-            addEvent({
+            const procedureDoctorId = String(
+              proc?.assignedDoctorId ||
+              proc?.assigned_doctor_id ||
+              proc?.doctorId ||
+              proc?.doctor_id ||
+              proc?.meta?.doctorId ||
+              proc?.meta?.doctor_id ||
+              ""
+            ).trim();
+            const procedureDoctorName = String(
+              proc?.assignedDoctorName ||
+              proc?.doctorName ||
+              proc?.doctor ||
+              doctorNameById.get(procedureDoctorId) ||
+              patientDoctorName ||
+              ""
+            ).trim();
+            const procedureChair = String(
+              proc?.chairNo ||
+              proc?.chair_no ||
+              proc?.chair ||
+              proc?.chairId ||
+              proc?.chair_id ||
+              ""
+            ).trim();
+            const enriched = applyEventPrices([{
               id: proc?.id || proc?.procedureId || `treatment_${patientId}_${timelineAt}`,
               patientId,
+              patient: patientName,
+              patientName,
+              doctor: procedureDoctorName,
+              chair: procedureChair,
               type: "TREATMENT",
               eventType: proc?.type || "PROCEDURE",
+              treatment: proc?.type || "PROCEDURE",
               title: `${proc?.type || "Treatment"} - Tooth ${toothId}`,
               description: "",
               date: dt.toISOString().split("T")[0],
@@ -10986,7 +18950,63 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
               source: "treatment",
               toothId,
               timelineAt,
-            });
+            }], priceMap)[0];
+            addEvent(enriched);
+          });
+        });
+
+        // PATIENT_TREATMENTS TABLE (doctor app saves treatments_data.teeth[].procedures[])
+        const ptData = patientTreatmentsMap.get(String(p?.id || "").trim());
+        const ptTeeth = Array.isArray(ptData?.teeth) ? ptData.teeth : [];
+        ptTeeth.forEach((tooth) => {
+          const toothId = tooth?.id ?? tooth?.toothId;
+          const procs = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+          procs.forEach((proc) => {
+            if (isMirroredEncounterTreatmentProcedure(proc)) return;
+            const timelineAt =
+              toIso(proc?.scheduledAt) ||
+              toIso(proc?.scheduled_at) ||
+              toIso(proc?.createdAt) ||
+              toIso(proc?.created_at);
+            if (!timelineAt) return;
+            const dt = new Date(Date.parse(timelineAt));
+            const procStatus = String(proc?.status || "PLANNED").toUpperCase();
+            if (procStatus === "CANCELLED") return;
+            const procDoctorId = String(
+              proc?.assignedDoctorId || proc?.assigned_doctor_id ||
+              proc?.doctorId || proc?.doctor_id || ""
+            ).trim();
+            const procDoctorName = String(
+              proc?.assignedDoctorName || proc?.doctorName || proc?.doctor ||
+              doctorNameById.get(procDoctorId) || patientDoctorName || ""
+            ).trim();
+            const procChair = String(
+              proc?.chairNo || proc?.chair_no || proc?.chair || ""
+            ).trim();
+            const procType = String(proc?.type || proc?.procedureType || proc?.code || "TREATMENT").trim();
+            const procName = proc?.name || proc?.description || procType;
+            const toothLabel = toothId ? `Diş ${toothId}` : "";
+            const enriched = applyEventPrices([{
+              id: proc?.id || `pt_${patientId}_${toothId}_${timelineAt}`,
+              patientId,
+              patient: patientName,
+              patientName,
+              doctor: procDoctorName,
+              chair: procChair,
+              type: "TREATMENT",
+              eventType: procType,
+              treatment: procType,
+              title: toothLabel ? `${toothLabel} • ${procName}` : procName,
+              procedureName: procName,
+              description: "",
+              date: dt.toISOString().split("T")[0],
+              time: dt.toTimeString().slice(0, 5),
+              status: procedures.normalizeStatus(procStatus),
+              source: "patient_treatments",
+              toothId: toothId ? String(toothId) : undefined,
+              timelineAt,
+            }], priceMap)[0];
+            addEvent(enriched);
           });
         });
 
@@ -11010,9 +19030,38 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
             toIso(e?.timestamp);
           if (!iso) return;
           const dt = new Date(Date.parse(iso));
+          const eventDoctorId = String(
+            e?.assignedDoctorId ||
+            e?.assigned_doctor_id ||
+            e?.doctorId ||
+            e?.doctor_id ||
+            e?.meta?.doctorId ||
+            e?.meta?.doctor_id ||
+            ""
+          ).trim();
+          const eventDoctorName = String(
+            e?.assignedDoctorName ||
+            e?.doctorName ||
+            e?.doctor ||
+            doctorNameById.get(eventDoctorId) ||
+            patientDoctorName ||
+            ""
+          ).trim();
+          const eventChair = String(
+            e?.chairNo ||
+            e?.chair_no ||
+            e?.chair ||
+            e?.chairId ||
+            e?.chair_id ||
+            ""
+          ).trim();
           addEvent({
             id: e?.id || `treatment_event_${patientId}_${iso}`,
             patientId,
+            patient: patientName,
+            patientName,
+            doctor: eventDoctorName,
+            chair: eventChair,
             type: "TREATMENT_EVENT",
             eventType: e?.type || "TREATMENT",
             title: e?.title || "Treatment",
@@ -11020,11 +19069,71 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
             date: e?.date || dt.toISOString().split("T")[0],
             time: e?.time || dt.toTimeString().slice(0, 5),
             status: "PLANNED",
+            duration_minutes: parseMinuteValue(e?.duration_minutes ?? e?.duration, 0),
+            break_minutes: parseMinuteValue(e?.break_minutes ?? e?.rest_minutes, 0),
             source: "treatment",
             timelineAt: iso,
           });
         });
-      });
+
+        // Doctor encounter treatment items – use pre-fetched batch maps (zero extra queries per patient)
+        try {
+          // Collect plan IDs for this patient from the pre-built map
+          const planIdsForPatient = new Set();
+          for (const uid of [...patientLookupIds, String(p?.id || '').trim()]) {
+            if (!uid) continue;
+            const set = planIdsByPatientId.get(uid);
+            if (set) set.forEach(id => planIdsForPatient.add(id));
+          }
+
+          const itemRows = [...planIdsForPatient].flatMap(pid => itemsByPlanId.get(pid) || []);
+
+          if (itemRows.length > 0) {
+            itemRows.forEach((item) => {
+                const timelineAt =
+                  toIso(item?.scheduled_at) ||
+                  toIso(item?.scheduledAt) ||
+                  toIso(item?.scheduled_for) ||
+                  toIso(item?.appointment_at) ||
+                  dateTimeToIso(item?.appointment_date, item?.time || "00:00") ||
+                  dateTimeToIso(item?.date, item?.time || "00:00") ||
+                  toIso(item?.created_at) ||
+                  toIso(item?.updated_at);
+                if (!timelineAt) return;
+
+                const dt = new Date(Date.parse(timelineAt));
+                const procedureCode = String(item?.procedure_code || item?.procedure_name || "PROCEDURE").trim();
+                const procedureType = procedureCode.toUpperCase();
+                const toothIdRaw = item?.tooth_fdi_code ?? item?.tooth_number;
+                const normalizedStatus = procedures.normalizeStatus(item?.status || "PLANNED");
+
+                const encounterEnriched = applyEventPrices([{
+                  id: item?.id || `enc_item_${patientId}_${timelineAt}`,
+                  patientId,
+                  patient: patientName,
+                  patientName,
+                  doctor: patientDoctorName,
+                  type: ["CONSULT", "FOLLOWUP", "LAB"].includes(procedureType) ? procedureType : "TREATMENT",
+                  eventType: procedureType,
+                  treatment: procedureType,
+                  title: `${item?.procedure_name || procedureCode}${toothIdRaw ? ` - Tooth ${toothIdRaw}` : ""}`,
+                  procedureName: item?.procedure_name || procedureCode,
+                  procedureCode,
+                  description: "Doctor treatment plan",
+                  date: dt.toISOString().split("T")[0],
+                  time: dt.toTimeString().slice(0, 5),
+                  status: normalizedStatus,
+                  source: "encounter_treatment",
+                  toothId: toothIdRaw ? String(toothIdRaw) : undefined,
+                  timelineAt,
+                }], priceMap)[0];
+                addEvent(encounterEnriched);
+              });
+            }
+        } catch (encounterError) {
+          console.error("[ADMIN EVENTS] encounter treatment merge failed", encounterError);
+        }
+      } // end for (const p of list)
     } else {
       // Legacy FILE-BASED: fallback only when explicitly enabled
       if (!canUseFileFallback()) {
@@ -11234,7 +19343,43 @@ app.get("/api/admin/events", requireAdminAuth, async (req, res) => {
     }
     }
     
-    // Separate into overdue, today, and upcoming
+    console.log("[EVENTS] Total raw events collected:", allEvents.length, "for clinic:", req.clinicCode);
+    const dedupedEvents = dedupeAdminTimelineEvents(allEvents);
+    if (dedupedEvents.length !== allEvents.length) {
+      console.log("[EVENTS] After dedupe:", dedupedEvents.length, "(removed", allEvents.length - dedupedEvents.length, "duplicate/stale rows)");
+    }
+    allEvents.length = 0;
+    allEvents.push(...dedupedEvents);
+
+    // If explicit date range is requested (calendar week view), return events in that range directly.
+    if (hasRangeFilter) {
+      const marginMs = 24 * 60 * 60 * 1000;
+      const rangeEvents = allEvents
+        .filter((evt) => {
+          const evtDateStr = String(evt?.date || "").trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(evtDateStr)) {
+            return evtDateStr >= startDate && evtDateStr <= endDate;
+          }
+          const ts = evt.timestamp || (evt.timelineAt ? Date.parse(evt.timelineAt) : 0) || 0;
+          return Number.isFinite(ts) && ts >= (rangeStartTs - marginMs) && ts <= (rangeEndTs + marginMs);
+        })
+        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+      return res.json({
+        ok: true,
+        startDate,
+        endDate,
+        overdue: [],
+        today: [],
+        upcoming: rangeEvents,
+        total: rangeEvents.length,
+        overdueCount: 0,
+        todayCount: 0,
+        upcomingCount: rangeEvents.length,
+      });
+    }
+
+    // Default dashboard behavior (without explicit range): overdue/today/upcoming buckets.
     const overdue = [];
     const todayEvents = [];
     const upcoming = [];
@@ -11335,12 +19480,14 @@ async function requireAdminAuth(req, res, next) {
         req.clinicStatus = clinic.status || "ACTIVE";  // Use direct status field
         req.clinic = clinic;
         
-        console.log("[requireAdminAuth] Clinic auth check:", {
-          clinicCode: req.clinicCode,
-          clinicId: req.clinicId,
-          status: req.clinicStatus,
-          isSuspended: req.clinicStatus === "SUSPENDED"
-        });
+        if (String(process.env.ADMIN_AUTH_DEBUG || "").trim() === "1") {
+          console.log("[requireAdminAuth] Clinic auth check:", {
+            clinicCode: req.clinicCode,
+            clinicId: req.clinicId,
+            status: req.clinicStatus,
+            isSuspended: req.clinicStatus === "SUSPENDED"
+          });
+        }
         
         // Only reject if clinic is suspended
         if (req.clinicStatus === "SUSPENDED") {
@@ -11666,11 +19813,17 @@ app.post("/api/admin/register", async (req, res) => {
 });
 
 // POST /api/admin/login
-// Clinic login (clinic code + password) - OTP supported when enabled
-// Supports both Supabase, CLINIC_FILE (single clinic) and CLINICS_FILE (multiple clinics)
+// Admin authentication using admins table (email + clinic_code + password)
 app.post("/api/admin/login", async (req, res) => {
   try {
-    const { clinicCode, password, email } = req.body || {};
+    const { email, clinicCode, password } = req.body || {};
+    
+    console.log("[ADMIN LOGIN] Request received:", { email, clinicCode, hasPassword: !!password });
+    
+    // Validate inputs
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ ok: false, error: "email_required" });
+    }
     
     if (!clinicCode || !String(clinicCode).trim()) {
       return res.status(400).json({ ok: false, error: "clinic_code_required" });
@@ -11680,241 +19833,64 @@ app.post("/api/admin/login", async (req, res) => {
       return res.status(400).json({ ok: false, error: "password_required" });
     }
     
-    const code = String(clinicCode).trim().toUpperCase();
-    
-    // SUPABASE: Primary lookup
+    // SUPABASE: Fetch admin from admins table
     if (isSupabaseEnabled()) {
-
+      console.log("[ADMIN LOGIN] Supabase enabled, looking up admin:", { email, clinicCode });
       
-      const clinic = await getClinicByCode(code);
+      const admin = await getAdminByEmailAndClinicCode(email, clinicCode);
+      console.log("[ADMIN LOGIN] Admin lookup result:", { 
+        found: !!admin, 
+        adminId: admin?.id, 
+        status: admin?.status,
+        hasPasswordHash: !!admin?.password_hash 
+      });
       
-      if (clinic) {
+      if (admin) {
         // Verify password
-        const passwordMatch = await bcrypt.compare(String(password).trim(), clinic.password_hash);
+        const passwordMatch = await bcrypt.compare(String(password).trim(), admin.password_hash);
+        console.log("[ADMIN LOGIN] Password match result:", passwordMatch);
+        
         if (!passwordMatch) {
-          return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
+          return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
         }
         
-        // Check if OTP is required
-        const createdAt = clinic.created_at || clinic.createdAt || clinic.created;
-        const isNewClinic = createdAt && (now() - new Date(createdAt).getTime()) < (24 * 60 * 60 * 1000); // Less than 24h old
-        const otpRequired = OTP_ENABLED_FOR_ADMINS && (OTP_REQUIRED_FOR_NEW_ADMINS && isNewClinic);
-        
-        console.log("[ADMIN LOGIN] OTP Check:", {
-          clinicCode: code,
-          createdAt,
-          isNewClinic,
-          otpRequired,
-          OTP_ENABLED_FOR_ADMINS,
-          OTP_REQUIRED_FOR_NEW_ADMINS
-        });
-        
-        if (otpRequired && !email) {
-          return res.json({
-            ok: true,
-            requiresOTP: true,
-            message: "OTP doğrulaması gereklidir. Lütfen email adresinizi girin.",
-            clinicCode: code
-          });
-        }
-        
-        if (otpRequired && email) {
-          // Request OTP and don't return token yet
-          try {
-            const otpCode = generateOTP();
-            const emailNormalized = String(email).trim().toLowerCase();
-            await saveOTP(emailNormalized, otpCode);
-            await sendOTPEmail(emailNormalized, otpCode, clinic.language || "en");
-            
-            return res.json({
-              ok: true,
-              requiresOTP: true,
-              otpSent: true,
-              message: "OTP kodu email adresinize gönderildi.",
-              clinicCode: code,
-              email: emailNormalized
-            });
-          } catch (emailError) {
-
-            return res.status(500).json({ 
-              ok: false, 
-              error: "otp_send_failed", 
-              message: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin." 
-            });
-          }
-        }
-        
-        // Generate JWT token with proper structure
-        // UUID will be fetched from Supabase at runtime
+        // ✅ Admin authentication successful
+        // Generate JWT token with admin info
         const token = jwt.sign(
           { 
-            type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
-            clinicId: clinic.id, // 🔥 REQUIRED: clinicId (UUID)
-            clinicCode: clinic.clinic_code,
-            email: clinic.email,
-            role: "ADMIN", // 🔥 REQUIRED: role
-            otpVerified: !otpRequired
+            type: "admin",
+            adminId: admin.id,
+            email: admin.email,
+            clinicCode: admin.clinic_code,
+            role: "ADMIN"
           },
           JWT_SECRET,
           { expiresIn: JWT_EXPIRES_IN }
         );
         
-
+        console.log("[ADMIN LOGIN] Token generated successfully for admin:", admin.email);
         
         return res.json({
           ok: true,
           token,
-          clinicCode: clinic.clinic_code,
-          clinicId: clinic.id,  // Return for frontend, but NOT in JWT
-          clinicName: clinic.name || "Clinic",
-          status: clinic.settings?.status || "ACTIVE",
-        });
-      }
-      
-
-    }
-    
-    // FILE FALLBACK: Legacy storage
-
-    let foundClinic = null;
-    let foundClinicId = null;
-    let isFromClinicsFile = false;
-    
-    // First check CLINIC_FILE (single clinic)
-    const singleClinic = readJson(CLINIC_FILE, {});
-    if (singleClinic && singleClinic.clinicCode) {
-      const singleClinicCode = String(singleClinic.clinicCode).toUpperCase();
-      if (singleClinicCode === code) {
-        foundClinic = singleClinic;
-        isFromClinicsFile = false;
-      }
-    }
-    
-    // Then check CLINICS_FILE (multiple clinics)
-    if (!foundClinic) {
-      const clinics = readJson(CLINICS_FILE, {});
-      for (const clinicId in clinics) {
-        const clinic = clinics[clinicId];
-        if (clinic) {
-          const clinicCodeToCheck = clinic.clinicCode || clinic.code;
-          if (clinicCodeToCheck && String(clinicCodeToCheck).toUpperCase() === code) {
-            foundClinic = clinic;
-            foundClinicId = clinicId;
-            isFromClinicsFile = true;
-            break;
+          admin: {
+            id: admin.id,
+            email: admin.email,
+            clinicCode: admin.clinic_code,
+            role: "ADMIN",
+            status: admin.status
           }
-        }
-      }
-    }
-    
-    // If clinic not found anywhere
-    if (!foundClinic) {
-      return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
-    }
-    
-    // Check password
-    if (!foundClinic.password) {
-      // If no password is set, allow login with default password "admin123" (for initial setup)
-      const defaultPassword = "admin123";
-      if (password !== defaultPassword) {
-        return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
-      }
-      // Set default password hash for first login
-      const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-      foundClinic.password = hashedPassword;
-      
-      if (isFromClinicsFile) {
-        const clinics = readJson(CLINICS_FILE, {});
-        if (clinics[foundClinicId]) {
-          clinics[foundClinicId].password = hashedPassword;
-          writeJson(CLINICS_FILE, clinics);
-        }
+        });
       } else {
-        writeJson(CLINIC_FILE, foundClinic);
+        console.log("[ADMIN LOGIN] Admin not found in admins table:", { email, clinicCode });
+        return res.status(401).json({ ok: false, error: "invalid_admin_credentials" });
       }
     } else {
-      // Verify password hash
-      const passwordMatch = await bcrypt.compare(String(password).trim(), foundClinic.password);
-      if (!passwordMatch) {
-        return res.status(401).json({ ok: false, error: "invalid_clinic_code_or_password" });
-      }
+      console.log("[ADMIN LOGIN] Supabase not enabled - cannot authenticate admins");
+      return res.status(500).json({ ok: false, error: "admin_service_unavailable" });
     }
-    
-    // Check if OTP is required for file-based clinics
-    const createdAt = foundClinic.created_at || foundClinic.createdAt || foundClinic.created;
-    const isNewClinic = createdAt && (now() - new Date(createdAt).getTime()) < (24 * 60 * 60 * 1000); // Less than 24h old
-    const otpRequired = OTP_ENABLED_FOR_ADMINS && (OTP_REQUIRED_FOR_NEW_ADMINS && isNewClinic);
-    
-    console.log("[ADMIN LOGIN] File-based OTP Check:", {
-      clinicCode: code,
-      createdAt,
-      isNewClinic,
-      otpRequired,
-      OTP_ENABLED_FOR_ADMINS,
-      OTP_REQUIRED_FOR_NEW_ADMINS
-    });
-    
-    if (otpRequired && !email) {
-      return res.json({
-        ok: true,
-        requiresOTP: true,
-        message: "OTP doğrulaması gereklidir. Lütfen email adresinizi girin.",
-        clinicCode: code
-      });
-    }
-    
-    if (otpRequired && email) {
-      // Request OTP and don't return token yet
-      try {
-        const otpCode = generateOTP();
-        const emailNormalized = String(email).trim().toLowerCase();
-        await saveOTP(emailNormalized, otpCode);
-        await sendOTPEmail(emailNormalized, otpCode, foundClinic.language || "en");
-        
-        return res.json({
-          ok: true,
-          requiresOTP: true,
-          otpSent: true,
-          message: "OTP kodu email adresinize gönderildi.",
-          clinicCode: code,
-          email: emailNormalized
-        });
-      } catch (emailError) {
-
-        return res.status(500).json({ 
-          ok: false, 
-          error: "otp_send_failed", 
-          message: "OTP gönderilemedi. Lütfen daha sonra tekrar deneyin." 
-        });
-      }
-    }
-    
-    // Generate JWT token with proper structure
-    const token = jwt.sign(
-      { 
-        type: "admin", // 🔥 REQUIRED: type is PRIMARY routing key
-        clinicId: foundClinicId, // 🔥 REQUIRED: clinicId (UUID)
-        clinicCode: code,
-        email: foundClinic.email || email,
-        role: "ADMIN", // 🔥 REQUIRED: role
-        otpVerified: true
-      },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
-    
-
-    
-    res.json({
-      ok: true,
-      token,
-      clinicCode: code,
-      clinicId: foundClinicId || foundClinic.clinicId || null,  // For frontend only
-      clinicName: foundClinic.name || "Clinic",
-      status: foundClinic.status || "PENDING",
-    });
   } catch (error) {
-
+    console.error("[ADMIN LOGIN] Error:", error);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -13108,6 +21084,111 @@ app.post("/api/admin/payment-success", requireAdminAuth, async (req, res) => {
 
 // ================== TREATMENT PRICING & PAYMENTS ==================
 
+function parseMinuteValue(value, fallback = 0) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(720, parsed));
+}
+
+function extractTimingFromRow(row) {
+  const durationRaw =
+    row?.duration_minutes ??
+    row?.estimated_duration_minutes ??
+    row?.duration ??
+    row?.estimated_duration ??
+    null;
+  const breakRaw =
+    row?.break_minutes ??
+    row?.rest_minutes ??
+    row?.break_duration ??
+    row?.pause_minutes ??
+    null;
+
+  return {
+    duration_minutes: parseMinuteValue(durationRaw, 0),
+    break_minutes: parseMinuteValue(breakRaw, 0),
+  };
+}
+
+async function fetchClinicTreatmentTimingSettings(clinicId) {
+  if (!isSupabaseEnabled() || !clinicId) return {};
+  const { data, error } = await supabase
+    .from("clinics")
+    .select("settings")
+    .eq("id", clinicId)
+    .maybeSingle();
+
+  if (error) return {};
+
+  let settings = data?.settings || {};
+  if (typeof settings === "string") {
+    try {
+      settings = JSON.parse(settings);
+    } catch {
+      settings = {};
+    }
+  }
+
+  const rawMap = settings?.treatmentTimings || settings?.treatment_timings || {};
+  if (!rawMap || typeof rawMap !== "object") return {};
+
+  const normalized = {};
+  Object.entries(rawMap).forEach(([key, value]) => {
+    const normalizedKey = String(key || "").trim().toUpperCase();
+    if (!normalizedKey || !value || typeof value !== "object") return;
+    normalized[normalizedKey] = {
+      duration_minutes: parseMinuteValue(value.duration_minutes ?? value.duration, 0),
+      break_minutes: parseMinuteValue(value.break_minutes ?? value.break, 0),
+    };
+  });
+
+  return normalized;
+}
+
+async function upsertClinicTreatmentTimingSettings(clinicId, treatmentCode, durationMinutes, breakMinutes) {
+  if (!isSupabaseEnabled() || !clinicId || !treatmentCode) return;
+  try {
+    const { data, error } = await supabase
+      .from("clinics")
+      .select("settings")
+      .eq("id", clinicId)
+      .maybeSingle();
+
+    if (error) return;
+
+    let settings = data?.settings || {};
+    if (typeof settings === "string") {
+      try {
+        settings = JSON.parse(settings);
+      } catch {
+        settings = {};
+      }
+    }
+
+    const treatmentTimings = settings?.treatmentTimings && typeof settings.treatmentTimings === "object"
+      ? { ...settings.treatmentTimings }
+      : {};
+
+    treatmentTimings[treatmentCode] = {
+      duration_minutes: parseMinuteValue(durationMinutes, 0),
+      break_minutes: parseMinuteValue(breakMinutes, 0),
+    };
+
+    const nextSettings = {
+      ...(settings && typeof settings === "object" ? settings : {}),
+      treatmentTimings,
+      treatment_timings: treatmentTimings,
+    };
+
+    await supabase
+      .from("clinics")
+      .update({ settings: nextSettings })
+      .eq("id", clinicId);
+  } catch {
+  }
+}
+
 // GET /api/admin/treatment-prices
 // Get clinic treatment price list (requires auth)
 app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
@@ -13116,53 +21197,69 @@ app.get("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       return res.status(500).json(supabaseDisabledPayload("treatment_prices"));
     }
 
-    // 🔒 FIX: Ensure clinicId is available
     const clinicId = req.clinicId || req.clinic?.id;
-
-    
     if (!clinicId) {
-
       return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
-    const { data, error } = await supabase
-      .from("treatment_prices")
-      .select("*")
-      .eq("clinic_id", clinicId);
+    const withTimeout = (promise, ms, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+        ),
+      ]);
 
-    if (error) {
-      if (isMissingTableError(error, "treatment_prices")) {
-        return res.status(500).json({
-          ok: false,
-          error: "treatment_prices_table_missing",
-          message: "Supabase schema missing: treatment_prices. Apply migrations.",
-          supabase: supabaseErrorPublic(error),
-        });
+    let priceRows = [];
+    try {
+      const { data, error } = await withTimeout(
+        supabase.from("treatment_prices").select("*").eq("clinic_id", clinicId),
+        7000, "treatment_prices query"
+      );
+      if (error) {
+        if (isMissingTableError(error, "treatment_prices")) {
+          return res.json({ ok: true, prices: [] });
+        }
+        console.error("[TREATMENT_PRICES] Supabase fetch failed", error.message);
+        return res.json({ ok: true, prices: [] }); // Hata yerine boş liste döndür
       }
-      console.error("[TREATMENT_PRICES] Supabase fetch failed", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-      });
-      return res.status(500).json({
-        ok: false,
-        error: "treatment_prices_fetch_failed",
-        supabase: supabaseErrorPublic(error),
-      });
+      priceRows = data || [];
+    } catch (queryErr) {
+      console.error("[TREATMENT_PRICES] Query error/timeout:", queryErr.message);
+      return res.json({ ok: true, prices: [] });
     }
 
-    const prices = (data || []).map((row) => ({
-      id: row.id,
-      treatment_name: row.treatment_code || row.type || row.name || "",
-      default_price:
-        row.price !== undefined && row.price !== null
-          ? Number(row.price)
-          : row.default_price !== undefined && row.default_price !== null
-            ? Number(row.default_price)
-            : 0,
-      currency: row.currency || "EUR",
-      is_active: row.is_active !== undefined ? row.is_active !== false : true,
-    }));
+    let clinicTimingSettings = {};
+    try {
+      clinicTimingSettings = await withTimeout(
+        fetchClinicTreatmentTimingSettings(clinicId),
+        5000, "clinicTimingSettings query"
+      );
+    } catch (timingErr) {
+      console.warn("[TREATMENT_PRICES] Timing settings timeout, skipping:", timingErr.message);
+    }
+
+    const prices = priceRows.map((row) => {
+      const treatmentName = row.treatment_code || row.type || row.name || "";
+      const treatmentKey = String(treatmentName || "").trim().toUpperCase();
+      const rowTiming = extractTimingFromRow(row);
+      const fallbackTiming = clinicTimingSettings[treatmentKey] || { duration_minutes: 0, break_minutes: 0 };
+
+      return {
+        id: row.id,
+        treatment_name: treatmentName,
+        default_price:
+          row.price !== undefined && row.price !== null
+            ? Number(row.price)
+            : row.default_price !== undefined && row.default_price !== null
+              ? Number(row.default_price)
+              : 0,
+        currency: row.currency || "EUR",
+        is_active: row.is_active !== undefined ? row.is_active !== false : true,
+        duration_minutes: rowTiming.duration_minutes > 0 ? rowTiming.duration_minutes : fallbackTiming.duration_minutes,
+        break_minutes: rowTiming.break_minutes > 0 ? rowTiming.break_minutes : fallbackTiming.break_minutes,
+      };
+    });
 
     res.json({
       ok: true,
@@ -13192,10 +21289,12 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "clinic_id_missing" });
     }
 
-    const { treatment_name, default_price, currency, is_active } = req.body || {};
+    const { treatment_name, default_price, currency, is_active, duration_minutes, break_minutes } = req.body || {};
     const name = String(treatment_name || "").trim();
     const priceValue = Number(default_price);
     const currencyValue = String(currency || "").trim().toUpperCase();
+    const durationValue = parseMinuteValue(duration_minutes, 0);
+    const breakValue = parseMinuteValue(break_minutes, 0);
 
     if (!name || !currencyValue || Number.isNaN(priceValue)) {
       return res.status(400).json({
@@ -13212,6 +21311,8 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
       name,
       price: priceValue,
       currency: currencyValue,
+      duration_minutes: durationValue,
+      break_minutes: breakValue,
     };
 
     const upsertPayload = {
@@ -13222,8 +21323,9 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
     let result = null;
     let onConflict = "clinic_id,treatment_code";
     let payloadToUse = { ...upsertPayload };
+    let timingColumnsUnavailable = false;
 
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
       result = await supabase
         .from("treatment_prices")
         .upsert(payloadToUse, { onConflict })
@@ -13248,6 +21350,34 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
         const { treatment_code: _ignored, ...nextPayload } = payloadToUse;
         payloadToUse = { ...nextPayload, type: treatmentCode };
         onConflict = "clinic_id,type";
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "duration_minutes")) {
+        const { duration_minutes: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        timingColumnsUnavailable = true;
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "break_minutes")) {
+        const { break_minutes: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        timingColumnsUnavailable = true;
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "estimated_duration_minutes")) {
+        const { estimated_duration_minutes: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        timingColumnsUnavailable = true;
+        continue;
+      }
+
+      if (isMissingColumnError(result.error, "rest_minutes")) {
+        const { rest_minutes: _ignored, ...nextPayload } = payloadToUse;
+        payloadToUse = nextPayload;
+        timingColumnsUnavailable = true;
         continue;
       }
 
@@ -13276,6 +21406,16 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
     }
 
     const row = result.data || {};
+    const rowTiming = extractTimingFromRow(row);
+
+    if (timingColumnsUnavailable) {
+      await upsertClinicTreatmentTimingSettings(clinicId, treatmentCode, durationValue, breakValue);
+    }
+
+    const fallbackTiming = timingColumnsUnavailable
+      ? { duration_minutes: durationValue, break_minutes: breakValue }
+      : { duration_minutes: 0, break_minutes: 0 };
+
     const responsePrice = {
       id: row.id,
       treatment_name: row.treatment_code || row.type || row.name || name,
@@ -13287,6 +21427,8 @@ app.post("/api/admin/treatment-prices", requireAdminAuth, async (req, res) => {
             : priceValue,
       currency: row.currency || currencyValue,
       is_active: row.is_active !== undefined ? row.is_active !== false : (is_active !== false),
+      duration_minutes: rowTiming.duration_minutes > 0 ? rowTiming.duration_minutes : fallbackTiming.duration_minutes,
+      break_minutes: rowTiming.break_minutes > 0 ? rowTiming.break_minutes : fallbackTiming.break_minutes,
     };
 
 
@@ -13915,6 +22057,7 @@ app.post("/api/admin/patients", requireAdminAuth, async (req, res) => {
         first_name: firstName,
         last_name: lastName,
         patient_type: 'manual',
+        referral_code: generateReferralCodeV2(),
         created_at: new Date().toISOString()
       };
       
@@ -14039,6 +22182,524 @@ app.patch("/debug/test-patch", (req, res) => {
 });
 
 // ================== DOCTOR JWT AUTHENTICATION MIDDLEWARE ==================
+/** DB FK columns typed as uuid must not receive mixed IN (uuid, 'd_xxx') — breaks PostgREST / Postgres. */
+const DOCTOR_FK_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Sync-only: literal UUID-shaped keys. For d_… codes use doctorKeysForUuidFkInQuery (never pass d_… into uuid FK .in()). */
+function doctorKeysForUuidFkColumns(keys) {
+  const arr = [...new Set((keys || []).map((k) => String(k || "").trim()).filter(Boolean))];
+  return arr.filter((k) => DOCTOR_FK_UUID_RE.test(k));
+}
+
+/** treatment_doctors / treatment_plan_doctors may store doctors.id (UUID) or legacy clinic doctor_id (d_…); query both. */
+function splitDoctorKeysUuidAndOther(keys) {
+  const arr = [...new Set((keys || []).map((k) => String(k || "").trim()).filter(Boolean))];
+  const uuids = arr.filter((k) => DOCTOR_FK_UUID_RE.test(k));
+  const others = arr.filter((k) => !DOCTOR_FK_UUID_RE.test(k));
+  return { all: arr, uuids, others };
+}
+
+/** Resolve doctors.doctor_id codes (e.g. d_…) to doctors.id UUIDs for FK columns typed as uuid. */
+async function resolveDoctorCodeKeysToUuids(others) {
+  const arr = [...new Set((others || []).map((k) => String(k || "").trim()).filter(Boolean))];
+  if (!arr.length) return [];
+  const out = [];
+  for (let i = 0; i < arr.length; i += 80) {
+    const chunk = arr.slice(i, i + 80);
+    const { data, error } = await supabase.from("doctors").select("id").in("doctor_id", chunk);
+    if (error) {
+      const c = String(error.code || "");
+      if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(c)) {
+        console.warn("[resolveDoctorCodeKeysToUuids] doctors.in(doctor_id):", error.message || error);
+      }
+      continue;
+    }
+    for (const row of data || []) {
+      const id = String(row?.id || "").trim();
+      if (id && DOCTOR_FK_UUID_RE.test(id)) out.push(id);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** Use for .in() / .eq() on uuid FK doctor columns — never pass d_… without resolving first. */
+async function doctorKeysForUuidFkInQuery(doctorKeysRaw) {
+  const { uuids, others } = splitDoctorKeysUuidAndOther(doctorKeysRaw);
+  const resolved = await resolveDoctorCodeKeysToUuids(others);
+  return [...new Set([...uuids, ...resolved])];
+}
+
+/**
+ * Bildirim tablosuna yazılmamış olsa bile tedavi ekibi atamasıyla gelen bekleyen işlemleri
+ * dashboard "Bildirimler" listesinde göstermek için (treatment_doctors → treatment_items).
+ */
+async function fetchDoctorDashboardPendingTaskAlerts(doctorKeysRaw) {
+  try {
+    const keys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+    if (!keys.length) return [];
+    const { data: td, error: e1 } = await supabase
+      .from("treatment_doctors")
+      .select("treatment_id")
+      .in("doctor_id", keys)
+      .limit(200);
+    if (e1 || !Array.isArray(td) || td.length === 0) return [];
+    const planIds = [...new Set(td.map((r) => String(r.treatment_id || "").trim()).filter(Boolean))];
+    if (!planIds.length) return [];
+
+    const loadItems = async (table) => {
+      const { data, error } = await supabase
+        .from(table)
+        .select("id, procedure_name, procedure_code, status, created_at, treatment_plan_id")
+        .in("treatment_plan_id", planIds)
+        .order("created_at", { ascending: false })
+        .limit(40);
+      if (error || !Array.isArray(data)) return [];
+      return data;
+    };
+
+    let items = await loadItems("treatment_items");
+    if (!items.length) items = await loadItems("treatment_plan_items");
+
+    const pending = (items || []).filter((it) => {
+      const s = String(it.status || "").toUpperCase();
+      return ["PLANNED", "SCHEDULED", "ACTIVE", "IN_PROGRESS", "PENDING"].includes(s);
+    });
+    return pending.slice(0, 12).map((it) => ({
+      id: `task:${String(it.id)}`,
+      type: "PENDING_TASK",
+      title: "Tedavi görevi",
+      message: String(it.procedure_name || it.procedure_code || "Yeni işlem").trim(),
+      created_at: it.created_at || new Date().toISOString(),
+      is_read: false,
+      _synthetic: true,
+      data: { treatment_item_id: it.id, treatment_plan_id: it.treatment_plan_id },
+    }));
+  } catch (e) {
+    console.warn("[DOCTOR DASHBOARD] task alerts:", e?.message || e);
+    return [];
+  }
+}
+
+async function collectTreatmentIdsFromTreatmentDoctorsTable(doctorKeysRaw) {
+  const allKeys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+  const out = new Set();
+  const merge = (rows) => {
+    (rows || []).forEach((r) => {
+      const id = String(r?.treatment_id || "").trim();
+      if (id) out.add(id);
+    });
+  };
+  if (!allKeys.length) return out;
+  const { data, error } = await supabase.from("treatment_doctors").select("treatment_id").in("doctor_id", allKeys);
+  if (!error) merge(data);
+  else if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(error?.code || ""))) {
+    console.warn("[treatment_doctors] batch:", error?.message || error);
+  }
+  return out;
+}
+
+async function collectPlanIdsFromTreatmentPlanDoctorsTable(doctorKeysRaw) {
+  const allKeys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+  const out = new Set();
+  if (!allKeys.length) return out;
+  const runKeys = async (keyList) => {
+    if (!keyList.length) return;
+    const tpdAttempts = [
+      () => supabase.from("treatment_plan_doctors").select("treatment_plan_id").in("doctor_id", keyList).limit(400),
+      () => supabase.from("treatment_plan_doctors").select("plan_id").in("doctor_id", keyList).limit(400),
+    ];
+    for (const run of tpdAttempts) {
+      const { data, error } = await run();
+      const c = String(error?.code || "");
+      if (error && !["42P01", "42703", "PGRST204", "PGRST205"].includes(c)) {
+        if (c !== "22P02") console.warn("[treatment_plan_doctors] batch:", error?.message || error);
+        continue;
+      }
+      (data || []).forEach((r) => {
+        const pid = String(r?.treatment_plan_id || r?.plan_id || "").trim();
+        if (pid) out.add(pid);
+      });
+      break;
+    }
+  };
+  await runKeys(allKeys);
+  return out;
+}
+
+/** Encounters/plans may store patients.patient_id (legacy) or patients.id (UUID) — expand so /doctor/patients + dashboard match rows. */
+const PATIENT_ROW_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function expandPatientIdSetForDoctorMatching(idSet) {
+  if (!idSet || idSet.size === 0) return;
+  const ids = [...idSet].map((s) => String(s || "").trim()).filter(Boolean);
+  if (!ids.length) return;
+  const uuids = ids.filter((x) => PATIENT_ROW_UUID_RE.test(x));
+  const legacy = ids.filter((x) => !PATIENT_ROW_UUID_RE.test(x));
+  const addRow = (p) => {
+    if (!p) return;
+    if (p.id) idSet.add(String(p.id).trim());
+    if (p.patient_id != null && String(p.patient_id).trim()) idSet.add(String(p.patient_id).trim());
+  };
+  for (let i = 0; i < uuids.length; i += 80) {
+    const chunk = uuids.slice(i, i + 80);
+    const { data, error } = await supabase.from("patients").select("id, patient_id").in("id", chunk);
+    if (!error) (data || []).forEach(addRow);
+  }
+  for (let i = 0; i < legacy.length; i += 80) {
+    const chunk = legacy.slice(i, i + 80);
+    const { data, error } = await supabase.from("patients").select("id, patient_id").in("patient_id", chunk);
+    if (!error) (data || []).forEach(addRow);
+  }
+}
+
+/** Patient visibility: treatment_doctors / treatment_plan_doctors → treatment_plans.id → encounter_id ONLY → patient_encounters.patient_id (never treatment_plans.patient_id). */
+async function collectPatientIdsFromTreatmentTeam(doctorKeysRaw) {
+  const out = new Set();
+  const fromTd = await collectTreatmentIdsFromTreatmentDoctorsTable(doctorKeysRaw);
+  const fromTpd = await collectPlanIdsFromTreatmentPlanDoctorsTable(doctorKeysRaw);
+  const planIds = [...new Set([...fromTd, ...fromTpd])];
+  if (planIds.length === 0) return out;
+
+  const planSelectCandidates = [
+    "id, encounter_id",
+    "id, encounter_id, created_at",
+    "id, encounter_id, status",
+    "encounter_id, id",
+    "id",
+  ];
+
+  const encounterIdsNeeding = new Set();
+  for (let i = 0; i < planIds.length; i += 80) {
+    const chunk = planIds.slice(i, i + 80);
+    let rows = null;
+    for (const sel of planSelectCandidates) {
+      const { data, error } = await supabase.from("treatment_plans").select(sel).in("id", chunk);
+      if (!error && data) {
+        rows = data;
+        break;
+      }
+      const c = String(error?.code || "");
+      if (!["42703", "PGRST204", "PGRST205"].includes(c)) break;
+    }
+    for (const row of rows || []) {
+      const eid = String(row?.encounter_id || "").trim();
+      if (eid) encounterIdsNeeding.add(eid);
+    }
+  }
+
+  const eids = [...encounterIdsNeeding];
+  for (let i = 0; i < eids.length; i += 80) {
+    const chunk = eids.slice(i, i + 80);
+    const encSelects = ["patient_id", "id, patient_id"];
+    for (const sel of encSelects) {
+      const { data, error } = await supabase.from("patient_encounters").select(sel).in("id", chunk);
+      if (!error && data) {
+        (data || []).forEach((e) => {
+          if (e?.patient_id) out.add(String(e.patient_id));
+        });
+        break;
+      }
+      const c = String(error?.code || "");
+      if (!["42703", "PGRST204", "PGRST205", "42P01"].includes(c)) break;
+    }
+  }
+
+  return out;
+}
+
+/** Admin / kayıt ataması: patients.primary_doctor_id, assigned_doctor_id, doctor_id — tedavi planı olmadan da listede görünsün. */
+async function collectPatientIdsFromPatientTableDoctorAssignments(doctorKeysRaw) {
+  const out = new Set();
+  const allKeys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+  if (!allKeys.length) return out;
+  const columns = ["primary_doctor_id", "assigned_doctor_id", "doctor_id"];
+
+  const runBatches = async (keys, col) => {
+    if (!keys.length) return true;
+    for (let i = 0; i < keys.length; i += 80) {
+      const chunk = keys.slice(i, i + 80);
+      const { data, error } = await supabase.from("patients").select("id, patient_id").in(col, chunk);
+      if (error) {
+        const c = String(error.code || "");
+        if (["42703", "PGRST204", "PGRST205"].includes(c)) return false;
+        console.warn(`[patient_table_doctor_assign] ${col}:`, error.message || error);
+        return true;
+      }
+      (data || []).forEach((r) => {
+        if (r?.id) out.add(String(r.id).trim());
+        if (r?.patient_id != null && String(r.patient_id).trim()) out.add(String(r.patient_id).trim());
+      });
+    }
+    return true;
+  };
+
+  for (const col of columns) {
+    const present = await runBatches(allKeys, col);
+    if (present === false) continue;
+  }
+
+  return out;
+}
+
+/**
+ * İşlem / randevu satırı ataması: encounter_treatments.assigned_doctor_id, appointments.doctor_id,
+ * patient_encounters.assigned_doctor_id — sadece plan "tedavi ekibi" veya patients.primary_ataması değil,
+ * muayenedeki işleme atanmış doktorun da hastayı görmesi için.
+ */
+async function collectPatientIdsFromProcessAndAppointmentAssignments(doctorKeysRaw, clinicId) {
+  const out = new Set();
+  const allKeys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+  if (!allKeys.length) return out;
+
+  const mergeEncounterIdsToPatients = async (encIdSet) => {
+    if (!encIdSet || encIdSet.size === 0) return;
+    const list = [...encIdSet];
+    for (let i = 0; i < list.length; i += 80) {
+      const chunk = list.slice(i, i + 80);
+      const { data, error } = await supabase.from("patient_encounters").select("patient_id").in("id", chunk);
+      if (error) continue;
+      for (const e of data || []) {
+        const pid = String(e?.patient_id || "").trim();
+        if (pid) out.add(pid);
+      }
+    }
+  };
+
+  const fromEncounterTreatments = async () => {
+    const encIds = new Set();
+    const runKeys = async (keyList) => {
+      if (!keyList.length) return;
+      const { data, error } = await supabase
+        .from("encounter_treatments")
+        .select("encounter_id")
+        .in("assigned_doctor_id", keyList)
+        .limit(800);
+      if (error) {
+        const c = String(error?.code || "");
+        if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(c)) {
+          console.warn("[process_assign] encounter_treatments:", error?.message || error);
+        }
+        return;
+      }
+      for (const r of data || []) {
+        const eid = String(r?.encounter_id || "").trim();
+        if (eid) encIds.add(eid);
+      }
+    };
+    await runKeys(allKeys);
+    await mergeEncounterIdsToPatients(encIds);
+  };
+
+  const fromPatientEncountersAssigned = async () => {
+    const runKeys = async (keyList) => {
+      if (!keyList.length) return;
+      let q = supabase
+        .from("patient_encounters")
+        .select("patient_id")
+        .in("assigned_doctor_id", keyList)
+        .limit(500);
+      const cid = clinicId ? String(clinicId).trim() : "";
+      if (cid) q = q.eq("clinic_id", cid);
+      let { data, error } = await q;
+      if (error) {
+        const c = String(error?.code || "");
+        if (["42703", "PGRST204", "PGRST205"].includes(c)) {
+          const r2 = await supabase
+            .from("patient_encounters")
+            .select("patient_id")
+            .in("assigned_doctor_id", keyList)
+            .limit(500);
+          data = r2.data;
+        } else {
+          return;
+        }
+      }
+      for (const e of data || []) {
+        const pid = String(e?.patient_id || "").trim();
+        if (pid) out.add(pid);
+      }
+    };
+    await runKeys(allKeys);
+  };
+
+  const fromAppointmentsTable = async () => {
+    const cid = clinicId ? String(clinicId).trim() : "";
+    const runCol = async (keyList, doctorCol) => {
+      if (!keyList.length) return;
+      let q = supabase.from("appointments").select("patient_id").in(doctorCol, keyList).limit(500);
+      if (cid) q = q.eq("clinic_id", cid);
+      let { data, error } = await q;
+      if (error && cid) {
+        const r2 = await supabase.from("appointments").select("patient_id").in(doctorCol, keyList).limit(500);
+        data = r2.data;
+        error = r2.error;
+      }
+      if (error) return;
+      for (const r of data || []) {
+        const pid = String(r?.patient_id || "").trim();
+        if (pid) out.add(pid);
+      }
+    };
+    await runCol(allKeys, "doctor_id");
+    await runCol(allKeys, "assigned_doctor_id");
+  };
+
+  try {
+    await Promise.all([fromEncounterTreatments(), fromPatientEncountersAssigned(), fromAppointmentsTable()]);
+  } catch (e) {
+    console.warn("[process_assign] aggregate:", e?.message || e);
+  }
+  return out;
+}
+
+/**
+ * Dashboard'daki bugün/yarın takvimiyle aynı hasta kümesi — randevu satırında doktor_id boş olsa bile
+ * klinik takviminde görünen hasta, Patients listesinde de görünsün (Serap vb.).
+ */
+async function collectPatientIdsFromClinicCalendarTodayTomorrow(clinicId, doctorKeysRaw) {
+  const out = new Set();
+  const cid = clinicId ? String(clinicId).trim() : "";
+  if (!cid) return out;
+
+  const localYmd = (d) => {
+    const x = d instanceof Date ? d : new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, "0");
+    const day = String(x.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const todayStr = localYmd(new Date());
+  const tomorrowD = new Date();
+  tomorrowD.setDate(tomorrowD.getDate() + 1);
+  const tomorrowStr = localYmd(tomorrowD);
+
+  async function fetchAppointmentsForDay(dayYmd) {
+    const attempts = [
+      {
+        sel: "id, patient_id, date, time, status, chair_number, notes, doctor_id, procedure",
+        dateCol: "date",
+        timeOrder: "time",
+      },
+      {
+        sel: "id, patient_id, appointment_date, appointment_time, status, chair_number, notes, doctor_id",
+        dateCol: "appointment_date",
+        timeOrder: "appointment_time",
+      },
+      {
+        sel: "id, patient_id, date, appointment_time, status, chair_number, notes, doctor_id",
+        dateCol: "date",
+        timeOrder: "appointment_time",
+      },
+    ];
+    for (const a of attempts) {
+      let q = supabase.from("appointments").select(a.sel).eq(a.dateCol, dayYmd).order(a.timeOrder, { ascending: true }).limit(80);
+      q = q.eq("clinic_id", cid);
+      const { data, error } = await q;
+      const code = String(error?.code || "");
+      if (!error && Array.isArray(data)) return data;
+      if (["42703", "PGRST204", "42P01"].includes(code)) continue;
+      break;
+    }
+    return [];
+  }
+
+  const doctorKeys = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+
+  async function fetchEncounterTreatmentSlots(dayYmd) {
+    try {
+      const encById = new Map();
+      const addEnc = (rows) => {
+        for (const e of rows || []) {
+          const id = String(e?.id || "").trim();
+          if (!id || encById.has(id)) continue;
+          encById.set(id, { id, patient_id: e.patient_id });
+        }
+      };
+      const { data: byClinic } = await supabase
+        .from("patient_encounters")
+        .select("id, patient_id")
+        .eq("clinic_id", cid)
+        .limit(400);
+      addEnc(byClinic);
+      for (const key of doctorKeys) {
+        try {
+          const { data: byDoc } = await supabase
+            .from("patient_encounters")
+            .select("id, patient_id")
+            .eq("created_by_doctor_id", key)
+            .limit(200);
+          addEnc(byDoc);
+        } catch (_) {}
+      }
+      const encRows = Array.from(encById.values()).slice(0, 500);
+      if (encRows.length === 0) return [];
+      const encIds = encRows.map((e) => String(e.id || "").trim()).filter(Boolean);
+      const encToPatient = new Map(encRows.map((e) => [String(e.id), String(e.patient_id || "").trim()]));
+      const dayStart = new Date(`${dayYmd}T00:00:00`);
+      const dayEnd = new Date(`${dayYmd}T23:59:59.999`);
+      const startMs = dayStart.getTime();
+      const endMs = dayEnd.getTime();
+      const slotOut = [];
+      for (let i = 0; i < encIds.length; i += 80) {
+        const chunk = encIds.slice(i, i + 80);
+        const { data: etRows, error: etErr } = await supabase
+          .from("encounter_treatments")
+          .select("id, encounter_id, scheduled_at, status, procedure_type, chair, tooth_number")
+          .in("encounter_id", chunk)
+          .not("scheduled_at", "is", null);
+        if (etErr) continue;
+        for (const row of etRows || []) {
+          const t = row.scheduled_at ? Date.parse(String(row.scheduled_at)) : NaN;
+          if (!Number.isFinite(t) || t < startMs || t > endMs) continue;
+          const st = String(row.status || "").toLowerCase();
+          if (st === "cancelled" || st === "canceled") continue;
+          const eid = String(row.encounter_id || "");
+          const pid = encToPatient.get(eid);
+          if (!pid) continue;
+          const d = new Date(t);
+          const timeStr = d.toTimeString().slice(0, 5);
+          const proc = String(row.procedure_type || "TREATMENT").trim();
+          const tooth = row.tooth_number != null ? ` · 🦷 ${row.tooth_number}` : "";
+          slotOut.push({
+            id: `et-${row.id}`,
+            patient_id: pid,
+            appointment_date: dayYmd,
+            appointment_time: timeStr,
+            status: row.status,
+            chair_number: row.chair != null && String(row.chair).trim() !== "" ? String(row.chair) : "",
+            notes: `${proc}${tooth}`,
+            _planId: eid,
+            _fromEt: true,
+          });
+        }
+      }
+      slotOut.sort((x, y) => String(x.appointment_time || "").localeCompare(String(y.appointment_time || "")));
+      return slotOut;
+    } catch (e) {
+      console.warn("[calendar_patient_ids] encounter_treatments slots:", e?.message || e);
+      return [];
+    }
+  }
+
+  try {
+    let todayRaw = await fetchAppointmentsForDay(todayStr);
+    let tomorrowRaw = await fetchAppointmentsForDay(tomorrowStr);
+    if ((!todayRaw || todayRaw.length === 0) || (!tomorrowRaw || tomorrowRaw.length === 0)) {
+      const etToday = await fetchEncounterTreatmentSlots(todayStr);
+      const etTomorrow = await fetchEncounterTreatmentSlots(tomorrowStr);
+      if ((!todayRaw || todayRaw.length === 0) && etToday.length) todayRaw = etToday;
+      if ((!tomorrowRaw || tomorrowRaw.length === 0) && etTomorrow.length) tomorrowRaw = etTomorrow;
+    }
+    for (const r of [...(todayRaw || []), ...(tomorrowRaw || [])]) {
+      const pid = String(r?.patient_id || "").trim();
+      if (pid) out.add(pid);
+    }
+  } catch (e) {
+    console.warn("[calendar_patient_ids] aggregate:", e?.message || e);
+  }
+  return out;
+}
+
 async function requireDoctorAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -14048,25 +22709,46 @@ async function requireDoctorAuth(req, res, next) {
   const token = authHeader.substring(7);
   
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     
-    if (decoded.role !== 'DOCTOR') {
+    if (String(decoded.role || '').toUpperCase() !== 'DOCTOR') {
       return res.status(403).json({ ok: false, error: 'invalid_role' });
     }
 
-    // Fetch current doctor data
-    const { data: doctor, error } = await supabase
-      .from('doctors')
-      .select('*')
-      .eq('id', decoded.doctorId)
-      .single();
+    const doctorIdFromToken = String(decoded.doctorId || '').trim();
+    const doctorEmail = String(decoded.email || '').trim().toLowerCase();
 
-    if (error || !doctor) {
+    let doctor = null;
+    let lastError = null;
+
+    const doctorLookupAttempts = [
+      () => supabase.from('doctors').select('*').eq('id', doctorIdFromToken).maybeSingle(),
+      () => supabase.from('doctors').select('*').eq('doctor_id', doctorIdFromToken).maybeSingle(),
+      () => doctorEmail ? supabase.from('doctors').select('*').eq('email', doctorEmail).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    ];
+
+    for (const run of doctorLookupAttempts) {
+      const { data, error } = await run();
+      if (error) {
+        lastError = error;
+        continue;
+      }
+      if (data) {
+        doctor = data;
+        break;
+      }
+    }
+
+    if (!doctor) {
+      if (lastError) {
+        console.error('[DOCTOR AUTH] lookup error:', lastError);
+      }
       return res.status(401).json({ ok: false, error: 'doctor_not_found' });
     }
 
     req.doctor = doctor;
-    req.doctorId = decoded.doctorId;
+    req.doctorId = doctor.id || doctor.doctor_id || doctorIdFromToken;
+    req.clinicId = doctor.clinic_id || String(decoded.clinicId || "").trim() || null;
     next();
   } catch (error) {
     return res.status(401).json({ ok: false, error: 'invalid_token' });
@@ -14116,35 +22798,85 @@ app.get("/public-supabase-config", async (req, res) => {
 // ================== DOCTOR MANAGEMENT ENDPOINTS ==================
 app.get("/admin/doctor-list", requireAdminAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('doctors')
-      .select(`
-        id,
-        doctor_id,
-        name,
-        email,
-        phone,
-        status,
-        clinic_code,
-        department,
-        title,
-        specialties,
-        license_number,
-        created_at,
-        updated_at
-      `)
-      .eq('clinic_code', req.clinicCode)
-      .order('created_at', { ascending: false });
+    const clinicId = req.clinicId || null;
+    const clinicCodeUpper = String(req.clinicCode || "").trim().toUpperCase();
 
-    if (error) {
-      console.error('[DOCTOR LIST] Supabase error:', error);
-      return res.status(500).json({ ok: false, error: error.message });
+    const selectCandidates = [
+      "id, doctor_id, full_name, name, email, phone, status, clinic_id, clinic_code, department, title, specialties, license_number, bio, public_profile, photo_url, profile_photo_url, university, graduation_year, experience_years, years_of_experience, created_at, updated_at, approved_at",
+      "id, doctor_id, full_name, name, email, phone, status, clinic_id, clinic_code, department, title, specialties, license_number, bio, public_profile, photo_url, created_at, updated_at",
+      "id, doctor_id, name, email, phone, status, clinic_id, clinic_code, department, title, specialties, license_number, created_at, updated_at",
+      "id, doctor_id, name, email, phone, status, clinic_code, department, title, specialties, license_number, created_at, updated_at",
+    ];
+
+    let merged = [];
+    let lastError = null;
+
+    for (const selectClause of selectCandidates) {
+      const seen = new Set();
+      const acc = [];
+
+      const pushUnique = (rows) => {
+        for (const row of rows || []) {
+          const id = String(row?.id || "").trim();
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          acc.push(row);
+        }
+      };
+
+      if (clinicId) {
+        const r1 = await supabase
+          .from("doctors")
+          .select(selectClause)
+          .eq("clinic_id", clinicId)
+          .order("created_at", { ascending: false });
+        if (r1.error) {
+          lastError = r1.error;
+          const code = String(r1.error.code || "");
+          if (["42703", "PGRST204", "PGRST205"].includes(code)) continue;
+          console.error("[DOCTOR LIST] Supabase error:", r1.error);
+          return res.status(500).json({ ok: false, error: r1.error?.message || "fetch_failed" });
+        }
+        pushUnique(r1.data);
+      }
+
+      if (clinicCodeUpper) {
+        const r2 = await supabase
+          .from("doctors")
+          .select(selectClause)
+          .eq("clinic_code", clinicCodeUpper)
+          .order("created_at", { ascending: false });
+        if (r2.error) {
+          lastError = r2.error;
+          const code = String(r2.error.code || "");
+          if (["42703", "PGRST204", "PGRST205"].includes(code)) continue;
+          console.error("[DOCTOR LIST] Supabase error (clinic_code):", r2.error);
+          return res.status(500).json({ ok: false, error: r2.error?.message || "fetch_failed" });
+        }
+        pushUnique(r2.data);
+      }
+
+      acc.sort((a, b) => {
+        const ta = new Date(a?.created_at || 0).getTime();
+        const tb = new Date(b?.created_at || 0).getTime();
+        return tb - ta;
+      });
+      merged = acc;
+      break;
     }
 
-    console.log('[DOCTOR LIST] Loaded doctors:', data?.length || 0);
-    res.json({ ok: true, doctors: data || [] });
+    const doctors = (merged || []).map((d) => {
+      const raw = d.public_profile;
+      let public_profile = null;
+      if (raw === true || raw === "true" || raw === "t" || raw === 1) public_profile = true;
+      else if (raw === false || raw === "false" || raw === "f" || raw === 0) public_profile = false;
+      return { ...d, public_profile };
+    });
+
+    console.log("[DOCTOR LIST] Loaded doctors:", doctors.length);
+    res.json({ ok: true, doctors });
   } catch (error) {
-    console.error('[DOCTOR LIST] Error:', error);
+    console.error("[DOCTOR LIST] Error:", error);
     res.status(500).json({ ok: false, error: error.message });
   }
 });
@@ -14219,153 +22951,356 @@ app.post("/admin/reject-doctor-v2", requireAdminAuth, async (req, res) => {
 
 // ================== DOCTOR API ROUTES ==================
 
-// Get current doctor profile
+// Map doctor_schedule rows → mobile app shape { weekday, start_time, end_time }
+function mapDoctorScheduleRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) => {
+    const st = row.start_time != null ? String(row.start_time) : "";
+    const et = row.end_time != null ? String(row.end_time) : "";
+    return {
+      weekday: Number(row.weekday),
+      start_time: st.length >= 5 ? st.slice(0, 5) : st,
+      end_time: et.length >= 5 ? et.slice(0, 5) : et,
+    };
+  });
+}
+
+// Get current doctor profile (mobil: specialities, languages, procedures junction + profile_procedure_ids)
 app.get("/api/doctor/me", requireDoctorAuth, async (req, res) => {
   try {
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
     const doctor = req.doctor;
-    
+    const doctorUuid = String(doctor?.id || "").trim();
+
+    let schedule = [];
+    let drow = null;
+
+    if (doctorUuid) {
+      const [schedRes, doctorsRes] = await Promise.all([
+        supabase
+          .from("doctor_schedule")
+          .select("weekday, start_time, end_time")
+          .eq("doctor_id", doctorUuid)
+          .order("weekday", { ascending: true }),
+        supabase.from("doctors").select("*").eq("id", doctorUuid).maybeSingle(),
+      ]);
+      if (!schedRes.error && schedRes.data) {
+        schedule = mapDoctorScheduleRows(schedRes.data);
+      } else if (schedRes.error) {
+        console.warn("[DOCTOR ME] doctor_schedule fetch:", schedRes.error.message || schedRes.error);
+      }
+      drow = doctorsRes.data;
+    } else {
+      drow = null;
+    }
+
+    const base = drow || doctor;
+
+    let clinic_code = "";
+    let specialities = [];
+    let languages = [];
+    let procedures = [];
+
+    if (doctorUuid) {
+      const clinicId = base?.clinic_id;
+      let ds = [];
+      let dl = [];
+      try {
+        const [clinRes, dsRes, dlRes] = await Promise.all([
+          clinicId
+            ? supabase.from("clinics").select("clinic_code").eq("id", clinicId).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+          supabase.from("doctor_specialities").select("speciality_id").eq("doctor_id", doctorUuid),
+          supabase.from("doctor_languages").select("language_id").eq("doctor_id", doctorUuid),
+        ]);
+        if (!clinRes.error && clinRes.data) {
+          clinic_code = String(clinRes.data.clinic_code || "").trim();
+        }
+        ds = dsRes.data || [];
+        dl = dlRes.data || [];
+      } catch (e) {
+        console.warn("[DOCTOR ME] clinic/junction batch:", e?.message || e);
+      }
+
+      const sids = [...new Set((ds || []).map((r) => String(r.speciality_id || "").trim()).filter(Boolean))];
+      const lids = [...new Set((dl || []).map((r) => String(r.language_id || "").trim()).filter(Boolean))];
+
+      try {
+        const [spRes, langRes] = await Promise.all([
+          sids.length
+            ? supabase.from("specialities").select("id, name").in("id", sids)
+            : Promise.resolve({ data: [], error: null }),
+          lids.length
+            ? supabase.from("languages").select("id, name").in("id", lids)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (!spRes.error) specialities = spRes.data || [];
+        else console.warn("[DOCTOR ME] specialities:", spRes.error?.message || spRes.error);
+        if (!langRes.error) languages = langRes.data || [];
+        else console.warn("[DOCTOR ME] languages:", langRes.error?.message || langRes.error);
+      } catch (e) {
+        console.warn("[DOCTOR ME] doctor_specialities/languages resolve:", e?.message || e);
+      }
+    }
+
+    try {
+      procedures = doctorProfileProcedureItemsFromIds(base?.profile_procedure_ids);
+    } catch (e) {
+      console.warn("[DOCTOR ME] profile_procedure_ids:", e?.message || e);
+    }
+
+    const photo_url = base?.photo_url || base?.profile_photo_url || null;
+
     res.json({
       ok: true,
+      schedule,
       doctor: {
-        id: doctor.id,
-        doctorId: doctor.doctor_id,
-        name: doctor.name,
-        email: doctor.email,
-        phone: doctor.phone,
-        status: doctor.status,
-        clinicId: doctor.clinic_id,
-        department: doctor.department,
-        title: doctor.title,
-        specialties: doctor.specialties,
-        experienceYears: doctor.experience_years,
-        languages: doctor.languages,
-        licenseNumber: doctor.license_number,
-        createdAt: doctor.created_at
-      }
+        doctorId: String(base?.doctor_id || doctor?.doctor_id || "").trim(),
+        name: base?.name || doctor?.name || "",
+        email: base?.email || doctor?.email || "",
+        phone: base?.phone || doctor?.phone || "",
+        title: base?.title ?? "",
+        bio: base?.bio ?? "",
+        photo_url,
+        department: base?.department ?? null,
+        active: base?.active !== false,
+        clinic_code,
+        license_number: base?.license_number != null ? String(base.license_number) : "",
+        status: String(base?.status || doctor?.status || ""),
+        years_of_experience: base?.experience_years != null ? Number(base.experience_years) : null,
+        university: base?.university != null ? String(base.university) : "",
+        graduation_year: base?.graduation_year != null ? Number(base.graduation_year) : null,
+        role: base?.role || "Dentist",
+        public_profile: Boolean(base?.public_profile),
+        specialities,
+        languages,
+        procedures,
+        schedule,
+      },
     });
   } catch (error) {
-    res.status(500).json({ 
-      ok: false, 
-      error: "internal_error", 
-      message: error.message 
+    res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: error.message,
     });
   }
 });
 
-// Update current doctor profile  
-app.put("/api/doctor/me", requireDoctorAuth, async (req, res) => {
+async function handleDoctorMeUpdateCliniflow(req, res) {
   try {
-    const { name, phone, department, title, experience_years, languages, specialties } = req.body;
-    
+    if (!isSupabaseEnabled()) {
+      return res.status(500).json({ ok: false, error: "supabase_not_configured" });
+    }
+    const b = req.body || {};
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (b.name !== undefined) updatePayload.name = b.name;
+    if (b.phone !== undefined) updatePayload.phone = b.phone;
+    if (b.department !== undefined) updatePayload.department = b.department;
+    if (b.title !== undefined) updatePayload.title = b.title;
+    if (b.bio !== undefined) updatePayload.bio = b.bio;
+    if (b.years_of_experience !== undefined) updatePayload.experience_years = b.years_of_experience;
+    if (b.experience_years !== undefined) updatePayload.experience_years = b.experience_years;
+    if (b.university !== undefined) updatePayload.university = b.university;
+    if (b.graduation_year !== undefined) updatePayload.graduation_year = b.graduation_year;
+    if (b.role !== undefined) updatePayload.role = b.role;
+    if (b.public_profile !== undefined) updatePayload.public_profile = b.public_profile;
+
+    const keys = Object.keys(updatePayload).filter((k) => k !== "updated_at");
+    if (keys.length === 0) {
+      return res.status(400).json({ ok: false, error: "no_fields_to_update" });
+    }
+
     const { data: doctor, error } = await supabase
-      .from('doctors')
-      .update({
-        name,
-        phone,
-        department,
-        title,
-        experience_years,
-        languages,
-        specialties,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.doctorId)
+      .from("doctors")
+      .update(updatePayload)
+      .eq("id", req.doctorId)
       .select()
       .single();
 
     if (error) {
-      return res.status(500).json({ ok: false, error: 'update_failed' });
+      console.error("[PUT/PATCH /api/doctor/me]", error);
+      return res.status(500).json({ ok: false, error: error.message || "update_failed" });
     }
 
-    res.json({ ok: true, doctor });
+    return res.json({ ok: true, doctor });
   } catch (error) {
-    res.status(500).json({ 
-      ok: false, 
-      error: "internal_error", 
-      message: error.message 
+    return res.status(500).json({
+      ok: false,
+      error: "internal_error",
+      message: error.message,
     });
   }
-});
+}
+
+app.put("/api/doctor/me", requireDoctorAuth, handleDoctorMeUpdateCliniflow);
+app.patch("/api/doctor/me", requireDoctorAuth, handleDoctorMeUpdateCliniflow);
 
 // Get doctor's assigned patients (multi-doctor model)
 app.get("/api/doctor/patients", requireDoctorAuth, async (req, res) => {
   try {
     const doctorId = req.doctorId;
-    const clinicId = req.doctor.clinic_id;
+    const clinicId = req.doctor.clinic_id || req.clinicId || null;
+    const clinicCode = String(req?.doctor?.clinic_code || req?.doctor?.clinicCode || "").trim().toUpperCase();
+    const doctorKeysRaw = [...new Set([
+      String(doctorId || "").trim(),
+      String(req?.doctor?.id || "").trim(),
+      String(req?.doctor?.doctor_id || "").trim(),
+    ].filter(Boolean))];
+    const doctorKeysUuidFk = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
 
     console.log("[DOCTOR PATIENTS] Request:", {
       doctorId,
-      clinicId
+      doctorKeysRaw,
+      doctorKeysUuidFk,
+      clinicId,
+      clinicCode
     });
 
-    // 🔥 MULTI-DOCTOR MODEL: Get treatment groups where this doctor is assigned
-    const { data: treatmentGroups, error: groupsError } = await supabase
-      .from("treatment_groups")
-      .select("patient_id")
-      .eq("clinic_id", clinicId)
-      .contains("doctor_ids", [doctorId])
-      .eq("status", "ACTIVE");
+    // Tedavi ekibi + patients tablosu + işlem ataması + bugün/yarın klinik takvimi (dashboard ile aynı)
+    const [teamPatientIds, fromPatientTableAssign, fromProcessAssign, fromCalendar] = await Promise.all([
+      collectPatientIdsFromTreatmentTeam(doctorKeysRaw),
+      collectPatientIdsFromPatientTableDoctorAssignments(doctorKeysRaw),
+      collectPatientIdsFromProcessAndAppointmentAssignments(doctorKeysRaw, clinicId),
+      collectPatientIdsFromClinicCalendarTodayTomorrow(clinicId, doctorKeysRaw),
+    ]);
+    const visiblePatientIds = new Set(teamPatientIds);
+    for (const pid of fromPatientTableAssign) visiblePatientIds.add(pid);
+    for (const pid of fromProcessAssign) visiblePatientIds.add(pid);
+    for (const pid of fromCalendar) visiblePatientIds.add(pid);
+    const mergedBeforeExpand = visiblePatientIds.size;
+    await expandPatientIdSetForDoctorMatching(visiblePatientIds);
 
-    if (groupsError) {
-      console.error("[DOCTOR PATIENTS] Treatment groups error:", groupsError);
-      return res.status(500).json({ 
-        ok: false, 
-        error: "failed_to_fetch_treatment_groups",
-        message: "Failed to fetch treatment groups"
-      });
+    console.log("[DOCTOR PATIENTS] visible id keys:", {
+      treatment_team: teamPatientIds.size,
+      patient_table_assign: fromPatientTableAssign.size,
+      process_or_appt_assign: fromProcessAssign.size,
+      calendar_today_tomorrow: fromCalendar.size,
+      merged_before_expand: mergedBeforeExpand,
+      after_expand: visiblePatientIds.size,
+    });
+
+    const patientSelectAttempts = [
+      "id,patient_id,clinic_id,clinic_code,name,full_name,phone,email,status,department,created_at,health",
+      "id,patient_id,clinic_id,clinic_code,name,full_name,phone,email,status,department,created_at",
+      "id,patient_id,clinic_id,clinic_code,name,full_name,phone,email,status,created_at",
+    ];
+
+    if (visiblePatientIds.size === 0) {
+      return res.json({ ok: true, patients: [] });
     }
 
-    // Handle empty result safely
-    if (!treatmentGroups || treatmentGroups.length === 0) {
-      console.log(`[DOCTOR PATIENTS] No treatment groups found for doctor ${doctorId}`);
-      return res.json({
-        ok: true,
-        patients: []
-      });
+    const uuidList = [...visiblePatientIds].filter((x) => PATIENT_ROW_UUID_RE.test(String(x)));
+    const legacyList = [...visiblePatientIds].filter((x) => !PATIENT_ROW_UUID_RE.test(String(x)));
+
+    let patients = [];
+    let patientsError = null;
+
+    outerPatientSelect: for (const selectClause of patientSelectAttempts) {
+      const byId = new Map();
+      for (let i = 0; i < uuidList.length; i += 80) {
+        const chunk = uuidList.slice(i, i + 80);
+        const result = await timedDbQuery(
+          `[DOCTOR PATIENTS] patients by id (${chunk.length})`,
+          () =>
+            supabase.from("patients").select(selectClause).in("id", chunk).order("created_at", { ascending: false })
+        );
+        if (result.error) {
+          const code = String(result.error.code || "");
+          if (["42703", "PGRST204"].includes(code)) continue outerPatientSelect;
+          patientsError = result.error;
+          break outerPatientSelect;
+        }
+        (result.data || []).forEach((row) => {
+          if (row?.id) byId.set(String(row.id), row);
+        });
+      }
+      if (patientsError) break;
+
+      for (let i = 0; i < legacyList.length; i += 80) {
+        const chunk = legacyList.slice(i, i + 80);
+        const result = await timedDbQuery(
+          `[DOCTOR PATIENTS] patients by patient_id (${chunk.length})`,
+          () =>
+            supabase.from("patients").select(selectClause).in("patient_id", chunk).order("created_at", { ascending: false })
+        );
+        if (result.error) {
+          const code = String(result.error.code || "");
+          if (["42703", "PGRST204"].includes(code)) continue outerPatientSelect;
+          patientsError = result.error;
+          break outerPatientSelect;
+        }
+        (result.data || []).forEach((row) => {
+          if (row?.id) byId.set(String(row.id), row);
+        });
+      }
+      if (patientsError) break;
+
+      patients = [...byId.values()];
+      patientsError = null;
+      break;
     }
 
-    // Extract patient IDs from treatment groups
-    const patientIds = treatmentGroups.map(group => group.patient_id);
-    console.log(`[DOCTOR PATIENTS] Found ${patientIds.length} patient IDs for doctor ${doctorId}`);
-
-    // 🔥 Fetch patients using the extracted patient IDs
-    const { data: patients, error: patientsError } = await supabase
-      .from("patients")
-      .select(`
-        id,
-        name,
-        phone,
-        email,
-        status,
-        department,
-        created_at
-      `)
-      .in("id", patientIds)
-      .eq("clinic_id", clinicId)
-      .eq("status", "ACTIVE")
-      .order("created_at", { ascending: false });
-
-    if (patientsError) {
-      console.error("[DOCTOR PATIENTS] Patients error:", patientsError);
-      return res.status(500).json({ 
-        ok: false, 
+    if (patientsError && patients.length === 0) {
+      console.error("[DOCTOR PATIENTS] Patients fetch error:", patientsError);
+      return res.status(500).json({
+        ok: false,
         error: "failed_to_fetch_patients",
-        message: "Failed to fetch assigned patients"
+        message: "Failed to fetch patients",
       });
     }
 
-    console.log(`[DOCTOR PATIENTS] Fetched ${patients?.length || 0} patients for doctor ${doctorId}`);
+    // Visibility is already from treatment_doctors → … → patient; do not drop team patients
+    // when patients.clinic_id/code is missing or out of sync with the doctor row.
+    const finalPatients = (patients || []).filter((patient) => {
+      const statusRaw = String(patient?.status || "").toUpperCase();
+      if (statusRaw === "ARCHIVED" || statusRaw === "INACTIVE" || statusRaw === "CANCELLED") return false;
+      return true;
+    });
 
-    const formattedPatients = (patients || []).map(patient => ({
-      id: patient.id,
-      patientId: patient.id,
-      name: patient.name,
-      phone: patient.phone,
-      email: patient.email,
-      status: patient.status,
-      department: patient.department,
-      createdAt: new Date(patient.created_at).getTime(),
-    }));
+    console.log(`[DOCTOR PATIENTS] Fetched ${finalPatients.length || 0} patients for doctor ${doctorId} (team + table + process/appt assign)`);
+
+    // Helper to compute risk flags from health formData (patients endpoint)
+    function computePatientRiskFlags(formData) {
+      const fd = formData || {};
+      const flags = [];
+      if (fd.allergies && (fd.allergies.value === true || fd.allergies === true)) {
+        flags.push('⚠ Allerji: ' + ((fd.allergies && fd.allergies.detail) || 'Var'));
+      }
+      if (fd.medications && (fd.medications.value === true || fd.medications === true)) {
+        flags.push('⚠ İlaç kullanıyor');
+      }
+      const conds = Array.isArray(fd.conditions) ? fd.conditions : [];
+      if (conds.includes('bleeding_disorders')) flags.push('⚠ Kanama bozukluğu');
+      if (conds.includes('heart_disease')) flags.push('⚠ Kalp hastalığı');
+      if (conds.includes('diabetes')) flags.push('⚠ Diyabet');
+      return flags;
+    }
+
+    console.log('[DOCTOR PATIENTS] finalPatients health check: total', finalPatients.length, '| with health.formData:', finalPatients.filter((p) => p.health && p.health.formData && Object.keys(p.health.formData).length > 0).length);
+
+    const formattedPatients = finalPatients.map(patient => {
+      const healthData = (patient.health && typeof patient.health === 'object') ? patient.health : {};
+      const formData = healthData.formData || {};
+      const riskFlags = computePatientRiskFlags(formData);
+      if (riskFlags.length > 0) {
+        console.log('[DOCTOR PATIENTS] RISK patient', patient.id, patient.name || patient.full_name, riskFlags);
+      }
+      return {
+        id: patient.id || patient.patient_id,
+        patientId: patient.patient_id || patient.id,
+        name: patient.name || patient.full_name,
+        phone: patient.phone,
+        email: patient.email,
+        status: patient.status,
+        department: patient.department,
+        createdAt: patient.created_at ? new Date(patient.created_at).getTime() : null,
+        hasRisk: riskFlags.length > 0,
+        riskFlags,
+      };
+    });
 
     return res.json({
       ok: true,
@@ -14379,6 +23314,6962 @@ app.get("/api/doctor/patients", requireDoctorAuth, async (req, res) => {
       error: "internal_error",
       message: "Unexpected server error"
     });
+  }
+});
+
+// Get clinic doctors for doctor workspace (doctor-scoped auth)
+app.get('/api/doctor/doctors', requireDoctorAuth, async (req, res) => {
+  try {
+    const clinicId = String(req?.doctor?.clinic_id || '').trim();
+    const clinicCode = String(req?.doctor?.clinic_code || req?.doctor?.clinicCode || '').trim().toUpperCase();
+
+    const selectCandidates = [
+      'id, doctor_id, name, full_name, first_name, last_name, email, phone, status, clinic_id, clinic_code',
+      'id, doctor_id, name, full_name, email, phone, status, clinic_id, clinic_code',
+      'id, doctor_id, name, email, phone, status, clinic_id, clinic_code',
+      'id, doctor_id, name, email, status, clinic_id, clinic_code',
+      'id, doctor_id, email, status, clinic_id, clinic_code',
+      'id, doctor_id, email, clinic_id, clinic_code',
+    ];
+
+    const fetchScoped = async (scopeField, scopeValue) => {
+      if (!scopeField || !scopeValue) return { data: [], error: null };
+
+      let data = [];
+      let error = null;
+      for (const selectClause of selectCandidates) {
+        const result = await supabase
+          .from('doctors')
+          .select(selectClause)
+          .eq(scopeField, scopeValue)
+          .order('created_at', { ascending: false });
+
+        if (!result.error) {
+          data = Array.isArray(result.data) ? result.data : [];
+          error = null;
+          break;
+        }
+
+        error = result.error;
+        const code = String(result.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) {
+          break;
+        }
+      }
+
+      return { data, error };
+    };
+
+    let scoped = await fetchScoped('clinic_id', clinicId);
+    if ((!scoped.data || scoped.data.length === 0) && clinicCode) {
+      const fallback = await fetchScoped('clinic_code', clinicCode);
+      if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length > 0) {
+        scoped = fallback;
+      }
+    }
+
+    if (scoped.error) {
+      console.error('[DOCTOR DOCTORS] fetch failed:', scoped.error);
+      return res.status(500).json({ ok: false, error: 'failed_to_fetch_doctors' });
+    }
+
+    const rows = Array.isArray(scoped.data) ? scoped.data : [];
+    const activeRows = rows.filter((row) => {
+      const status = String(row?.status || '').toUpperCase();
+      return !status || status === 'APPROVED' || status === 'ACTIVE';
+    });
+
+    const doctors = activeRows.map((row) => ({
+      id: row?.id || row?.doctor_id || null,
+      doctor_id: row?.doctor_id || row?.id || null,
+      name: row?.name || null,
+      full_name: row?.full_name || null,
+      first_name: row?.first_name || null,
+      last_name: row?.last_name || null,
+      email: row?.email || null,
+      phone: row?.phone || null,
+      status: row?.status || null,
+      clinic_id: row?.clinic_id || null,
+      clinic_code: row?.clinic_code || null,
+    })).filter((row) => !!String(row?.id || '').trim());
+
+    return res.json({ ok: true, doctors });
+  } catch (error) {
+    console.error('[DOCTOR DOCTORS] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// GET /api/doctor/patient/:patientId/health-form
+// Doctor reads patient health/allergy form — checks both patients.health and patient_health_forms
+app.get('/api/doctor/patient/:patientId/health-form', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patient_id_required' });
+
+    const UUID_RE_D = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuidD = UUID_RE_D.test(patientId);
+
+    if (!isSupabaseEnabled()) {
+      return res.json({ ok: true, form: null, isComplete: false });
+    }
+
+    // Source 1: patients.health column
+    const clinicFilter = req?.doctor?.clinic_id || null;
+    let patientRow = null;
+    if (isUuidD) {
+      const r1 = await supabase.from('patients')
+        .select('id, patient_id, health, clinic_id')
+        .eq('id', patientId)
+        .maybeSingle();
+      patientRow = r1.data || null;
+    }
+    if (!patientRow) {
+      const r2 = await supabase.from('patients')
+        .select('id, patient_id, health, clinic_id')
+        .eq('patient_id', patientId)
+        .maybeSingle();
+      patientRow = r2.data || null;
+    }
+
+    // Verify patient belongs to doctor's clinic
+    if (clinicFilter && patientRow && patientRow.clinic_id && patientRow.clinic_id !== clinicFilter) {
+      return res.status(403).json({ ok: false, error: 'patient_not_in_clinic' });
+    }
+
+    let fd = {};
+    let isComplete = false;
+    let meta = {};
+
+    const rawHealth = patientRow && patientRow.health;
+    if (rawHealth && typeof rawHealth === 'object' && rawHealth.formData) {
+      fd = rawHealth.formData || {};
+      isComplete = rawHealth.isComplete === true;
+      meta = rawHealth;
+    }
+
+    // Source 2: patient_health_forms table (if patients.health is empty)
+    if (!fd || Object.keys(fd).length === 0) {
+      const patientUuid   = (patientRow && patientRow.id) || (isUuidD ? patientId : null);
+      const patientTextId = (patientRow && patientRow.patient_id) || (!isUuidD ? patientId : null);
+      const candidates = Array.from(new Set([patientUuid, patientTextId].filter(Boolean)));
+
+      for (let ci = 0; ci < candidates.length; ci++) {
+        const cid = candidates[ci];
+        const qr = await supabase.from('patient_health_forms')
+          .select('*')
+          .eq('patient_id', cid)
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        const hf = qr.data && qr.data[0];
+        if (hf) {
+          const raw = hf.form_data || hf;
+          fd = {
+            allergies:       raw.allergies,
+            medications:     raw.medications,
+            chronicDiseases: raw.chronicDiseases,
+            conditions:      raw.conditions,
+            medicationsList: raw.medicationsList,
+            notes:           raw.notes,
+            submittedAt:     raw.submittedAt,
+          };
+          isComplete = hf.is_complete === true;
+          meta = { completedAt: hf.completed_at, updatedAt: hf.updated_at };
+          break;
+        }
+      }
+    }
+
+    const hasData = fd && Object.values(fd).some(function(v) {
+      return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0);
+    });
+
+    return res.json({
+      ok: true,
+      form: fd,
+      formData: fd,
+      isComplete: isComplete || hasData,
+      completedAt: meta.completedAt || null,
+      updatedAt: meta.updatedAt || null,
+    });
+  } catch (err) {
+    console.error('[DOCTOR HEALTH-FORM GET] Error:', err.message);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.get('/api/doctor/patient/:patientId', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: 'patient_id_required' });
+    }
+
+    const patientSelects = [
+      'id, patient_id, clinic_id, clinic_code, name, full_name, phone, email, status, created_at',
+      'id, patient_id, clinic_id, clinic_code, name, full_name, phone, email, status, created_at',
+    ];
+
+    const findPatientByField = async (fieldName) => {
+      let lastError = null;
+      for (const selectClause of patientSelects) {
+        const result = await supabase
+          .from('patients')
+          .select(selectClause)
+          .eq(fieldName, patientId)
+          .maybeSingle();
+
+        if (!result.error) {
+          return { patient: result.data || null, error: null };
+        }
+
+        lastError = result.error;
+        const code = String(result.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205', '22P02'].includes(code)) {
+          break;
+        }
+      }
+      return { patient: null, error: lastError };
+    };
+
+    let lookup = await findPatientByField('id');
+    if (!lookup.patient) {
+      lookup = await findPatientByField('patient_id');
+    }
+
+    if (!lookup.patient) {
+      if (lookup.error) {
+        console.error('[DOCTOR PATIENT] lookup failed:', lookup.error);
+      }
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
+    }
+
+    const patient = lookup.patient;
+    const statusRaw = String(patient?.status || '').toUpperCase();
+    if (statusRaw && statusRaw !== 'ACTIVE' && statusRaw !== 'APPROVED') {
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
+    }
+
+    // Encounter ile tutarlı: tedavi ekibi + tablo ataması + expand (doctorHasTreatmentTeamAccessToPatientId),
+    // ayrıca bu hastanın bir muayenesini bu doktor açtıysa (resolveDoctorEncounterAccess owner).
+    const patientKeyForAccess = String(patient?.id || patient?.patient_id || patientId).trim();
+    let isAssigned = false;
+    try {
+      isAssigned = await doctorHasTreatmentTeamAccessToPatientId(patientKeyForAccess, req);
+    } catch (e) {
+      console.error('[DOCTOR PATIENT] access check failed:', e?.message || e);
+    }
+    if (!isAssigned) {
+      try {
+        isAssigned = await doctorOwnsAnyEncounterForPatient(patient, req);
+      } catch (e) {
+        console.error('[DOCTOR PATIENT] encounter owner check failed:', e?.message || e);
+      }
+    }
+
+    if (!isAssigned) {
+      return res.status(403).json({ ok: false, error: 'patient_not_assigned' });
+    }
+
+    return res.json({
+      ok: true,
+      patient: {
+        id: String(patient?.id || patient?.patient_id || patientId),
+        patientId: String(patient?.patient_id || patient?.id || patientId),
+        name: String(patient?.name || patient?.full_name || '-'),
+        phone: patient?.phone || null,
+        email: patient?.email || null,
+        status: patient?.status || null,
+        createdAt: patient?.created_at || null,
+      },
+    });
+  } catch (error) {
+    console.error('[DOCTOR PATIENT] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// Get doctor statistics
+app.get('/api/doctor/stats', requireDoctorAuth, async (req, res) => {
+  try {
+    // TODO: gerçek DB sorguları eklenecek
+    res.json({
+      totalPatients: 24,
+      todayAppointments: 6,
+      pendingCases: 3,
+      newPhotos: 2,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'stats_error' });
+  }
+});
+
+/**
+ * Risk rozetleri — yalnızca patients.health (tek kaynak). formData + üst seviye alanlar birleştirilir.
+ * patient_health_forms kullanılmaz.
+ */
+function buildDashboardRiskFlagsFromHealth(healthRaw) {
+  const flags = [];
+  const health = healthRaw && typeof healthRaw === 'object' ? healthRaw : {};
+  const fd = health.formData && typeof health.formData === 'object' ? health.formData : {};
+
+  if (Array.isArray(health.allergies) && health.allergies.length > 0) {
+    const parts = health.allergies.map((x) => String(x).trim()).filter(Boolean);
+    if (parts.length) flags.push('⚠ Allerji: ' + parts.join(', '));
+  }
+
+  const topConds = Array.isArray(health.conditions) ? health.conditions : [];
+  const fdConds = Array.isArray(fd.conditions) ? fd.conditions : [];
+  const condSet = new Set(
+    [...topConds, ...fdConds].map((c) => String(c || '').trim()).filter(Boolean)
+  );
+  if (condSet.has('bleeding_disorder') || condSet.has('bleeding_disorders')) {
+    flags.push('⚠ Kanama bozukluğu');
+  }
+  if (condSet.has('heart_disease')) flags.push('⚠ Kalp hastalığı');
+  if (condSet.has('diabetes')) flags.push('⚠ Diyabet');
+
+  if (fd.allergies && (fd.allergies.value === true || fd.allergies === true)) {
+    if (!flags.some((f) => f.includes('Allerji'))) {
+      flags.push('⚠ Allerji: ' + (fd.allergies.detail || 'Var'));
+    }
+  }
+  if (fd.medications && (fd.medications.value === true || fd.medications === true)) {
+    flags.push('⚠ İlaç kullanıyor');
+  }
+  if (fd.hasHeartDisease) flags.push('⚠ Kalp hastalığı');
+  if (fd.hasDiabetes) flags.push('⚠ Diyabet');
+  if (fd.hasAllergy || (Array.isArray(fd.allergies) && fd.allergies.length > 0)) {
+    if (!flags.some((f) => f.includes('Allerji'))) flags.push('⚠ Allerji var');
+  }
+  return flags;
+}
+
+// GET /api/doctor/dashboard — main dashboard endpoint for doctor mobile app
+app.get('/api/doctor/dashboard', requireDoctorAuth, async (req, res) => {
+  try {
+    // Use doctor from middleware (already verified)
+    const doctorRecord = req.doctor || {};
+    const doctorId = req.doctorId || doctorRecord.id || doctorRecord.doctor_id;
+    const clinicId = req.clinicId || doctorRecord.clinic_id;
+
+    if (!doctorId) return res.status(401).json({ ok: false, error: 'doctor_not_found' });
+
+    const doctor = {
+      id: doctorRecord.id || doctorId,
+      name: doctorRecord.name || doctorRecord.full_name || null,
+      email: doctorRecord.email || null,
+      clinic_id: doctorRecord.clinic_id || clinicId,
+    };
+
+    const doctorKeysRaw = [...new Set([
+      String(doctorId || '').trim(),
+      String(doctorRecord.id || '').trim(),
+      String(doctorRecord.doctor_id || '').trim(),
+    ].filter(Boolean))];
+    const doctorKeysUuidFk = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+
+    const patientIdSet = new Set();
+    if (doctorKeysRaw.length > 0) {
+      try {
+        const [fromTeam, fromAssign, fromProcess, fromCal] = await Promise.all([
+          collectPatientIdsFromTreatmentTeam(doctorKeysRaw),
+          collectPatientIdsFromPatientTableDoctorAssignments(doctorKeysRaw),
+          collectPatientIdsFromProcessAndAppointmentAssignments(doctorKeysRaw, clinicId),
+          collectPatientIdsFromClinicCalendarTodayTomorrow(clinicId, doctorKeysRaw),
+        ]);
+        for (const pid of fromTeam) patientIdSet.add(pid);
+        for (const pid of fromAssign) patientIdSet.add(pid);
+        for (const pid of fromProcess) patientIdSet.add(pid);
+        for (const pid of fromCal) patientIdSet.add(pid);
+      } catch (_) {}
+    }
+
+    await expandPatientIdSetForDoctorMatching(patientIdSet);
+
+    // Fetch patient details (include health column for allergy/risk badges)
+    let patients = [];
+    if (patientIdSet.size > 0) {
+      const ids = Array.from(patientIdSet)
+        .map((x) => String(x || "").trim())
+        .filter((x) => PATIENT_ROW_UUID_RE.test(x))
+        .slice(0, 100);
+      let pResult = { data: [], error: null };
+      if (ids.length > 0) {
+        pResult = await supabase
+          .from('patients')
+          .select('id, name, created_at, health')
+          .in('id', ids)
+          .order('created_at', { ascending: false });
+        if (pResult.error && (String(pResult.error.code || '') === '42703' || String(pResult.error.code || '') === 'PGRST204')) {
+          pResult = await supabase
+            .from('patients')
+            .select('id, name, created_at')
+            .in('id', ids)
+            .order('created_at', { ascending: false });
+        }
+        patients = pResult.data || [];
+      }
+    }
+
+    // Bugün / yarın — yerel takvim (toISOString UTC kayması yüzünden yanlış güne düşmesin)
+    const localYmd = (d) => {
+      const x = d instanceof Date ? d : new Date(d);
+      const y = x.getFullYear();
+      const m = String(x.getMonth() + 1).padStart(2, "0");
+      const day = String(x.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const todayStr = localYmd(new Date());
+    const tomorrowD = new Date();
+    tomorrowD.setDate(tomorrowD.getDate() + 1);
+    const tomorrowStr = localYmd(tomorrowD);
+
+    /** appointments tablosu: kurulumlar date/time veya appointment_date/time veya start_at kullanır */
+    async function fetchAppointmentsForDay(dayYmd) {
+      const cid = clinicId ? String(clinicId).trim() : "";
+      const attempts = [
+        {
+          sel: "id, patient_id, date, time, status, chair_number, notes, doctor_id, procedure",
+          dateCol: "date",
+          timeOrder: "time",
+        },
+        {
+          sel: "id, patient_id, appointment_date, appointment_time, status, chair_number, notes, doctor_id",
+          dateCol: "appointment_date",
+          timeOrder: "appointment_time",
+        },
+        {
+          sel: "id, patient_id, date, appointment_time, status, chair_number, notes, doctor_id",
+          dateCol: "date",
+          timeOrder: "appointment_time",
+        },
+      ];
+      for (const a of attempts) {
+        let q = supabase.from("appointments").select(a.sel).eq(a.dateCol, dayYmd).order(a.timeOrder, { ascending: true }).limit(80);
+        if (cid) q = q.eq("clinic_id", cid);
+        const { data, error } = await q;
+        const code = String(error?.code || "");
+        if (!error && Array.isArray(data)) return data;
+        if (["42703", "PGRST204", "42P01"].includes(code)) continue;
+        if (error) console.warn("[DOCTOR DASHBOARD] appointments try", a.dateCol, error.message);
+        break;
+      }
+      return [];
+    }
+
+    let todayRaw = [];
+    let tomorrowRaw = [];
+    try {
+      [todayRaw, tomorrowRaw] = await Promise.all([
+        fetchAppointmentsForDay(todayStr),
+        fetchAppointmentsForDay(tomorrowStr),
+      ]);
+    } catch (e) {
+      console.warn("[DOCTOR DASHBOARD] appointments fetch:", e?.message || e);
+    }
+
+    /** encounter_treatments.scheduled_at — randevular tablosu boş / farklı şema olsa bile */
+    async function fetchEncounterTreatmentSlots(dayYmd) {
+      try {
+        const encById = new Map();
+        const addEnc = (rows) => {
+          for (const e of rows || []) {
+            const id = String(e?.id || "").trim();
+            if (!id || encById.has(id)) continue;
+            encById.set(id, { id, patient_id: e.patient_id });
+          }
+        };
+        if (clinicId) {
+          const { data: byClinic } = await supabase
+            .from("patient_encounters")
+            .select("id, patient_id")
+            .eq("clinic_id", clinicId)
+            .limit(400);
+          addEnc(byClinic);
+        }
+        for (const key of doctorKeysUuidFk) {
+          try {
+            const { data: byDoc } = await supabase
+              .from("patient_encounters")
+              .select("id, patient_id")
+              .eq("created_by_doctor_id", key)
+              .limit(200);
+            addEnc(byDoc);
+          } catch (_) {}
+        }
+        const encRows = Array.from(encById.values()).slice(0, 500);
+        if (encRows.length === 0) return [];
+        const encIds = encRows.map((e) => String(e.id || "").trim()).filter(Boolean);
+        const encToPatient = new Map(encRows.map((e) => [String(e.id), String(e.patient_id || "").trim()]));
+        const dayStart = new Date(`${dayYmd}T00:00:00`);
+        const dayEnd = new Date(`${dayYmd}T23:59:59.999`);
+        const startMs = dayStart.getTime();
+        const endMs = dayEnd.getTime();
+        const out = [];
+        for (let i = 0; i < encIds.length; i += 80) {
+          const chunk = encIds.slice(i, i + 80);
+          const { data: etRows, error: etErr } = await supabase
+            .from("encounter_treatments")
+            .select("id, encounter_id, scheduled_at, status, procedure_type, chair, tooth_number")
+            .in("encounter_id", chunk)
+            .not("scheduled_at", "is", null);
+          if (etErr) continue;
+          for (const row of etRows || []) {
+            const t = row.scheduled_at ? Date.parse(String(row.scheduled_at)) : NaN;
+            if (!Number.isFinite(t) || t < startMs || t > endMs) continue;
+            const st = String(row.status || "").toLowerCase();
+            if (st === "cancelled" || st === "canceled") continue;
+            const eid = String(row.encounter_id || "");
+            const pid = encToPatient.get(eid);
+            if (!pid) continue;
+            const d = new Date(t);
+            const timeStr = d.toTimeString().slice(0, 5);
+            const proc = String(row.procedure_type || "TREATMENT").trim();
+            const tooth = row.tooth_number != null ? ` · 🦷 ${row.tooth_number}` : "";
+            out.push({
+              id: `et-${row.id}`,
+              patient_id: pid,
+              appointment_date: dayYmd,
+              appointment_time: timeStr,
+              status: row.status,
+              chair_number: row.chair != null && String(row.chair).trim() !== "" ? String(row.chair) : "",
+              notes: `${proc}${tooth}`,
+              _planId: eid,
+              _fromEt: true,
+            });
+          }
+        }
+        out.sort((x, y) => String(x.appointment_time || "").localeCompare(String(y.appointment_time || "")));
+        return out;
+      } catch (e) {
+        console.warn("[DOCTOR DASHBOARD] encounter_treatments slots:", e?.message || e);
+        return [];
+      }
+    }
+
+    if ((!todayRaw || todayRaw.length === 0) || (!tomorrowRaw || tomorrowRaw.length === 0)) {
+      const [etToday, etTomorrow] = await Promise.all([
+        fetchEncounterTreatmentSlots(todayStr),
+        fetchEncounterTreatmentSlots(tomorrowStr),
+      ]);
+      if ((!todayRaw || todayRaw.length === 0) && etToday.length) todayRaw = etToday;
+      if ((!tomorrowRaw || tomorrowRaw.length === 0) && etTomorrow.length) tomorrowRaw = etTomorrow;
+    }
+
+    const patientMap = new Map(patients.map((p) => [p.id, p]));
+
+    const apptPatientIds = [
+      ...new Set(
+        [...(todayRaw || []), ...(tomorrowRaw || [])]
+          .map((r) => String(r.patient_id || "").trim())
+          .filter(Boolean)
+      ),
+    ].filter((id) => !patientMap.has(id));
+    if (apptPatientIds.length > 0) {
+      try {
+        const { data: extraP } = await supabase.from("patients").select("id, name").in("id", apptPatientIds.slice(0, 100));
+        (extraP || []).forEach((p) => {
+          if (p?.id) patientMap.set(String(p.id), p);
+        });
+      } catch (_) {}
+    }
+
+    const mapAppointment = (a, fallbackDay) => {
+      const dateVal = a.date || a.appointment_date || (a.start_at ? String(a.start_at).slice(0, 10) : fallbackDay);
+      let timeVal = a.time || a.appointment_time || "09:00";
+      if (a.start_at && !a.time && !a.appointment_time) {
+        const d = new Date(String(a.start_at));
+        if (Number.isFinite(d.getTime())) timeVal = d.toTimeString().slice(0, 5);
+      }
+      if (timeVal && String(timeVal).length > 5) timeVal = String(timeVal).slice(0, 5);
+      const patient = patientMap.get(a.patient_id) || null;
+      const st = String(a.status || "").toLowerCase();
+      return {
+        appointmentId: String(a.id || ""),
+        date: dateVal || fallbackDay,
+        time: timeVal,
+        chairNumber: String(a.chair_number != null ? a.chair_number : a.chair || ""),
+        patientId: a.patient_id || "",
+        patientName: patient?.name || "Hasta",
+        procedureSummary: a.notes || a.procedure || "",
+        planId: a._planId || null,
+        status:
+          st === "completed" || st === "done"
+            ? "completed"
+            : st === "in_progress" || st === "active"
+              ? "in_progress"
+              : "scheduled",
+      };
+    };
+
+    const todayAppointments = (todayRaw || []).map((r) => mapAppointment(r, todayStr));
+    const tomorrowAppointments = (tomorrowRaw || []).map((r) => mapAppointment(r, tomorrowStr));
+
+    // Treatment stats for assigned patients
+    const patientIds = patients.map((p) => p.id);
+    let planned = 0, inProgress = 0, done = 0;
+    if (patientIds.length > 0) {
+      const { data: treatments } = await supabase
+        .from('patient_treatments')
+        .select('treatments_data')
+        .in('patient_id', patientIds.slice(0, 50));
+
+      (treatments || []).forEach((t) => {
+        const teeth = (t?.treatments_data?.teeth || []);
+        teeth.forEach((tooth) => {
+          (tooth?.procedures || []).forEach((proc) => {
+            const s = String(proc?.status || '').toUpperCase();
+            if (s === 'COMPLETED') done++;
+            else if (s === 'ACTIVE' || s === 'IN_PROGRESS') inProgress++;
+            else planned++;
+          });
+        });
+      });
+    }
+
+    // Recent patients (last 5) — risk yalnızca patients.health üzerinden (tek pass; sütun yoksa p.health boş)
+    const recentPatients = patients.slice(0, 5).map((p) => {
+      const flags = buildDashboardRiskFlagsFromHealth(p.health);
+      return {
+        id: p.id,
+        name: p.name || 'Hasta',
+        hasRisk: flags.length > 0,
+        riskFlags: flags,
+        lastVisit: null,
+      };
+    });
+
+    let notifications = [];
+    try {
+      const uuidRe =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      // d_… kodlu doktor için de UUID çözümü (notifications.user_id = doctors.id UUID)
+      const doctorNotifyIds = [
+        ...new Set([
+          ...doctorKeysUuidFk,
+          ...[String(doctorRecord.id || "").trim(), String(req.doctorId || "").trim()].filter(
+            (x) => x && uuidRe.test(x)
+          ),
+        ]),
+      ].filter(Boolean);
+      if (doctorNotifyIds.length > 0) {
+        const nRes = await supabase
+          .from("notifications")
+          .select("id, user_id, type, title, message, data, is_read, created_at")
+          .in("user_id", doctorNotifyIds)
+          .eq("is_read", false)
+          .order("created_at", { ascending: false })
+          .limit(14);
+        if (!nRes.error) {
+          notifications = nRes.data || [];
+        } else {
+          const nc = String(nRes.error.code || "");
+          if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(nc)) {
+            console.warn("[DOCTOR DASHBOARD] notifications:", nRes.error.message);
+          }
+        }
+      }
+    } catch (nErr) {
+      console.warn("[DOCTOR DASHBOARD] notifications fetch:", nErr?.message || nErr);
+    }
+
+    let taskAlerts = [];
+    try {
+      taskAlerts = await fetchDoctorDashboardPendingTaskAlerts(doctorKeysRaw);
+    } catch (taErr) {
+      console.warn("[DOCTOR DASHBOARD] task alerts:", taErr?.message || taErr);
+    }
+
+    notifications = [...notifications, ...taskAlerts]
+      .sort((a, b) => {
+        const ta = new Date(a?.created_at || 0).getTime();
+        const tb = new Date(b?.created_at || 0).getTime();
+        return tb - ta;
+      })
+      .slice(0, 20);
+
+    return res.json({
+      ok: true,
+      doctor: doctor || { id: doctorId, name: req.doctor?.name || 'Doctor' },
+      patients,
+      notifications,
+      stats: {
+        planned,
+        in_progress: inProgress,
+        done,
+        today: todayAppointments.length,
+        waiting: patients.length,
+      },
+      recentPatients,
+      todayAppointments,
+      tomorrowAppointments,
+    });
+  } catch (err) {
+    console.error('[DOCTOR DASHBOARD] exception:', err.message);
+    return res.status(500).json({ ok: false, error: 'internal_error', details: err.message });
+  }
+});
+
+app.post('/api/doctor/notifications/:id/read', requireDoctorAuth, async (req, res) => {
+  try {
+    const notificationId = String(req.params.id || '').trim();
+    const doctorUuid = String(req?.doctor?.id || req.doctorId || '').trim();
+    if (!notificationId) {
+      return res.status(400).json({ ok: false, error: 'notification_id_required' });
+    }
+    if (!doctorUuid) {
+      return res.status(401).json({ ok: false, error: 'doctor_not_found' });
+    }
+    // Dashboard birleşik liste: gerçek UUID yok (task:…) — veritabanı güncellemesi yok
+    if (notificationId.startsWith('task:')) {
+      return res.json({ ok: true, synthetic: true });
+    }
+    const { data, error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId)
+      .eq('user_id', doctorUuid)
+      .select('id');
+    if (error) {
+      const c = String(error.code || '');
+      if (['42P01', '42703', 'PGRST204', 'PGRST205'].includes(c)) {
+        return res.status(503).json({ ok: false, error: 'notifications_unavailable' });
+      }
+      console.error('[DOCTOR NOTIFICATIONS READ]', error);
+      return res.status(500).json({ ok: false, error: error.message || 'update_failed' });
+    }
+    const rows = Array.isArray(data) ? data : [];
+    if (rows.length === 0) {
+      return res.status(404).json({ ok: false, error: 'not_found' });
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[DOCTOR NOTIFICATIONS READ] exception:', e);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// Dashboard stats compatibility endpoint (used by mobile app)
+app.get('/api/doctor/dashboard/stats', requireDoctorAuth, async (req, res) => {
+  try {
+    const payload = {
+      totalPatients: 24,
+      todayAppointments: 6,
+      pendingCases: 3,
+      newPhotos: 2,
+    };
+
+    return res.json({
+      ok: true,
+      stats: {
+        totalPatients: Number(payload.totalPatients || 0),
+        todayAppointments: Number(payload.todayAppointments || 0),
+        pendingProcedures: Number(payload.pendingCases || 0),
+        waitingPatients: Number(payload.newPhotos || 0),
+      },
+    });
+  } catch (err) {
+    console.error('[DOCTOR DASHBOARD STATS] exception:', err);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// Aggregated doctor dashboard compatibility endpoint (used by mobile app)
+app.get('/api/doctors/:id/dashboard', requireDoctorAuth, async (req, res) => {
+  try {
+    const requestedDoctorId = String(req.params?.id || '').trim();
+    const allowedDoctorIds = [...new Set([
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.id || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean).map((value) => value.toLowerCase()))];
+
+    if (!requestedDoctorId) {
+      return res.status(400).json({ ok: false, error: 'doctor_id_required' });
+    }
+
+    if (allowedDoctorIds.length > 0 && !allowedDoctorIds.includes(requestedDoctorId.toLowerCase())) {
+      return res.status(403).json({ ok: false, error: 'doctor_mismatch' });
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        preJoin: {
+          schedule: [],
+        },
+        summary: {
+          riskCount: 0,
+          inProgressCount: 0,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[DOCTOR DASHBOARD AGGREGATED] exception:', err);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+const getDoctorTodayAppointmentsHandler = async (req, res) => {
+  try {
+    const requestedDoctorId = String(req.params?.id || '').trim();
+    const allowedDoctorIds = [...new Set([
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.id || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean).map((value) => value.toLowerCase()))];
+
+    if (!requestedDoctorId) {
+      return res.status(400).json({ ok: false, error: 'doctor_id_required' });
+    }
+
+    if (allowedDoctorIds.length > 0 && !allowedDoctorIds.includes(requestedDoctorId.toLowerCase())) {
+      return res.status(403).json({ ok: false, error: 'doctor_mismatch' });
+    }
+
+    const nowDate = new Date();
+    const todayUtc = nowDate.toISOString().slice(0, 10);
+    const todayLocal = `${nowDate.getFullYear()}-${String(nowDate.getMonth() + 1).padStart(2, '0')}-${String(nowDate.getDate()).padStart(2, '0')}`;
+    const dateAliases = [...new Set([todayUtc, todayLocal].filter(Boolean))];
+    const dateAliasSet = new Set(dateAliases);
+
+    const dayStartIso = `${todayUtc}T00:00:00.000Z`;
+    const dayEndDate = new Date(dayStartIso);
+    dayEndDate.setUTCDate(dayEndDate.getUTCDate() + 1);
+    const dayEndIso = dayEndDate.toISOString();
+
+    const fetchAppointments = async () => {
+      const selectCandidates = [
+        'id, date, time, status, patient_id, doctor_id, doctorId, assigned_doctor_id, assignedDoctorId, plan_id, treatment_plan_id, encounter_id, procedure, procedure_summary, chair_no, chair, chairNumber, start_at, startAt',
+        'id, date, time, status, patient_id, doctor_id, assigned_doctor_id, plan_id, treatment_plan_id, encounter_id, procedure, chair_no, chair, start_at',
+        'id, date, time, status, patient_id, doctor_id, plan_id, treatment_plan_id, encounter_id, procedure, chair_no, chair',
+        'id, date, time, status, patient_id, doctor_id, plan_id, encounter_id, procedure, chair_no',
+      ];
+
+      const queryAttempts = [];
+      for (const selectClause of selectCandidates) {
+        if (req.clinicId) {
+          dateAliases.forEach((dayValue) => {
+            queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_id', req.clinicId).eq('date', dayValue));
+            queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_id', req.clinicId).eq('appointment_date', dayValue));
+          });
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_id', req.clinicId).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_id', req.clinicId).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+        }
+        if (req.clinicCode) {
+          dateAliases.forEach((dayValue) => {
+            queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_code', req.clinicCode).eq('date', dayValue));
+            queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_code', req.clinicCode).eq('appointment_date', dayValue));
+          });
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_code', req.clinicCode).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('clinic_code', req.clinicCode).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+        }
+        dateAliases.forEach((dayValue) => {
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('date', dayValue));
+          queryAttempts.push(() => supabase.from('appointments').select(selectClause).eq('appointment_date', dayValue));
+        });
+      }
+
+      for (const run of queryAttempts) {
+        const result = await run();
+        if (!result.error) {
+          return Array.isArray(result.data) ? result.data : [];
+        }
+        const code = String(result.error?.code || '');
+        const msg = String(result.error?.message || '').toLowerCase();
+        const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+        if (schemaIssue) continue;
+      }
+
+      return [];
+    };
+
+    const rows = await fetchAppointments();
+
+    const ownerOf = (row) => String(
+      row?.doctor_id || row?.doctorId || row?.assigned_doctor_id || row?.assignedDoctorId || ''
+    ).trim().toLowerCase();
+
+    const rowsWithOwner = rows.filter((row) => {
+      const owner = ownerOf(row);
+      if (!owner) return false;
+      return allowedDoctorIds.length ? allowedDoctorIds.includes(owner) : true;
+    });
+
+    const rowsWithoutOwner = rows.filter((row) => !ownerOf(row));
+
+    // Fallback strategy:
+    // 1) Prefer explicit owner-matched rows
+    // 2) If schema lacks owner columns, keep ownerless rows
+    // 3) Last resort, keep all rows so dashboard is not empty due to schema drift
+    const normalizedRows =
+      rowsWithOwner.length > 0
+        ? rowsWithOwner
+        : rowsWithoutOwner.length > 0
+        ? rowsWithoutOwner
+        : rows;
+
+    const patientIds = [...new Set(normalizedRows.map((row) => String(row?.patient_id || '').trim()).filter(Boolean))];
+    const encounterIds = [...new Set(normalizedRows.map((row) => String(row?.encounter_id || '').trim()).filter(Boolean))];
+    const directPlanIds = [...new Set(normalizedRows.map((row) => String(row?.plan_id || row?.treatment_plan_id || '').trim()).filter(Boolean))];
+
+    const patientMap = new Map();
+    if (patientIds.length > 0) {
+      const patientSelects = [
+        { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'id' },
+        { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+        { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'id' },
+        { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+        { select: 'id, patient_id, name, risk_level, health', key: 'id' },
+        { select: 'id, patient_id, name, risk_level, health', key: 'patient_id' },
+        { select: 'id, patient_id, name', key: 'id' },
+        { select: 'id, patient_id, name', key: 'patient_id' },
+      ];
+
+      for (const cfg of patientSelects) {
+        const result = await supabase.from('patients').select(cfg.select).in(cfg.key, patientIds);
+        if (!result.error) {
+          (result.data || []).forEach((patient) => {
+            const keyA = String(patient?.id || '').trim();
+            const keyB = String(patient?.patient_id || '').trim();
+            const full = String(patient?.name || patient?.full_name || '').trim();
+            const first = String(patient?.first_name || '').trim();
+            const last = String(patient?.last_name || '').trim();
+            const fallback = [first, last].filter(Boolean).join(' ').trim();
+            const patientName = full || fallback || keyA || keyB || 'Unknown Patient';
+            const health = patient?.health && typeof patient.health === 'object' ? patient.health : {};
+            const riskLevel = String(patient?.risk_level || health?.riskLevel || health?.risk_level || '').toLowerCase();
+            const hasMedicalRisk =
+              riskLevel === 'high' ||
+              riskLevel === 'critical' ||
+              patient?.high_risk === true ||
+              health?.hasMedicalRisk === true ||
+              health?.medicalRisk === true ||
+              health?.riskFlag === true;
+
+            const mapped = { patientName, hasMedicalRisk };
+            if (keyA) patientMap.set(keyA, mapped);
+            if (keyB) patientMap.set(keyB, mapped);
+          });
+          break;
+        }
+      }
+    }
+
+    const planMapByEncounter = new Map();
+    const knownPlanIds = new Set(directPlanIds);
+    if (encounterIds.length > 0) {
+      const planSelects = [
+        'id, encounter_id, status, created_at',
+        'id, encounter_id, created_at',
+        'id, encounter_id',
+      ];
+
+      for (const selectClause of planSelects) {
+        const result = await supabase.from('treatment_plans').select(selectClause).in('encounter_id', encounterIds);
+        if (!result.error) {
+          (result.data || []).forEach((plan) => {
+            const encounterId = String(plan?.encounter_id || '').trim();
+            const planId = String(plan?.id || '').trim();
+            if (encounterId && planId && !planMapByEncounter.has(encounterId)) {
+              planMapByEncounter.set(encounterId, planId);
+              knownPlanIds.add(planId);
+            }
+          });
+          break;
+        }
+      }
+    }
+
+    const procedureByPlan = new Map();
+    const allPlanIds = Array.from(knownPlanIds).filter(Boolean);
+    if (allPlanIds.length > 0) {
+      const readItemsFromTable = async (tableName) => {
+        const selects = [
+          'id, treatment_plan_id, procedure_name, procedure_code, tooth_fdi_code, tooth_number, created_at',
+          'id, treatment_plan_id, procedure_name, procedure_code, tooth_number, created_at',
+          'id, treatment_plan_id, procedure_code, tooth_number, created_at',
+        ];
+
+        for (const selectClause of selects) {
+          const result = await supabase
+            .from(tableName)
+            .select(selectClause)
+            .in('treatment_plan_id', allPlanIds)
+            .order('created_at', { ascending: true });
+
+          if (!result.error) {
+            return Array.isArray(result.data) ? result.data : [];
+          }
+
+          const code = String(result.error?.code || '');
+          if (code === '42P01') return [];
+          if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) break;
+        }
+
+        return [];
+      };
+
+      const [itemsA, itemsB] = await Promise.all([
+        readItemsFromTable('treatment_items'),
+        readItemsFromTable('treatment_plan_items'),
+      ]);
+
+      [...itemsA, ...itemsB].forEach((item) => {
+        const planId = String(item?.treatment_plan_id || '').trim();
+        if (!planId || procedureByPlan.has(planId)) return;
+        const procedureName = String(item?.procedure_name || item?.procedure_code || 'Procedure').trim();
+        const tooth = String(item?.tooth_fdi_code || item?.tooth_number || '').trim();
+        procedureByPlan.set(planId, tooth ? `${procedureName} (${tooth})` : procedureName);
+      });
+    }
+
+    const toIso = (dateValue, timeValue, startAt) => {
+      if (startAt) {
+        const ts = Date.parse(String(startAt));
+        if (Number.isFinite(ts)) return new Date(ts).toISOString();
+      }
+      const d = String(dateValue || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+      const tRaw = String(timeValue || '00:00').trim();
+      const t = /^\d{2}:\d{2}$/.test(tRaw) ? `${tRaw}:00` : tRaw;
+      const ts = Date.parse(`${d}T${t}`);
+      if (!Number.isFinite(ts)) return null;
+      return new Date(ts).toISOString();
+    };
+
+    const formatTime = (timeValue, startAt) => {
+      const raw = String(timeValue || '').trim();
+      if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+      if (/^\d{2}:\d{2}:\d{2}$/.test(raw)) return raw.slice(0, 5);
+      const iso = toIso(null, null, startAt);
+      if (!iso) return '--:--';
+      return iso.slice(11, 16);
+    };
+
+    const normalizeStatus = (value) => {
+      const status = String(value || '').trim().toUpperCase();
+      if (['IN_PROGRESS', 'ACTIVE', 'ONGOING'].includes(status)) return 'in_progress';
+      if (['COMPLETED', 'DONE', 'FINISHED', 'CLOSED'].includes(status)) return 'completed';
+      return 'scheduled';
+    };
+
+    let appointments = normalizedRows
+      .map((row) => {
+        const appointmentId = String(row?.id || '').trim();
+        const patientId = String(row?.patient_id || '').trim();
+        const encounterId = String(row?.encounter_id || '').trim();
+        const directPlanId = String(row?.plan_id || row?.treatment_plan_id || '').trim();
+        const planId = directPlanId || planMapByEncounter.get(encounterId) || '';
+
+        const dateValue = String(row?.date || row?.appointment_date || '').trim() || todayLocal;
+        const time = formatTime(row?.time, row?.start_at || row?.startAt);
+        const dateIso = toIso(dateValue, time, row?.start_at || row?.startAt) || `${todayLocal}T${time}:00.000Z`;
+        const chairNumber = String(row?.chair_no || row?.chairNumber || row?.chair || '').trim() || '-';
+        const patientInfo = patientMap.get(patientId) || { patientName: 'Unknown Patient', hasMedicalRisk: false };
+
+        const fallbackProcedure = String(row?.procedure_summary || row?.procedure || '').trim();
+        const planProcedure = planId ? String(procedureByPlan.get(planId) || '').trim() : '';
+        const procedureSummary = planProcedure || fallbackProcedure || 'Procedure';
+
+        return {
+          appointmentId,
+          date: dateIso,
+          time,
+          chairNumber,
+          patientId,
+          patientName: patientInfo.patientName,
+          procedureSummary,
+          planId,
+          status: normalizeStatus(row?.status),
+          hasMedicalRisk: patientInfo.hasMedicalRisk === true,
+        };
+      })
+      .filter((item) => !!item.appointmentId)
+      .sort((a, b) => {
+        const dateDiff = String(a.date).localeCompare(String(b.date));
+        if (dateDiff !== 0) return dateDiff;
+        return String(a.time).localeCompare(String(b.time));
+      });
+
+    if (!appointments.length) {
+      const doctorKeysRaw = [...new Set([
+        String(req.doctorId || '').trim(),
+        String(req?.doctor?.id || '').trim(),
+        String(req?.doctor?.doctor_id || '').trim(),
+      ].filter(Boolean))];
+
+      const doctorKeys = [...new Set([
+        ...doctorKeysRaw,
+        ...doctorKeysRaw.map((value) => value.toLowerCase()),
+        ...doctorKeysRaw.map((value) => value.toUpperCase()),
+        ...allowedDoctorIds,
+      ].filter(Boolean))];
+
+      const ownedPlans = [];
+      const planSelectCandidates = [
+        'id, encounter_id, patient_id, created_by_doctor_id, assigned_doctor_id, created_at',
+        'id, encounter_id, patient_id, created_by_doctor_id, created_at',
+        'id, encounter_id, created_by_doctor_id, created_at',
+        'id, encounter_id, created_by_doctor_id',
+      ];
+
+      for (const selectClause of planSelectCandidates) {
+        const merged = [];
+        let hardError = false;
+
+        for (const doctorKey of doctorKeys) {
+          const result = await supabase
+            .from('treatment_plans')
+            .select(selectClause)
+            .eq('created_by_doctor_id', doctorKey)
+            .order('created_at', { ascending: false });
+
+          if (!result.error) {
+            (result.data || []).forEach((row) => merged.push(row));
+            continue;
+          }
+
+          const code = String(result.error?.code || '');
+          const msg = String(result.error?.message || '').toLowerCase();
+          const castIssue = code === '22P02' || msg.includes('invalid input syntax');
+          const schemaIssue = ['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code);
+
+          if (castIssue || schemaIssue) {
+            continue;
+          }
+
+          hardError = true;
+          break;
+        }
+
+        if (!hardError) {
+          const seen = new Set();
+          merged.forEach((row) => {
+            const planId = String(row?.id || '').trim();
+            if (!planId || seen.has(planId)) return;
+            seen.add(planId);
+            ownedPlans.push(row);
+          });
+          break;
+        }
+      }
+
+      if (ownedPlans.length) {
+        const fallbackPlanIds = [...new Set(ownedPlans.map((p) => String(p?.id || '').trim()).filter(Boolean))];
+        const fallbackEncounterIds = [...new Set(ownedPlans.map((p) => String(p?.encounter_id || '').trim()).filter(Boolean))];
+
+        const fallbackEncounterMap = new Map();
+        if (fallbackEncounterIds.length > 0) {
+          const encounterSelects = [
+            'id, patient_id, created_at',
+            'id, patient_id',
+          ];
+
+          for (const selectClause of encounterSelects) {
+            const result = await supabase
+              .from('patient_encounters')
+              .select(selectClause)
+              .in('id', fallbackEncounterIds);
+
+            if (!result.error) {
+              (result.data || []).forEach((enc) => {
+                if (enc?.id) fallbackEncounterMap.set(String(enc.id), enc);
+              });
+              break;
+            }
+          }
+        }
+
+        const fallbackItemsFromTable = async (tableName) => {
+          const selects = [
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_fdi_code, tooth_number, chair_no, chair, status, scheduled_at, scheduledAt, scheduled_date, due_date, created_at',
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_fdi_code, tooth_number, chair_no, chair, status, scheduled_at, due_date, created_at',
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_number, chair_no, chair, status, due_date, created_at',
+          ];
+
+          for (const selectClause of selects) {
+            const result = await supabase
+              .from(tableName)
+              .select(selectClause)
+              .in('treatment_plan_id', fallbackPlanIds)
+              .order('created_at', { ascending: true });
+
+            if (!result.error) {
+              return Array.isArray(result.data) ? result.data : [];
+            }
+
+            const code = String(result.error?.code || '');
+            if (code === '42P01') return [];
+            if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) break;
+          }
+
+          return [];
+        };
+
+        const [fallbackItemsA, fallbackItemsB] = await Promise.all([
+          fallbackItemsFromTable('treatment_items'),
+          fallbackItemsFromTable('treatment_plan_items'),
+        ]);
+
+        const fallbackPlanById = new Map();
+        ownedPlans.forEach((plan) => {
+          const id = String(plan?.id || '').trim();
+          if (id) fallbackPlanById.set(id, plan);
+        });
+
+        const fallbackPatientIds = new Set();
+        ownedPlans.forEach((plan) => {
+          const direct = String(plan?.patient_id || '').trim();
+          if (direct) fallbackPatientIds.add(direct);
+          const encounter = fallbackEncounterMap.get(String(plan?.encounter_id || '').trim());
+          const fromEncounter = String(encounter?.patient_id || '').trim();
+          if (fromEncounter) fallbackPatientIds.add(fromEncounter);
+        });
+
+        const fallbackPatientMap = new Map(patientMap);
+        if (fallbackPatientIds.size > 0) {
+          const ids = Array.from(fallbackPatientIds);
+          const patientSelects = [
+            { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name', key: 'id' },
+            { select: 'id, patient_id, name', key: 'patient_id' },
+          ];
+
+          for (const cfg of patientSelects) {
+            const result = await supabase.from('patients').select(cfg.select).in(cfg.key, ids);
+            if (!result.error) {
+              (result.data || []).forEach((patient) => {
+                const keyA = String(patient?.id || '').trim();
+                const keyB = String(patient?.patient_id || '').trim();
+                const full = String(patient?.name || patient?.full_name || '').trim();
+                const first = String(patient?.first_name || '').trim();
+                const last = String(patient?.last_name || '').trim();
+                const fallback = [first, last].filter(Boolean).join(' ').trim();
+                const patientName = full || fallback || keyA || keyB || 'Unknown Patient';
+                const health = patient?.health && typeof patient.health === 'object' ? patient.health : {};
+                const riskLevel = String(patient?.risk_level || health?.riskLevel || health?.risk_level || '').toLowerCase();
+                const hasMedicalRisk =
+                  riskLevel === 'high' ||
+                  riskLevel === 'critical' ||
+                  patient?.high_risk === true ||
+                  health?.hasMedicalRisk === true ||
+                  health?.medicalRisk === true ||
+                  health?.riskFlag === true;
+
+                const mapped = { patientName, hasMedicalRisk };
+                if (keyA) fallbackPatientMap.set(keyA, mapped);
+                if (keyB) fallbackPatientMap.set(keyB, mapped);
+              });
+              break;
+            }
+          }
+        }
+
+        const allFallbackItems = [...fallbackItemsA, ...fallbackItemsB];
+        const isTodayLike = (value) => {
+          const normalized = String(value || '').trim();
+          if (!normalized) return false;
+          return dateAliasSet.has(normalized.slice(0, 10));
+        };
+
+        const pickIso = (item, planCreatedAt) => {
+          const candidates = [
+            item?.scheduled_at,
+            item?.scheduledAt,
+            item?.scheduled_date,
+            item?.due_date,
+            item?.created_at,
+            planCreatedAt,
+          ];
+          for (const value of candidates) {
+            if (!value) continue;
+            const ts = Date.parse(String(value));
+            if (Number.isFinite(ts)) return new Date(ts).toISOString();
+          }
+          return null;
+        };
+
+        const fallbackAppointmentsRaw = allFallbackItems
+          .map((item) => {
+            const planId = String(item?.treatment_plan_id || '').trim();
+            if (!planId) return null;
+
+            const plan = fallbackPlanById.get(planId) || null;
+            const encounter = fallbackEncounterMap.get(String(plan?.encounter_id || '').trim()) || null;
+            const patientId = String(plan?.patient_id || encounter?.patient_id || '').trim();
+
+            const dateIso = pickIso(item, plan?.created_at);
+            if (!dateIso) return null;
+
+            const rawDateSource =
+              item?.scheduled_at ||
+              item?.scheduledAt ||
+              item?.scheduled_date ||
+              item?.due_date ||
+              item?.created_at ||
+              plan?.created_at ||
+              null;
+
+            const patientInfo = fallbackPatientMap.get(patientId) || { patientName: 'Unknown Patient', hasMedicalRisk: false };
+            const procedureName = String(item?.procedure_name || item?.procedure_code || 'Procedure').trim();
+            const tooth = String(item?.tooth_fdi_code || item?.tooth_number || '').trim();
+            const procedureSummary = tooth ? `${procedureName} (${tooth})` : procedureName;
+
+            return {
+              appointmentId: `fallback-${String(item?.id || '').trim() || `${planId}-${dateIso}`}`,
+              date: dateIso,
+              time: dateIso.slice(11, 16) || '--:--',
+              chairNumber: String(item?.chair_no || item?.chair || '').trim() || '-',
+              patientId,
+              patientName: patientInfo.patientName,
+              procedureSummary,
+              planId,
+              status: normalizeStatus(item?.status),
+              hasMedicalRisk: patientInfo.hasMedicalRisk === true,
+              rawDateSource: rawDateSource ? String(rawDateSource) : null,
+            };
+          })
+          .filter((item) => !!item && !!item.planId);
+
+        const fallbackToday = fallbackAppointmentsRaw.filter((item) => {
+          const byRawSource = isTodayLike(item?.rawDateSource);
+          const byIsoDate = isTodayLike(item?.date);
+          return byRawSource || byIsoDate;
+        });
+        const fallbackUpcoming = fallbackAppointmentsRaw
+          .slice()
+          .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time).localeCompare(String(b.time)))
+          .slice(0, 12);
+
+        const fallbackAppointments = fallbackToday.length > 0 ? fallbackToday : fallbackUpcoming;
+
+        if (fallbackAppointments.length) {
+          const seenIds = new Set();
+          appointments = fallbackAppointments
+            .filter((item) => {
+              const key = String(item.appointmentId || '').trim();
+              if (!key || seenIds.has(key)) return false;
+              seenIds.add(key);
+              return true;
+            })
+            .sort((a, b) => {
+              const dateDiff = String(a.date).localeCompare(String(b.date));
+              if (dateDiff !== 0) return dateDiff;
+              return String(a.time).localeCompare(String(b.time));
+            });
+        }
+      }
+    }
+
+    if (!appointments.length) {
+      const doctorKeysRaw = [...new Set([
+        String(req.doctorId || '').trim(),
+        String(req?.doctor?.id || '').trim(),
+        String(req?.doctor?.doctor_id || '').trim(),
+      ].filter(Boolean))];
+
+      const doctorKeys = [...new Set([
+        ...doctorKeysRaw,
+        ...doctorKeysRaw.map((value) => value.toLowerCase()),
+        ...doctorKeysRaw.map((value) => value.toUpperCase()),
+      ].filter(Boolean))];
+
+      const planSelects = [
+        'id, encounter_id, created_by_doctor_id, created_at',
+        'id, encounter_id, created_by_doctor_id',
+      ];
+
+      let plans = [];
+      for (const selectClause of planSelects) {
+        const merged = [];
+        let hardError = false;
+
+        for (const doctorKey of doctorKeys) {
+          const result = await supabase
+            .from('treatment_plans')
+            .select(selectClause)
+            .eq('created_by_doctor_id', doctorKey)
+            .order('created_at', { ascending: false });
+
+          if (!result.error) {
+            (Array.isArray(result.data) ? result.data : []).forEach((row) => merged.push(row));
+            continue;
+          }
+
+          const code = String(result.error?.code || '');
+          const msg = String(result.error?.message || '').toLowerCase();
+          const castIssue = code === '22P02' || msg.includes('invalid input syntax');
+          const schemaIssue = ['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code);
+          if (castIssue || schemaIssue) continue;
+
+          hardError = true;
+          break;
+        }
+
+        if (!hardError) {
+          const seen = new Set();
+          plans = merged.filter((row) => {
+            const id = String(row?.id || '').trim();
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return true;
+          });
+          break;
+        }
+      }
+
+      if (plans.length > 0) {
+        const planIds = plans.map((p) => String(p?.id || '').trim()).filter(Boolean);
+        const encounterIds = [...new Set(plans.map((p) => String(p?.encounter_id || '').trim()).filter(Boolean))];
+
+        const readItemsFromTable = async (tableName) => {
+          const selects = [
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_fdi_code, tooth_number, status, due_date, scheduled_at, scheduled_date, updated_at, created_at, chair_no, chair',
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_fdi_code, tooth_number, status, due_date, updated_at, created_at, chair_no, chair',
+            'id, treatment_plan_id, procedure_name, procedure_code, tooth_number, status, due_date, updated_at, created_at',
+            'id, treatment_plan_id, procedure_code, status, created_at',
+          ];
+
+          for (const selectClause of selects) {
+            const result = await supabase
+              .from(tableName)
+              .select(selectClause)
+              .in('treatment_plan_id', planIds)
+              .order('created_at', { ascending: false });
+
+            if (!result.error) {
+              return Array.isArray(result.data) ? result.data : [];
+            }
+
+            const code = String(result.error?.code || '');
+            if (code === '42P01') return [];
+            if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) break;
+          }
+
+          return [];
+        };
+
+        const [itemsA, itemsB] = await Promise.all([
+          readItemsFromTable('treatment_items'),
+          readItemsFromTable('treatment_plan_items'),
+        ]);
+
+        const encounterMap = new Map();
+        if (encounterIds.length > 0) {
+          const encounterSelects = ['id, patient_id', 'id, patient_id, created_at'];
+          for (const selectClause of encounterSelects) {
+            const result = await supabase
+              .from('patient_encounters')
+              .select(selectClause)
+              .in('id', encounterIds);
+
+            if (!result.error) {
+              (result.data || []).forEach((row) => {
+                if (row?.id) encounterMap.set(String(row.id), row);
+              });
+              break;
+            }
+          }
+        }
+
+        const patientIds = [...new Set(
+          Array.from(encounterMap.values()).map((enc) => String(enc?.patient_id || '').trim()).filter(Boolean)
+        )];
+        const patientMap = new Map();
+        if (patientIds.length > 0) {
+          const patientSelects = [
+            { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, full_name, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, name, first_name, last_name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name, risk_level, health', key: 'id' },
+            { select: 'id, patient_id, name, risk_level, health', key: 'patient_id' },
+            { select: 'id, patient_id, name', key: 'id' },
+            { select: 'id, patient_id, name', key: 'patient_id' },
+          ];
+
+          for (const cfg of patientSelects) {
+            const result = await supabase.from('patients').select(cfg.select).in(cfg.key, patientIds);
+            if (!result.error) {
+              (result.data || []).forEach((patient) => {
+                const keyA = String(patient?.id || '').trim();
+                const keyB = String(patient?.patient_id || '').trim();
+                const full = String(patient?.name || patient?.full_name || '').trim();
+                const first = String(patient?.first_name || '').trim();
+                const last = String(patient?.last_name || '').trim();
+                const fallback = [first, last].filter(Boolean).join(' ').trim();
+                const patientName = full || fallback || keyA || keyB || 'Unknown Patient';
+                const health = patient?.health && typeof patient.health === 'object' ? patient.health : {};
+                const riskLevel = String(patient?.risk_level || health?.riskLevel || health?.risk_level || '').toLowerCase();
+                const hasMedicalRisk =
+                  riskLevel === 'high' ||
+                  riskLevel === 'critical' ||
+                  patient?.high_risk === true ||
+                  health?.hasMedicalRisk === true ||
+                  health?.medicalRisk === true ||
+                  health?.riskFlag === true;
+
+                const mapped = { patientName, hasMedicalRisk };
+                if (keyA) patientMap.set(keyA, mapped);
+                if (keyB) patientMap.set(keyB, mapped);
+              });
+              break;
+            }
+          }
+        }
+
+        const planMap = new Map();
+        plans.forEach((plan) => {
+          const key = String(plan?.id || '').trim();
+          if (key) planMap.set(key, plan);
+        });
+
+        const pickIso = (item, planCreatedAt) => {
+          const candidates = [
+            item?.scheduled_at,
+            item?.scheduled_date,
+            item?.due_date,
+            item?.updated_at,
+            item?.created_at,
+            planCreatedAt,
+          ];
+          for (const value of candidates) {
+            if (!value) continue;
+            const ts = Date.parse(String(value));
+            if (Number.isFinite(ts)) return new Date(ts).toISOString();
+          }
+          return `${todayLocal}T09:00:00.000Z`;
+        };
+
+        const normalizeTaskStatus = (value) => {
+          const status = String(value || '').trim().toUpperCase();
+          if (status === 'IN_PROGRESS' || status === 'ACTIVE' || status === 'ONGOING') return 'in_progress';
+          if (status === 'COMPLETED' || status === 'DONE' || status === 'FINISHED') return 'completed';
+          return 'scheduled';
+        };
+
+        const taskFallbackAppointments = [...itemsA, ...itemsB]
+          .map((item) => {
+            const planId = String(item?.treatment_plan_id || '').trim();
+            if (!planId) return null;
+            const plan = planMap.get(planId) || null;
+            if (!plan) return null;
+
+            const encounter = encounterMap.get(String(plan?.encounter_id || '').trim()) || null;
+            const patientId = String(encounter?.patient_id || '').trim();
+            const patientInfo = patientMap.get(patientId) || { patientName: 'Unknown Patient', hasMedicalRisk: false };
+
+            const iso = pickIso(item, plan?.created_at);
+            const procedureName = String(item?.procedure_name || item?.procedure_code || 'Procedure').trim();
+            const tooth = String(item?.tooth_fdi_code || item?.tooth_number || '').trim();
+
+            return {
+              appointmentId: `task-${String(item?.id || '').trim() || `${planId}-${iso}`}`,
+              date: iso,
+              time: String(iso).slice(11, 16) || '--:--',
+              chairNumber: String(item?.chair_no || item?.chair || '-').trim() || '-',
+              patientId,
+              patientName: patientInfo.patientName,
+              procedureSummary: tooth ? `${procedureName} (${tooth})` : procedureName,
+              planId,
+              status: normalizeTaskStatus(item?.status),
+              hasMedicalRisk: patientInfo.hasMedicalRisk === true,
+            };
+          })
+          .filter((item) => !!item)
+          .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.time).localeCompare(String(b.time)))
+          .slice(0, 12);
+
+        if (taskFallbackAppointments.length > 0) {
+          appointments = taskFallbackAppointments;
+        }
+      }
+    }
+
+    return res.json({ ok: true, appointments });
+  } catch (error) {
+    console.error('[DOCTOR TODAY APPOINTMENTS] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+};
+
+app.get('/api/doctors/:id/today-appointments', requireDoctorAuth, getDoctorTodayAppointmentsHandler);
+app.get('/doctors/:id/today-appointments', requireDoctorAuth, getDoctorTodayAppointmentsHandler);
+
+// Get doctor recent activities
+app.get('/api/doctor/recent-activities', requireDoctorAuth, async (req, res) => {
+  try {
+    // TODO: gerçek DB sorguları eklenecek
+    res.json([
+      { id: "1", text: "Yeni hasta kaydı oluşturuldu - Ahmet Yılmaz" },
+      { id: "2", text: "Tanı raporu güncellendi - Ayşe Demir" },
+      { id: "3", text: "Reçete yazıldı - Mehmet Kaya" },
+      { id: "4", text: "Laboratuvar sonucu eklendi - Zeynep Öztürk" },
+      { id: "5", text: "Kontrol randevusu planlandı - Fatma Aksoy" }
+    ]);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'activities_error' });
+  }
+});
+
+function icdDisplayDescriptionFromRow(row, langRaw) {
+  const lang = String(langRaw || 'tr').toLowerCase().trim().slice(0, 2) || 'tr';
+  const t = (v) => (v != null && String(v).trim() ? String(v).trim() : '');
+  const seq = [];
+  if (lang === 'en') {
+    seq.push(t(row.title_en), t(row.description_en), t(row.title_tr), t(row.description_tr));
+  } else if (lang === 'ru') {
+    seq.push(
+      t(row.title_ru),
+      t(row.description_ru),
+      t(row.title_en),
+      t(row.description_en),
+      t(row.title_tr),
+      t(row.description_tr)
+    );
+  } else if (lang === 'ka') {
+    seq.push(
+      t(row.title_ka),
+      t(row.description_ka),
+      t(row.title_en),
+      t(row.description_en),
+      t(row.title_tr),
+      t(row.description_tr)
+    );
+  } else {
+    seq.push(t(row.title_tr), t(row.description_tr), t(row.title_en), t(row.description_en));
+  }
+  for (let i = 0; i < seq.length; i += 1) {
+    if (seq[i]) return seq[i];
+  }
+  return t(row.category) || t(row.description) || '';
+}
+
+app.get('/api/icd/search', requireDoctorAuth, async (req, res) => {
+  try {
+    const qRaw = typeof req.query?.q === 'string' ? req.query.q : '';
+    const q = qRaw.trim();
+    const langQ = typeof req.query?.lang === 'string' ? req.query.lang : '';
+
+    if (q.length < 2) {
+      return res.json({ ok: true, results: [] });
+    }
+
+    const like = `%${q}%`;
+
+    const codesSelectCandidates = [
+      'code, category, title_tr, title_en, title_ru, title_ka, description_tr, description_en, description_ru, description_ka',
+      'code, category, title_tr, title_en, description_tr, description_en',
+      'code, category, title_tr, title_en',
+      'code, category',
+      'code',
+    ];
+
+    for (const selectClause of codesSelectCandidates) {
+      const result = await supabase
+        .from('icd10_codes')
+        .select(selectClause)
+        .or(`code.ilike.${like},category.ilike.${like}`)
+        .order('code', { ascending: true })
+        .limit(20);
+
+      if (!result.error) {
+        const rows = Array.isArray(result.data) ? result.data : [];
+        const mapped = rows.map((row) => {
+          const filled = fillIcdRowFromStatic(row);
+          return {
+            code: filled?.code || null,
+            category: filled?.category || null,
+            title_tr: filled?.title_tr || null,
+            title_en: filled?.title_en || null,
+            title_ru: filled?.title_ru || null,
+            title_ka: filled?.title_ka || null,
+            description_tr: filled?.description_tr || null,
+            description_en: filled?.description_en || null,
+            description_ru: filled?.description_ru || null,
+            description_ka: filled?.description_ka || null,
+            description: icdDisplayDescriptionFromRow(filled, langQ),
+          };
+        });
+        return res.json({ ok: true, results: mapped });
+      }
+
+      const code = String(result.error?.code || '');
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code)) {
+        console.error('[ICD SEARCH] icd10_codes query failed:', result.error);
+        return res.status(500).json({ ok: false, error: 'internal_error' });
+      }
+    }
+
+    const dentalSelectCandidates = [
+      'code, description',
+      'code, title_tr, title_en, title_ru, title_ka, description_tr, description_en, description_ru, description_ka',
+      'code',
+    ];
+
+    for (const selectClause of dentalSelectCandidates) {
+      const result = await supabase
+        .from('icd10_dental_codes')
+        .select(selectClause)
+        .or(`code.ilike.${like},description.ilike.${like}`)
+        .order('code', { ascending: true })
+        .limit(20);
+
+      if (!result.error) {
+        const rows = Array.isArray(result.data) ? result.data : [];
+        const mapped = rows.map((row) => {
+          const filled = fillIcdRowFromStatic(row);
+          return {
+            code: filled?.code || row?.code || null,
+            category: null,
+            title_tr: filled?.title_tr || null,
+            title_en: filled?.title_en || null,
+            title_ru: filled?.title_ru || null,
+            title_ka: filled?.title_ka || null,
+            description_tr: filled?.description_tr || null,
+            description_en: filled?.description_en || null,
+            description_ru: filled?.description_ru || null,
+            description_ka: filled?.description_ka || null,
+            description:
+              icdDisplayDescriptionFromRow(filled, langQ) ||
+              row?.description ||
+              row?.title_tr ||
+              row?.title_en ||
+              row?.description_tr ||
+              row?.description_en ||
+              null,
+          };
+        });
+        return res.json({ ok: true, results: mapped });
+      }
+
+      const code = String(result.error?.code || '');
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code)) {
+        console.error('[ICD SEARCH] icd10_dental_codes query failed:', result.error);
+        return res.status(500).json({ ok: false, error: 'internal_error' });
+      }
+    }
+
+    return res.json({ ok: true, results: [] });
+  } catch (error) {
+    console.error('[ICD SEARCH] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// ================== DOCTOR ENCOUNTER & TREATMENT PLAN ROUTES (CONSOLIDATED) ==================
+
+app.post('/api/doctor/encounters', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = req.doctorId;
+    const { patient_id, force_new } = req.body || {};
+
+    console.log('[DOCTOR ENCOUNTERS] create request:', { patient_id, doctorId, force_new });
+
+    if (!patient_id) {
+      return res.status(400).json({ ok: false, error: 'patient_id_required' });
+    }
+
+    const clinicIdDoc = String(req?.doctor?.clinic_id || '').trim();
+    let resolvedPatientId = String(patient_id || '').trim();
+    if (clinicIdDoc) {
+      const r = await resolveAdminPatientInternalId(patient_id, clinicIdDoc);
+      if (r) resolvedPatientId = r;
+    }
+    if (!resolvedPatientId || resolvedPatientId === String(patient_id)) {
+      try {
+        const p = await getPatientById(patient_id);
+        if (p?.id) resolvedPatientId = String(p.id);
+      } catch (_) {}
+    }
+    try {
+      const verify = await getPatientById(resolvedPatientId);
+      if (!verify?.id) {
+        return res.status(404).json({ ok: false, error: 'patient_not_found' });
+      }
+      resolvedPatientId = String(verify.id);
+    } catch (_) {
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
+    }
+
+    const safeSelect = 'id, patient_id, created_by_doctor_id, status, created_at';
+
+    // Return existing active encounter unless force_new is requested
+    const doctorUuidEarly = String(req?.doctor?.id || req.doctorId || '').trim();
+    const encounterPidKeys = await encounterPatientIdMatchSet(resolvedPatientId, patient_id);
+    if (!force_new) {
+      const { data: existingList } = await supabase
+        .from('patient_encounters')
+        .select(safeSelect)
+        .in('patient_id', encounterPidKeys)
+        .eq('created_by_doctor_id', doctorUuidEarly)
+        .in('status', ['ACTIVE', 'active', 'draft'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const existing = Array.isArray(existingList) && existingList[0] ? existingList[0] : null;
+
+      if (existing) {
+        console.log('[DOCTOR ENCOUNTERS] returning existing encounter:', existing.id);
+        return res.json({ ok: true, encounter: existing, alreadyExists: true });
+      }
+    }
+
+    // Resolve doctor UUID — must be a real UUID for the FK reference
+    const doctorUuid = String(req?.doctor?.id || doctorId || '').trim();
+
+    // Auto-resolve clinicId from doctor context
+    const clinicId = String(req?.doctor?.clinic_id || req?.doctor?.clinicId || '').trim() || null;
+
+    // Try inserting with progressively simpler payloads.
+    // encounter_type CHECK constraint: ('initial', 'followup')
+    // status CHECK constraint: ('draft', 'active', 'closed')
+    // NOTE: Do not put clinic_id in insert payloads unless the column exists — otherwise PGRST204 + extra latency.
+    // To persist clinic on encounter: run migrations/20260324_patient_encounters_clinic_id.sql then prepend a payload with clinic_id here.
+    const insertPayloads = [
+      { patient_id: resolvedPatientId, created_by_doctor_id: doctorUuid, encounter_type: 'initial', status: 'active', created_at: new Date().toISOString() },
+      { patient_id: resolvedPatientId, created_by_doctor_id: doctorUuid, encounter_type: 'initial', status: 'draft', created_at: new Date().toISOString() },
+      // Fallback: some DBs use different status values
+      { patient_id: resolvedPatientId, created_by_doctor_id: doctorUuid, encounter_type: 'examination', status: 'ACTIVE', created_at: new Date().toISOString() },
+      { patient_id: resolvedPatientId, created_by_doctor_id: doctorUuid, status: 'ACTIVE', created_at: new Date().toISOString() },
+    ];
+
+    console.log('[DOCTOR ENCOUNTERS] inserting as doctorUuid:', doctorUuid, 'patient_id:', resolvedPatientId, '(raw:', patient_id, ')');
+
+    let encounter = null;
+    let lastError = null;
+    for (const payload of insertPayloads) {
+      const { data, error } = await supabase
+        .from('patient_encounters')
+        .insert(payload)
+        .select(safeSelect)
+        .single();
+
+      if (!error) { encounter = data; break; }
+      lastError = error;
+      const code = String(error.code || '');
+      console.log('[DOCTOR ENCOUNTERS] payload attempt failed:', code, error.message, '| payload keys:', Object.keys(payload));
+      // Retry on missing column (42703/PGRST204) or check constraint (23514)
+      if (!['42703', 'PGRST204', '23514', '23502'].includes(code)) break;
+    }
+
+    if (!encounter) {
+      console.error('[DOCTOR ENCOUNTERS] create failed:', lastError);
+      return res.status(500).json({ ok: false, error: 'encounter_creation_failed', message: lastError?.message });
+    }
+
+    console.log('[DOCTOR ENCOUNTERS] CREATED:', {
+      encounterId: encounter.id,
+      patientId: resolvedPatientId,
+      doctorId: doctorUuid,
+      clinicId: clinicId || null,
+    });
+    return res.json({ ok: true, encounter });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] ENCOUNTER ERROR / create exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
+app.get('/api/doctor/encounters', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorUuid = String(req?.doctor?.id || "").trim();
+    const doctorId = String(req.doctorId || "").trim();
+    const createdByUuids = [...new Set([doctorUuid, doctorId].filter((k) => k && DOCTOR_FK_UUID_RE.test(k)))];
+
+    const encounterSelectCandidates = [
+      'id, patient_id, created_by_doctor_id, status, notes, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at',
+    ];
+
+    const merged = new Map();
+
+    const runSelect = async (builder) => {
+      for (const selectClause of encounterSelectCandidates) {
+        const result = await builder(selectClause);
+        if (!result.error) {
+          for (const row of result.data || []) {
+            if (row?.id) merged.set(String(row.id), row);
+          }
+          return;
+        }
+        const c = String(result.error.code || "");
+        if (!["42703", "PGRST204"].includes(c)) break;
+      }
+    };
+
+    if (createdByUuids.length > 0) {
+      await runSelect((selectClause) =>
+        supabase
+          .from("patient_encounters")
+          .select(selectClause)
+          .in("created_by_doctor_id", createdByUuids)
+          .order("created_at", { ascending: false })
+          .limit(250)
+      );
+    }
+
+    try {
+      const visible = await buildVisiblePatientIdSetForDoctor(req);
+      const patientKeys = [...visible].map((x) => String(x || "").trim()).filter(Boolean);
+      for (let i = 0; i < patientKeys.length; i += 50) {
+        const chunk = patientKeys.slice(i, i + 50);
+        await runSelect((selectClause) =>
+          supabase
+            .from("patient_encounters")
+            .select(selectClause)
+            .in("patient_id", chunk)
+            .order("created_at", { ascending: false })
+            .limit(150)
+        );
+      }
+    } catch (e) {
+      console.warn("[DOCTOR ENCOUNTERS] list merge by visible patients:", e?.message || e);
+    }
+
+    const encounters = [...merged.values()].sort((a, b) => {
+      const ta = new Date(a?.created_at || 0).getTime();
+      const tb = new Date(b?.created_at || 0).getTime();
+      return tb - ta;
+    });
+
+    return res.json({ ok: true, encounters: encounters.slice(0, 400) });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] list exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.get('/api/doctor/encounters/patient/:patientId', requireDoctorAuth, async (req, res) => {
+  try {
+    const patientId = String(req.params.patientId || '').trim();
+    if (!patientId) {
+      return res.status(400).json({ ok: false, error: 'patientId_required' });
+    }
+
+    const pat = await resolvePatientRowForEncounterPatientId(patientId);
+    if (!pat?.id) {
+      return res.status(404).json({ ok: false, error: 'patient_not_found' });
+    }
+    const allowed = await doctorHasTreatmentTeamAccessToPatientId(String(pat.id), req);
+    if (!allowed) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+
+    const encounterPidKeys = await encounterPatientIdMatchSet(String(pat.id), patientId);
+    if (!encounterPidKeys.length) {
+      return res.json({ ok: true, encounters: [] });
+    }
+
+    const encounterSelectCandidates = [
+      'id, patient_id, created_by_doctor_id, status, notes, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at',
+    ];
+
+    let data = [];
+    let error = null;
+    for (const selectClause of encounterSelectCandidates) {
+      const result = await supabase
+        .from('patient_encounters')
+        .select(selectClause)
+        .in('patient_id', encounterPidKeys)
+        .order('created_at', { ascending: false });
+      if (!result.error) {
+        data = result.data || [];
+        error = null;
+        break;
+      }
+      error = result.error;
+      if (!['42703', 'PGRST204'].includes(String(result.error.code || ''))) {
+        break;
+      }
+    }
+
+    if (error) {
+      console.error('[DOCTOR ENCOUNTERS] by patient failed:', error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    return res.json({ ok: true, encounters: data || [] });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] by patient exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.get('/api/doctor/encounters/:id', requireDoctorAuth, async (req, res) => {
+  try {
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) {
+      return res.status(400).json({ ok: false, error: 'encounterId_required' });
+    }
+
+    const allowed = await doctorCanAccessPatientEncounter(encounterId, req);
+    if (!allowed) {
+      return res.json({ ok: true, encounter: null });
+    }
+
+    const encounterSelectCandidates = [
+      'id, patient_id, created_by_doctor_id, status, notes, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at, updated_at',
+      'id, patient_id, created_by_doctor_id, status, created_at',
+    ];
+
+    let data = null;
+    let error = null;
+    for (const selectClause of encounterSelectCandidates) {
+      const result = await supabase
+        .from('patient_encounters')
+        .select(selectClause)
+        .eq('id', encounterId)
+        .maybeSingle();
+      if (!result.error) {
+        data = result.data || null;
+        error = null;
+        break;
+      }
+      error = result.error;
+      if (!['42703', 'PGRST204'].includes(String(result.error.code || ''))) {
+        break;
+      }
+    }
+
+    if (error) {
+      console.error('[DOCTOR ENCOUNTERS] by id failed:', error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    return res.json({ ok: true, encounter: data || null });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] by id exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.patch('/api/doctor/encounters/:id/status', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = req.doctorId;
+    const encounterId = String(req.params.id || '').trim();
+    const status = String(req.body?.status || '').trim();
+
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounterId_required' });
+    if (!status) return res.status(400).json({ ok: false, error: 'status_required' });
+
+    const { data, error } = await supabase
+      .from('patient_encounters')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', encounterId)
+      .eq('created_by_doctor_id', doctorId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[DOCTOR ENCOUNTERS] patch status failed:', error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    return res.json({ ok: true, encounter: data || null });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] patch status exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+/**
+ * Doctor diagnosis API — encounter-based (Seçenek A, tek doğru yol)
+ *
+ * - GET/POST  /api/doctor/encounters/:id/diagnoses   → :id = patient_encounters.id (UUID)
+ * - Auth: requireDoctorAuth (JWT role DOCTOR; doctors tablosu ile eşlenir)
+ * - POST: RPC save_diagnoses_atomic veya encounter_diagnoses insert + verify + mirror (admin endpoint değil)
+ * - Doktor uygulaması /api/admin/patients/... kullanmamalı (requireAdminAuth)
+ */
+app.get('/api/doctor/encounters/:id/diagnoses', requireDoctorAuth, async (req, res) => {
+  try {
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounterId_required' });
+
+    const { allowed, patientId: accessPatientId } = await resolveDoctorEncounterAccess(encounterId, req);
+    if (!allowed) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    const includePatientHistory =
+      req.query.include_patient_history === '1' ||
+      req.query.include_patient_history === 'true' ||
+      String(req.query.include_patient_history || '').toLowerCase() === 'true';
+
+    let rows = [];
+    const { data, error } = await supabase
+      .from('encounter_diagnoses')
+      .select('*')
+      .eq('encounter_id', encounterId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[DOCTOR ENCOUNTERS] diagnoses get failed:', error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+    rows = Array.isArray(data) ? [...data] : [];
+
+    if (includePatientHistory && accessPatientId) {
+      try {
+        const pat = await resolvePatientRowForEncounterPatientId(accessPatientId);
+        if (pat?.id) {
+          const pidKeys = await encounterPatientIdMatchSet(String(pat.id), accessPatientId);
+          const { data: encs, error: encErr } = await supabase
+            .from('patient_encounters')
+            .select('id')
+            .in('patient_id', pidKeys);
+          if (!encErr && Array.isArray(encs)) {
+            const otherIds = encs
+              .map((e) => String(e?.id || '').trim())
+              .filter((id) => id && id !== encounterId);
+            if (otherIds.length > 0) {
+              const { data: hist, error: histErr } = await supabase
+                .from('encounter_diagnoses')
+                .select('*')
+                .in('encounter_id', otherIds)
+                .order('created_at', { ascending: false });
+              if (!histErr && Array.isArray(hist) && hist.length > 0) {
+                rows = rows.concat(hist);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[DOCTOR ENCOUNTERS] diagnoses patient history merge:', e?.message || e);
+      }
+    }
+
+    rows = dedupeDiagnosisRowsById(rows);
+
+    if (rows.length === 0 && accessPatientId) {
+      try {
+        const pat = await resolvePatientRowForEncounterPatientId(accessPatientId);
+        if (pat?.id) {
+          const visitPidKeys = [...new Set([String(pat.id), pat.patient_id != null ? String(pat.patient_id).trim() : ''].filter(Boolean))];
+          const { data: vdRows, error: vdErr } = await supabase
+            .from('visit_diagnoses')
+            .select('*')
+            .in('patient_id', visitPidKeys)
+            .order('created_at', { ascending: false });
+          if (!vdErr && Array.isArray(vdRows)) {
+            for (const v of vdRows) {
+              const vid = String(v?.id || '').trim();
+              rows.push({
+                id: vid ? `visit-${vid}` : `visit-fb-${String(v?.tooth_number)}-${String(v?.icd10_code)}`,
+                encounter_id: encounterId,
+                tooth_number:
+                  v?.tooth_number != null && String(v.tooth_number).trim() !== ''
+                    ? String(v.tooth_number).trim()
+                    : null,
+                icd10_code: v?.icd10_code != null ? String(v.icd10_code).trim() : null,
+                icd10_description: v?.icd10_description != null ? String(v.icd10_description).trim() : null,
+                notes: null,
+                created_at: v?.created_at || null,
+                _source: 'visit_diagnoses',
+              });
+            }
+          }
+        }
+
+        const pat2 = pat || (await resolvePatientRowForEncounterPatientId(accessPatientId));
+        if (pat2?.id) {
+          const clinicId = String(req?.doctor?.clinic_id || req?.doctor?.clinicId || '').trim() || null;
+          let trRow = null;
+          const tr = await fetchPatientTreatmentsRowSupabase(String(pat2.id), clinicId);
+          if (tr?.data) trRow = tr.data;
+          else {
+            const tr2 = await fetchPatientTreatmentsRowSupabase(String(pat2.id), null);
+            if (tr2?.data) trRow = tr2.data;
+          }
+          const jsonDiag = extractDiagnosesFromPatientTreatmentsJson(
+            trRow?.treatments,
+            encounterId,
+            includePatientHistory
+          );
+          if (jsonDiag.length > 0) {
+            rows = rows.concat(jsonDiag);
+          }
+        }
+      } catch (legErr) {
+        console.warn('[DOCTOR ENCOUNTERS] diagnoses legacy fallback:', legErr?.message || legErr);
+      }
+      rows = dedupeDiagnosisRowsById(rows);
+    }
+
+    rows.sort((a, b) => diagnosisSortKeyMs(b) - diagnosisSortKeyMs(a));
+
+    const normalized = rows.map((row) =>
+      normalizeDiagnosisRowForApi({
+        ...row,
+        tooth_number:
+          row?.tooth_number != null && row?.tooth_number !== "" ? String(row.tooth_number) : row?.tooth_number,
+      })
+    );
+
+    if (includePatientHistory) {
+      const histOnly = normalized.filter((r) => String(r?.encounter_id || '').trim() !== encounterId);
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+      res.setHeader('Pragma', 'no-cache');
+      return res.json({
+        ok: true,
+        diagnoses: normalized,
+        patient_history_diagnoses: histOnly.length ? histOnly : undefined,
+      });
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    return res.json({ ok: true, diagnoses: normalized });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] diagnoses get exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// Latest treatment plan for this encounter (used by doctor app encounter detail tabs)
+app.get('/api/doctor/encounters/:id/plan', requireDoctorAuth, async (req, res) => {
+  try {
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounter_id_required' });
+
+    const allowed = await doctorCanAccessPatientEncounter(encounterId, req);
+    if (!allowed) {
+      return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+    }
+
+    const planSelectCandidates = [
+      'id, encounter_id, patient_id, status, created_at, submitted_at, completed_at, created_by_doctor_id',
+      'id, encounter_id, patient_id, status, created_at, created_by_doctor_id',
+      'id, encounter_id, status, created_at, created_by_doctor_id',
+      'id, encounter_id, patient_id, status, created_at',
+      'id, encounter_id, status, created_at',
+      'id, encounter_id, created_at',
+      'id, encounter_id',
+    ];
+
+    let plan = null;
+    let lastErr = null;
+    for (const selectClause of planSelectCandidates) {
+      const result = await supabase
+        .from('treatment_plans')
+        .select(selectClause)
+        .eq('encounter_id', encounterId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!result.error) {
+        plan = result.data || null;
+        lastErr = null;
+        break;
+      }
+      lastErr = result.error;
+      if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(String(result.error.code || ''))) {
+        console.error('[DOCTOR ENCOUNTERS] plan get failed:', result.error);
+        return res.status(500).json({ ok: false, error: 'plan_fetch_failed', message: result.error.message });
+      }
+    }
+
+    if (lastErr) {
+      console.error('[DOCTOR ENCOUNTERS] plan get all selects failed:', lastErr);
+      res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+      return res.json({ ok: true, plan: null });
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    return res.json({ ok: true, plan });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] plan get exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
+// ── Encounter treatments (doctor app: diagnosis → treatment) — table: encounter_treatments
+const _procedureTypeToLabel = Object.fromEntries(
+  (procedures.PROCEDURE_TYPES || []).map((p) => [p.type, p.label])
+);
+const _validProcedureTypeSet = new Set((procedures.PROCEDURE_TYPES || []).map((p) => p.type));
+
+async function doctorOwnsPatientEncounter(encounterId, req) {
+  const doctorId = String(req.doctorId || '').trim();
+  const doctorUuid = String(req?.doctor?.id || doctorId || '').trim();
+  const check = async (key) => {
+    if (!key) return false;
+    const { data } = await supabase
+      .from('patient_encounters')
+      .select('id')
+      .eq('id', encounterId)
+      .eq('created_by_doctor_id', key)
+      .maybeSingle();
+    return !!data;
+  };
+  if (await check(doctorUuid)) return true;
+  if (doctorUuid !== doctorId && (await check(doctorId))) return true;
+  return false;
+}
+
+/**
+ * Tek patient_encounters okuması ile erişim + (izin varsa) patient_id — GET treatments vb. tekrar sorgu yapmaz.
+ * @returns {{ allowed: boolean, patientId: string|null }}
+ */
+async function resolveDoctorEncounterAccess(encounterId, req) {
+  const eid = String(encounterId || '').trim();
+  if (!eid) return { allowed: false, patientId: null };
+
+  const doctorId = String(req.doctorId || '').trim();
+  const doctorUuid = String(req?.doctor?.id || doctorId || '').trim();
+
+  const { data: enc, error: encErr } = await supabase
+    .from('patient_encounters')
+    .select('id, patient_id, created_by_doctor_id')
+    .eq('id', eid)
+    .maybeSingle();
+
+  if (encErr || !enc) return { allowed: false, patientId: null };
+
+  const pid = enc.patient_id != null ? String(enc.patient_id).trim() : '';
+
+  const createdBy = String(enc.created_by_doctor_id || '').trim();
+  let isOwner = false;
+  if (createdBy) {
+    if (createdBy === doctorUuid) isOwner = true;
+    else if (doctorUuid !== doctorId && doctorId && createdBy === doctorId) isOwner = true;
+  }
+  if (isOwner) return { allowed: true, patientId: pid || null };
+
+  const doctorKeys = [...new Set([
+    String(req?.doctor?.id || '').trim(),
+    String(req.doctorId || '').trim(),
+    String(req?.doctor?.doctor_id || '').trim(),
+  ].filter(Boolean))];
+  if (!doctorKeys.length) return { allowed: false, patientId: null };
+
+  if (!pid) return { allowed: false, patientId: null };
+
+  if (await doctorHasTreatmentTeamAccessToEncounter(eid, req)) {
+    return { allowed: true, patientId: pid };
+  }
+
+  // Başka doktorun açtığı muayene: aynı hastada tedavi ekibindeysek (GET /doctor/patients ile aynı küme) tanı/tedaviye erişim
+  if (await doctorHasTreatmentTeamAccessToPatientId(pid, req)) {
+    return { allowed: true, patientId: pid };
+  }
+
+  return { allowed: false, patientId: null };
+}
+
+/**
+ * Bu hastanın herhangi bir muayenesini bu doktor oluşturduysa — GET /api/doctor/patient,
+ * resolveDoctorEncounterAccess (owner) ile aynı çizgide olmalı; aksi halde encounter 200 iken hasta 403 olur.
+ */
+async function doctorOwnsAnyEncounterForPatient(patient, req) {
+  const doctorId = String(req.doctorId || "").trim();
+  const doctorUuid = String(req?.doctor?.id || doctorId || "").trim();
+  const keys = [...new Set([
+    doctorUuid,
+    doctorId,
+    String(req?.doctor?.doctor_id || "").trim(),
+  ].filter(Boolean))];
+  if (!keys.length) return false;
+  const pidA = String(patient?.id || "").trim();
+  const pidB = patient?.patient_id != null ? String(patient.patient_id).trim() : "";
+  const patientKeys = [...new Set([pidA, pidB].filter(Boolean))];
+  if (!patientKeys.length) return false;
+  try {
+    const { data, error } = await supabase
+      .from("patient_encounters")
+      .select("id")
+      .in("patient_id", patientKeys)
+      .in("created_by_doctor_id", keys)
+      .limit(1);
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** patient_encounters.patient_id may be patients.id (UUID) or legacy patients.patient_id (e.g. p_…) */
+async function resolvePatientRowForEncounterPatientId(encounterPatientId) {
+  const raw = String(encounterPatientId || '').trim();
+  if (!raw) return null;
+  const trySelect = async (selectClause, field, value) => {
+    const { data, error } = await supabase
+      .from('patients')
+      .select(selectClause)
+      .eq(field, value)
+      .maybeSingle();
+    return { data, error };
+  };
+  const selectFallbacks = [
+    'id, clinic_id, clinic_code, patient_id, primary_doctor_id, assigned_doctor_id, doctor_id',
+    'id, clinic_id, patient_id, primary_doctor_id, assigned_doctor_id',
+    'id, clinic_id, clinic_code, patient_id',
+    'id, clinic_id, patient_id',
+    'id, clinic_id, clinic_code',
+    'id, clinic_id',
+    'id, patient_id',
+    'id',
+  ];
+  for (const field of ['id', 'patient_id']) {
+    for (const sel of selectFallbacks) {
+      const { data, error } = await trySelect(sel, field, raw);
+      if (!error && data?.id) return data;
+      const code = String(error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) break;
+    }
+  }
+  return null;
+}
+
+/** Collaborator: treatment_doctors.treatment_id → treatment_plans.id for this encounter */
+async function doctorHasTreatmentTeamAccessToEncounter(encounterId, req) {
+  const eid = String(encounterId || '').trim();
+  if (!eid) return false;
+  const rawKeys = [
+    String(req?.doctor?.id || '').trim(),
+    String(req.doctorId || '').trim(),
+    String(req?.doctor?.doctor_id || '').trim(),
+  ].filter(Boolean);
+  const uniq = [...new Set(rawKeys)];
+  if (!uniq.length) return false;
+  try {
+    const { data: plans, error } = await supabase
+      .from('treatment_plans')
+      .select('id')
+      .eq('encounter_id', eid)
+      .limit(80);
+    if (error || !plans?.length) return false;
+    const planIds = [...new Set(plans.map((p) => String(p?.id || '').trim()).filter(Boolean))];
+    if (!planIds.length) return false;
+    const allKeys = await doctorKeysForUuidFkInQuery(uniq);
+    const checkKeys = async (keyList) => {
+      if (!keyList.length) return false;
+      const { data: tdRows } = await supabase
+        .from('treatment_doctors')
+        .select('id')
+        .in('treatment_id', planIds)
+        .in('doctor_id', keyList)
+        .limit(5);
+      return Array.isArray(tdRows) && tdRows.length > 0;
+    };
+    if (await checkKeys(allKeys)) return true;
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * GET /api/doctor/patients ile aynı görünür hasta kimlikleri (tedavi ekibi + primary/assigned + işlem ataması + expand).
+ */
+async function buildVisiblePatientIdSetForDoctor(req) {
+  const doctorKeysRaw = [...new Set([
+    String(req?.doctor?.id || "").trim(),
+    String(req.doctorId || "").trim(),
+    String(req?.doctor?.doctor_id || "").trim(),
+  ].filter(Boolean))];
+  const out = new Set();
+  if (!doctorKeysRaw.length) return out;
+  const clinicId = req?.doctor?.clinic_id || req?.clinicId || null;
+  const [team, fromAssign, fromProcess, fromCal] = await Promise.all([
+    collectPatientIdsFromTreatmentTeam(doctorKeysRaw),
+    collectPatientIdsFromPatientTableDoctorAssignments(doctorKeysRaw),
+    collectPatientIdsFromProcessAndAppointmentAssignments(doctorKeysRaw, clinicId),
+    collectPatientIdsFromClinicCalendarTodayTomorrow(clinicId, doctorKeysRaw),
+  ]);
+  for (const x of team) out.add(x);
+  for (const x of fromAssign) out.add(x);
+  for (const x of fromProcess) out.add(x);
+  for (const x of fromCal) out.add(x);
+  await expandPatientIdSetForDoctorMatching(out);
+  return out;
+}
+
+function patientRowAssignsDoctor(pat, doctorKeysRaw) {
+  if (!pat) return false;
+  const keys = doctorKeysRaw.map((k) => String(k || "").trim()).filter(Boolean);
+  if (!keys.length) return false;
+  const prim = String(pat.primary_doctor_id || "").trim();
+  const assn = String(pat.assigned_doctor_id || "").trim();
+  const leg = String(pat.doctor_id || "").trim();
+  return (
+    (prim && keys.some((k) => k === prim)) ||
+    (assn && keys.some((k) => k === assn)) ||
+    (leg && keys.some((k) => k === leg))
+  );
+}
+
+/**
+ * Tedavi ekibi + hasta tablosu ataması; tanı/muayene okuması için başka doktorun encounter'ına izin.
+ */
+async function doctorHasTreatmentTeamAccessToPatientId(encounterPatientIdRaw, req) {
+  const doctorKeysRaw = [...new Set([
+    String(req?.doctor?.id || '').trim(),
+    String(req.doctorId || '').trim(),
+    String(req?.doctor?.doctor_id || '').trim(),
+  ].filter(Boolean))];
+  if (!doctorKeysRaw.length) return false;
+
+  try {
+    const raw = String(encounterPatientIdRaw || "").trim();
+    if (!raw) return false;
+
+    const pat = await resolvePatientRowForEncounterPatientId(raw);
+    if (!pat?.id) return false;
+
+    if (patientRowAssignsDoctor(pat, doctorKeysRaw)) return true;
+
+    const visible = await buildVisiblePatientIdSetForDoctor(req);
+    const inTeam =
+      visible.has(raw) ||
+      visible.has(String(pat.id).trim()) ||
+      (pat.patient_id != null && visible.has(String(pat.patient_id).trim()));
+    return inTeam;
+  } catch (e) {
+    console.warn("[doctorHasTreatmentTeamAccessToPatientId]", e?.message || e);
+    return false;
+  }
+}
+
+/** Encounter erişimi: encounter sahibi veya tedavi ekibi (resolveDoctorEncounterAccess). */
+async function doctorCanAccessPatientEncounter(encounterId, req) {
+  const { allowed } = await resolveDoctorEncounterAccess(encounterId, req);
+  return allowed;
+}
+
+app.get('/api/doctor/encounters/:id/treatments', requireDoctorAuth, async (req, res) => {
+  try {
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounter_id_required' });
+
+    const { allowed, patientId: accessPatientId } = await resolveDoctorEncounterAccess(encounterId, req);
+    if (!allowed) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    const clinicId = String(req?.doctor?.clinic_id || '').trim();
+
+    const selectAttempts = [
+      'id, encounter_id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, created_at, updated_at',
+      'id, encounter_id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, created_at',
+      'id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, created_at',
+    ];
+
+    let rows = [];
+    let hardErr = null;
+    for (const sel of selectAttempts) {
+      const { data, error } = await supabase
+        .from('encounter_treatments')
+        .select(sel)
+        .eq('encounter_id', encounterId)
+        .order('created_at', { ascending: false });
+      if (!error) {
+        rows = Array.isArray(data) ? data : [];
+        hardErr = null;
+        break;
+      }
+      hardErr = error;
+      const code = String(error.code || '');
+      if (['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code)) continue;
+      break;
+    }
+
+    if (hardErr && String(hardErr.code || '') !== '42P01') {
+      if (['42703', 'PGRST204', 'PGRST205'].includes(String(hardErr.code || ''))) {
+        rows = [];
+        hardErr = null;
+      } else {
+        console.error('[DOCTOR ENCOUNTERS] treatments get failed:', hardErr);
+        return res.status(500).json({ ok: false, error: 'treatments_fetch_failed', message: hardErr.message });
+      }
+    }
+    if (hardErr && String(hardErr.code || '') === '42P01') {
+      rows = [];
+    }
+
+    let priceMap = {};
+
+    const treatments = rows.map((t) => ({
+      ...t,
+      /** PATCH /api/doctor/treatments/:id yalnızca bu satırlar için (encounter_treatments) */
+      persisted_row: true,
+      tooth_fdi_code: t.tooth_number,
+      procedure: t.procedure_type
+        ? {
+            type: t.procedure_type,
+            name: _procedureTypeToLabel[t.procedure_type] || t.procedure_type,
+          }
+        : null,
+      price: null,
+    }));
+
+    const mergeLegacyTeethArrayIntoDoctorTreatments = (teethArr, sourceTag) => {
+      if (!Array.isArray(teethArr)) return;
+      for (const tooth of teethArr) {
+        const tnRaw =
+          tooth?.toothId ??
+          tooth?.tooth_id ??
+          tooth?.toothNumber ??
+          tooth?.fdiNumber ??
+          tooth?.fdiTooth;
+        let tn = Number(String(tnRaw ?? '').trim());
+        if (!Number.isFinite(tn)) {
+          const digits = String(tnRaw ?? '').replace(/\D/g, '');
+          tn = digits ? Number.parseInt(digits.slice(0, 2), 10) : NaN;
+        }
+        if (!Number.isFinite(tn) || tn < 11 || tn > 48) continue;
+        const plist = Array.isArray(tooth.procedures) ? tooth.procedures : [];
+        plist.forEach((proc, pi) => {
+          let typeNorm = procedures.normalizeType(
+            proc?.type || proc?.procedure_type || proc?.procedure || proc?.procedure_name || ''
+          );
+          if (!typeNorm) typeNorm = 'UNKNOWN';
+          const typeU = String(typeNorm).toUpperCase();
+          const procId = `patient-json-${sourceTag}-${proc?.procedureId || proc?.id || `${tn}-${typeU}-${pi}-${proc?.createdAt || ''}`}`;
+          if (treatments.some((x) => String(x.id) === procId)) return;
+          if (doctorTreatmentsListHasDbRowForToothProcedure(treatments, tn, typeU)) return;
+          const stRaw = String(proc?.status || 'PLANNED').toUpperCase();
+          const stDb =
+            stRaw === 'COMPLETED' || stRaw === 'DONE'
+              ? 'completed'
+              : stRaw === 'PLANNED'
+                ? 'planned'
+                : 'active';
+          const schedIso = scheduledIsoFromProcedureLikeProc(proc);
+          const chairVal = chairFromProcedureLikeProc(proc);
+          const adFields = assignedDoctorFieldsFromProcedureLikeProc(proc);
+          let createdIso = null;
+          try {
+            if (proc?.createdAt != null) {
+              const d = new Date(Number(proc.createdAt) || proc.createdAt);
+              if (!Number.isNaN(d.getTime())) createdIso = d.toISOString();
+            }
+          } catch (_) {}
+          if (!createdIso && schedIso) createdIso = schedIso;
+          const label =
+            _procedureTypeToLabel[typeU] ||
+            String(proc?.procedure_name || proc?.procedure || typeNorm || typeU).trim() ||
+            typeU;
+          treatments.push({
+            id: procId,
+            encounter_id: encounterId,
+            tooth_number: tn,
+            tooth_fdi_code: tn,
+            procedure_type: typeU,
+            status: stDb,
+            procedure: { type: typeU, name: label },
+            price: null,
+            scheduled_at: schedIso || null,
+            chair: chairVal,
+            assigned_doctor_id: adFields.id,
+            assigned_doctor_name: adFields.name,
+            created_at: createdIso,
+            persisted_row: false,
+            meta: { source: 'patient_treatments_json', legacy_tag: sourceTag },
+          });
+        });
+      }
+    };
+
+    // Admin / klinik: patients.treatments JSONB + isteğe bağlı v1 patients.treatment — doktor aynı listeyi görsün
+    try {
+      const pid = accessPatientId ? String(accessPatientId).trim() : '';
+      if (pid) {
+        const [trRes, v1Res] = await Promise.all([
+          fetchPatientTreatmentsRowSupabase(pid, null),
+          fetchPatientTreatmentRowSupabase(pid, null),
+        ]);
+        const { data: trRow, error: trErr } = trRes;
+        if (!trErr && trRow && isPlainObject(trRow.treatments) && Array.isArray(trRow.treatments.teeth)) {
+          mergeLegacyTeethArrayIntoDoctorTreatments(trRow.treatments.teeth, 'treatments');
+        }
+        const { data: v1Row, error: v1Err } = v1Res;
+        if (!v1Err && v1Row && isPlainObject(v1Row.treatment)) {
+          const patientKey = String(v1Row.id || pid);
+          const legacy = treatmentV1ToLegacyTreatments(v1Row.treatment, patientKey);
+          if (Array.isArray(legacy?.teeth)) {
+            mergeLegacyTeethArrayIntoDoctorTreatments(legacy.teeth, 'treatment_v1');
+          }
+        }
+      }
+    } catch (mergeErr) {
+      console.error('[DOCTOR ENCOUNTERS] treatments merge patient JSON failed:', mergeErr?.message || mergeErr);
+    }
+
+    try {
+      const pid = accessPatientId ? String(accessPatientId).trim() : '';
+      if (pid && isSupabaseEnabled()) {
+        const apptRows = await fetchAppointmentsRowsForPatientOverlay(supabase, pid, clinicId);
+        applyAppointmentsScheduleOverlayToDoctorTreatments(treatments, apptRows);
+      }
+    } catch (overlayErr) {
+      console.warn('[DOCTOR ENCOUNTERS] appointments schedule overlay:', overlayErr?.message || overlayErr);
+    }
+
+    try {
+      if (isSupabaseEnabled()) {
+        await attachDoctorNamesToEncounterTreatmentsList(treatments, supabase);
+      }
+    } catch (nameErr) {
+      console.warn('[DOCTOR ENCOUNTERS] doctor names attach:', nameErr?.message || nameErr);
+    }
+
+    const allTypes = [...new Set(treatments.map((t) => t.procedure_type).filter(Boolean))];
+    if (clinicId && allTypes.length > 0) {
+      const { data: prices } = await supabase
+        .from('treatment_prices')
+        .select('type, price, currency')
+        .eq('clinic_id', clinicId)
+        .eq('is_active', true)
+        .in('type', allTypes);
+      (prices || []).forEach((p) => {
+        priceMap[p.type] = { price: p.price, currency: p.currency };
+      });
+      treatments.forEach((t) => {
+        if (t.procedure_type && priceMap[t.procedure_type]) {
+          t.price = priceMap[t.procedure_type];
+        }
+      });
+    }
+
+    res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate');
+    return res.json({ ok: true, treatments });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] treatments get exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
+app.post('/api/doctor/encounters/:id/treatments', requireDoctorAuth, async (req, res) => {
+  try {
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounter_id_required' });
+
+    const allowed = await doctorCanAccessPatientEncounter(encounterId, req);
+    if (!allowed) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    let { tooth_number, procedure_type, procedure_id, scheduled_at, chair, assigned_doctor_id } = req.body || {};
+    const doctorUuid = String(req?.doctor?.id || req.doctorId || '').trim();
+    const clinicId = String(req?.doctor?.clinic_id || '').trim();
+
+    const procType = String(procedure_type || procedure_id || '').toUpperCase().trim();
+    if (typeof tooth_number === 'string') tooth_number = Number(tooth_number);
+    if (typeof tooth_number !== 'number' || tooth_number < 11 || tooth_number > 48) {
+      return res.status(400).json({ ok: false, error: 'invalid_tooth_number' });
+    }
+    if (!procType || !_validProcedureTypeSet.has(procType)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_procedure_type',
+        valid_types: [..._validProcedureTypeSet].slice(0, 30),
+      });
+    }
+
+    // procedure_id FK → procedures.id: yalnızca gerçek UUID gönder; tip kodu → sütunu gönderme (procedure_type yeterli)
+    const procedureIdCol = procedureIdForEncounterTreatmentColumn(procedure_id);
+    const insertRow = {
+      encounter_id: encounterId,
+      tooth_number,
+      procedure_type: procType,
+      status: 'planned',
+      created_by_doctor_id: doctorUuid || req.doctorId,
+    };
+    if (procedureIdCol) insertRow.procedure_id = procedureIdCol;
+    if (scheduled_at) insertRow.scheduled_at = scheduled_at;
+    if (chair) insertRow.chair = String(chair);
+    if (assigned_doctor_id) insertRow.assigned_doctor_id = String(assigned_doctor_id);
+
+    const insertAttempts = [insertRow, { ...insertRow }];
+    delete insertAttempts[1].assigned_doctor_id;
+
+    let data = null;
+    let lastInsErr = null;
+    for (const row of insertAttempts) {
+      const r = await supabase
+        .from('encounter_treatments')
+        .insert(row)
+        .select(
+          'id, encounter_id, tooth_number, procedure_type, status, assigned_doctor_id, chair, scheduled_at, created_at, updated_at'
+        )
+        .single();
+      if (!r.error) {
+        data = r.data;
+        lastInsErr = null;
+        break;
+      }
+      lastInsErr = r.error;
+      const code = String(r.error.code || '');
+      if (code === '42703' || code === 'PGRST204') continue;
+      if (code === '42P01') {
+        return res.status(503).json({
+          ok: false,
+          error: 'encounter_treatments_table_missing',
+          message: 'Run DB migration for encounter_treatments or use treatment_plans flow',
+        });
+      }
+      break;
+    }
+
+    if (!data) {
+      console.error('[DOCTOR ENCOUNTERS] treatments post failed:', lastInsErr);
+      const pgCode = String(lastInsErr?.code || '');
+      if (pgCode === '23502') {
+        return res.status(503).json({
+          ok: false,
+          error: 'procedure_id_required_by_schema',
+          message:
+            'Database requires procedure_id but doctor app sends only procedure_type. Run migrations/20260326_encounter_treatments_drop_procedure_fk.sql or make procedure_id nullable.',
+        });
+      }
+      if (pgCode === '23503') {
+        return res.status(400).json({
+          ok: false,
+          error: 'procedure_id_invalid_fk',
+          message:
+            'procedure_id is not a valid procedures.id. Send only procedure_type for catalog codes, or fix DB FK (see migrations/20260326_encounter_treatments_drop_procedure_fk.sql).',
+        });
+      }
+      return res.status(500).json({
+        ok: false,
+        error: 'treatment_create_failed',
+        message: lastInsErr?.message || 'insert_failed',
+      });
+    }
+
+    const { planId: procDbgPlanId, planTreatmentIdCol: procDbgPlanTid } = await resolveTreatmentPlanIdForEncounter(encounterId);
+    if (String(process.env.DOCTOR_ASSIGN_DEBUG || "").trim() === "1") {
+      console.log("PROCEDURE CREATE DEBUG", {
+        encounterId,
+        treatmentPlanId: procDbgPlanId,
+        planTreatmentIdColumn: procDbgPlanTid,
+        assignedDoctorId: assigned_doctor_id ? String(assigned_doctor_id) : null,
+      });
+    }
+    const procSync = await syncTreatmentDoctorFromProcedureAssign(encounterId, assigned_doctor_id);
+    if (assigned_doctor_id && !procSync.ok && !procSync.skipped && !procSync.noPlan && !procSync.doctorUnresolved) {
+      console.warn("[PROCEDURE CREATE] treatment_doctors sync failed", procSync.error);
+    }
+    const docForTdLog = await resolveDoctorsIdByClinicDoctorCode(String(assigned_doctor_id || ""));
+    const docLogId = docForTdLog || (DOCTOR_ROW_UUID_RE.test(String(assigned_doctor_id || "")) ? String(assigned_doctor_id).trim() : "");
+    if (docLogId) {
+      const { data: tdRowsBurhan } = await supabase
+        .from("treatment_doctors")
+        .select("treatment_id, doctor_id, role")
+        .eq("doctor_id", docLogId)
+        .limit(40);
+      console.log("TREATMENT_DOCTORS FOR DOCTOR", { doctorId: docLogId, rows: tdRowsBurhan });
+    }
+
+    let price = null;
+    if (clinicId) {
+      const { data: priceRow } = await supabase
+        .from('treatment_prices')
+        .select('price, currency')
+        .eq('clinic_id', clinicId)
+        .eq('type', procType)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (priceRow) price = { price: priceRow.price, currency: priceRow.currency };
+    }
+
+    await mirrorEncounterTreatmentRowToPatientTreatmentsJson(encounterId, data);
+    bumpTreatmentsCache();
+    return res.json({
+      ok: true,
+      treatment: {
+        ...data,
+        procedure: { type: procType, name: _procedureTypeToLabel[procType] || procType },
+        price,
+      },
+    });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] treatments post exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
+/** PUT/PATCH encounter_treatment — doktor uygulaması tedavi düzenle (cliniflow-app treatment-item) */
+function isEncounterTreatmentUpdateNotFoundErr(error) {
+  if (!error) return false;
+  if (error.code === 'PGRST116') return true;
+  const m = String(error.message || '').toLowerCase();
+  return m.includes('0 rows') || m.includes('no rows');
+}
+
+function encounterTreatmentIdLookupCandidates(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return [];
+  const lower = t.toLowerCase();
+  const upper = t.toUpperCase();
+  return [...new Set([t, lower, upper].filter(Boolean))];
+}
+
+async function handleDoctorEncounterTreatmentPut(req, res) {
+  try {
+    const treatmentIdParam = String(req.params.id || '').trim();
+    if (!treatmentIdParam) {
+      return res.status(400).json({ ok: false, error: 'treatment_id_required' });
+    }
+
+    const { status, chair, assigned_doctor_id, scheduled_at, encounter_id } = req.body || {};
+    const updateFields = {
+      updated_at: new Date().toISOString(),
+    };
+    if (status !== undefined) updateFields.status = status;
+    if (chair !== undefined) updateFields.chair = chair;
+    if (assigned_doctor_id !== undefined) updateFields.assigned_doctor_id = assigned_doctor_id;
+    if (scheduled_at !== undefined) updateFields.scheduled_at = scheduled_at;
+
+    const candidates = encounterTreatmentIdLookupCandidates(treatmentIdParam);
+    const lookups = await Promise.all(
+      candidates.map((cand) =>
+        supabase
+          .from('encounter_treatments')
+          .select('id, encounter_id')
+          .eq('id', cand)
+          .maybeSingle()
+      )
+    );
+    let existing = null;
+    for (const { data, error } of lookups) {
+      if (error) {
+        console.error('[DOCTOR TREATMENTS PUT] lookup', error);
+        return res.status(500).json({ ok: false, error: error.message || 'db_error' });
+      }
+      if (data) {
+        existing = data;
+        break;
+      }
+    }
+
+    if (!existing) {
+      return res.status(404).json({ ok: false, error: 'treatment_not_found' });
+    }
+
+    const encId = String(existing.encounter_id || '').trim();
+    const allowed = encId ? await doctorCanAccessPatientEncounter(encId, req) : false;
+    if (!allowed) {
+      return res.status(404).json({ ok: false, error: 'treatment_not_found' });
+    }
+
+    const encBody = String(encounter_id || '').trim();
+    if (encBody) {
+      const rowEnc = encId;
+      if (
+        rowEnc &&
+        rowEnc.replace(/-/g, '').toLowerCase() !== encBody.replace(/-/g, '').toLowerCase()
+      ) {
+        console.warn('[DOCTOR TREATMENTS PUT] body encounter_id does not match row; updating by id only', {
+          paramId: treatmentIdParam,
+          bodyEncounter: encBody,
+          rowEncounter: rowEnc,
+        });
+      }
+    }
+
+    const canonicalId = existing.id;
+
+    const { data, error } = await supabase
+      .from('encounter_treatments')
+      .update(updateFields)
+      .eq('id', canonicalId)
+      .select()
+      .single();
+
+    if (error) {
+      if (isEncounterTreatmentUpdateNotFoundErr(error)) {
+        return res.status(404).json({ ok: false, error: 'treatment_not_found' });
+      }
+      console.error('[DOCTOR TREATMENTS PUT] update', error);
+      return res.status(500).json({ ok: false, error: error.message || 'db_error' });
+    }
+    if (!data) {
+      return res.status(404).json({ ok: false, error: 'treatment_not_found' });
+    }
+
+    await mirrorEncounterTreatmentRowToPatientTreatmentsJson(encId, data);
+    bumpTreatmentsCache();
+
+    if (assigned_doctor_id !== undefined && assigned_doctor_id !== null && String(assigned_doctor_id).trim() !== "") {
+      const putSync = await syncTreatmentDoctorFromProcedureAssign(encId, assigned_doctor_id);
+      if (String(process.env.DOCTOR_ASSIGN_DEBUG || "").trim() === "1") {
+        console.log("PROCEDURE ASSIGN DEBUG", { encounterId: encId, assignedDoctorId: assigned_doctor_id, sync: putSync });
+      }
+      if (!putSync.ok && !putSync.skipped && !putSync.noPlan && !putSync.doctorUnresolved) {
+        console.warn("[DOCTOR TREATMENTS PUT] treatment_doctors sync failed", putSync.error);
+      }
+    }
+
+    return res.json({ ok: true, treatment: data });
+  } catch (err) {
+    console.error('[DOCTOR TREATMENTS PUT] exception', err);
+    return res.status(500).json({ ok: false, error: err.message || 'update_failed' });
+  }
+}
+
+app.put('/api/doctor/treatments/:id', requireDoctorAuth, handleDoctorEncounterTreatmentPut);
+app.patch('/api/doctor/treatments/:id', requireDoctorAuth, handleDoctorEncounterTreatmentPut);
+
+const DOCTOR_ROW_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Klinik doktor kodu (doctors.doctor_id, örn. SZ45 / sz45) → doctors.id UUID.
+ * Zaten UUID ise aynı stringi döner.
+ */
+async function resolveDoctorsIdByClinicDoctorCode(codeRaw) {
+  const code = String(codeRaw || "").trim();
+  if (!code) return "";
+  if (DOCTOR_ROW_UUID_RE.test(code)) return code;
+  for (const v of [code, code.toUpperCase(), code.toLowerCase()]) {
+    const { data } = await supabase.from("doctors").select("id").eq("doctor_id", v).maybeSingle();
+    if (data?.id) return String(data.id).trim();
+  }
+  return "";
+}
+
+/** treatment_plans row for encounter — treatment_doctors.treatment_id FK = treatment_plans.id (no separate treatment_id column). */
+async function resolveTreatmentPlanIdForEncounter(encounterId) {
+  const eid = String(encounterId || "").trim();
+  if (!eid) return { planId: null, planTreatmentIdCol: null };
+  const selects = ["id, created_at", "id"];
+  for (const sel of selects) {
+    const { data, error } = await supabase
+      .from("treatment_plans")
+      .select(sel)
+      .eq("encounter_id", eid)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!error && data?.id) {
+      const pid = String(data.id).trim();
+      return {
+        planId: pid,
+        planTreatmentIdCol: pid,
+      };
+    }
+    const code = String(error?.code || "");
+    if (!["42703", "PGRST204", "PGRST205"].includes(code)) break;
+  }
+  return { planId: null, planTreatmentIdCol: null };
+}
+
+/** Procedure-level assignee must imply treatment_doctors membership (same treatment_id as treatment_plans.id). */
+async function syncTreatmentDoctorFromProcedureAssign(encounterId, assignedDoctorIdRaw) {
+  const raw = String(assignedDoctorIdRaw || "").trim();
+  if (!raw) return { ok: true, skipped: true };
+  const { planId } = await resolveTreatmentPlanIdForEncounter(encounterId);
+  if (!planId) return { ok: true, noPlan: true };
+  let docUuid = await resolveDoctorsIdByClinicDoctorCode(raw);
+  if (!docUuid && DOCTOR_ROW_UUID_RE.test(raw)) docUuid = raw;
+  if (!docUuid) return { ok: true, doctorUnresolved: true };
+  return ensureTreatmentDoctorRowForPlan(
+    supabase,
+    planId,
+    docUuid,
+    "ASSISTANT",
+    new Date().toISOString()
+  );
+}
+
+/** doctors.id UUID — encounter_diagnoses.created_by_doctor_id FK */
+async function resolveDoctorUuidForEncounterDiagnoses(req) {
+  const fromRow = String(req?.doctor?.id || "").trim();
+  if (fromRow && DOCTOR_ROW_UUID_RE.test(fromRow)) return fromRow;
+  const tok = String(req.doctorId || "").trim();
+  if (tok && DOCTOR_ROW_UUID_RE.test(tok)) return tok;
+  const code = String(req?.doctor?.doctor_id || tok || "").trim();
+  if (code) {
+    const byCode = await resolveDoctorsIdByClinicDoctorCode(code);
+    if (byCode) return byCode;
+  }
+  const em = String(req?.doctor?.email || "").trim().toLowerCase();
+  if (em) {
+    const { data } = await supabase.from("doctors").select("id").eq("email", em).maybeSingle();
+    if (data?.id) return String(data.id).trim();
+  }
+  return fromRow;
+}
+
+function normalizeDiagnosisToothNumber(d) {
+  const raw = d?.tooth_number ?? d?.toothNumber;
+  if (raw === undefined || raw === null || String(raw).trim() === "") return null;
+  const n = parseInt(String(raw).replace(/\D/g, "").slice(0, 2), 10);
+  if (!Number.isFinite(n) || n < 11 || n > 48) return null;
+  return n;
+}
+
+/** Insert/RPC sonrası: satırlar gerçekten encounter_diagnoses içinde mi (sahte 200 önleme) */
+async function verifyEncounterDiagnosesPersisted(encounterId, rows) {
+  const eid = String(encounterId || '').trim();
+  if (!eid || !Array.isArray(rows) || rows.length === 0) {
+    return { ok: false, reason: 'bad_input' };
+  }
+  const ids = rows.map((r) => r?.id).filter(Boolean);
+  if (ids.length !== rows.length) {
+    return { ok: false, reason: 'missing_row_id' };
+  }
+  const { data, error } = await supabase
+    .from('encounter_diagnoses')
+    .select('id, encounter_id')
+    .eq('encounter_id', eid)
+    .in('id', ids);
+  if (error) {
+    return { ok: false, reason: 'verify_query', detail: error.message };
+  }
+  const n = Array.isArray(data) ? data.length : 0;
+  if (n !== ids.length) {
+    return { ok: false, reason: 'row_count_mismatch', expected: ids.length, got: n };
+  }
+  return { ok: true };
+}
+
+app.post('/api/doctor/encounters/:id/diagnoses', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = req.doctorId;
+    const encounterId = String(req.params.id || '').trim();
+    const diagnoses = Array.isArray(req.body?.diagnoses) ? req.body.diagnoses : [];
+    const clinicId = String(req?.doctor?.clinic_id || req?.doctor?.clinicId || '').trim() || null;
+
+    console.log('[ENCOUNTER DIAGNOSES POST] SUPABASE URL:', process.env.SUPABASE_URL || 'NOT SET');
+    console.log('[ENCOUNTER DIAGNOSES POST] supabase client:', supabase ? 'initialized (service_role)' : 'NULL — check SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabase) {
+      console.error('[ENCOUNTER DIAGNOSES POST] Supabase client is null — cannot persist diagnoses');
+      return res.status(503).json({
+        ok: false,
+        error: 'supabase_not_configured',
+        message: 'Database client not initialized',
+      });
+    }
+
+    if (!encounterId) {
+      return res.status(400).json({ ok: false, error: 'missing_encounter', message: 'encounter id is required' });
+    }
+    if (diagnoses.length === 0) return res.status(400).json({ ok: false, error: 'diagnoses_required' });
+
+    console.log('[ENCOUNTER DIAGNOSES POST] CHECK ENCOUNTER:', encounterId);
+
+    const allowed = await doctorCanAccessPatientEncounter(encounterId, req);
+    if (!allowed) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    const { data: encPeek, error: encPeekErr } = await supabase
+      .from('patient_encounters')
+      .select('id, patient_id')
+      .eq('id', encounterId)
+      .maybeSingle();
+    console.log('[ENCOUNTER DIAGNOSES POST] ENCOUNTER EXISTS (maybeSingle):', encPeekErr ? { error: encPeekErr.message } : encPeek);
+
+    const encSingle = await supabase.from('patient_encounters').select('id').eq('id', encounterId).single();
+    console.log('[ENCOUNTER DIAGNOSES POST] ENCOUNTER EXISTS (single):', encSingle.data, 'error:', encSingle.error);
+
+    if (encPeekErr) {
+      console.error('[ENCOUNTER DIAGNOSES POST] patient_encounters lookup', encPeekErr);
+      return res.status(500).json({
+        ok: false,
+        error: 'encounter_lookup_failed',
+        message: encPeekErr.message || 'encounter_lookup_failed',
+      });
+    }
+    if (!encPeek?.id) {
+      console.error('[ENCOUNTER DIAGNOSES POST] encounter row missing:', encounterId);
+      return res.status(404).json({ ok: false, error: 'encounter_not_found', message: 'Muayene kaydı bulunamadı.' });
+    }
+
+    console.log('[ENCOUNTER DIAGNOSES POST] CREATING DIAGNOSIS:', {
+      patientId: encPeek?.patient_id ?? null,
+      doctorId,
+      clinicId,
+      encounterId,
+      diagnosisCount: diagnoses.length,
+    });
+
+    const docUuid = await resolveDoctorUuidForEncounterDiagnoses(req);
+    if (!docUuid || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(docUuid)) {
+      console.error('[DOCTOR ENCOUNTERS] diagnoses: could not resolve doctors.id UUID', { doctorId });
+      return res.status(500).json({
+        ok: false,
+        error: 'doctor_uuid_unresolved',
+        message: 'Doktor kaydı UUID ile eşlenemedi (created_by_doctor_id).',
+      });
+    }
+
+    try {
+      const rpcPayload = {
+        p_encounter_id: encounterId,
+        p_doctor_id: docUuid,
+        p_diagnoses: diagnoses,
+      };
+      console.log('[ENCOUNTER DIAGNOSES POST] RPC PAYLOAD:', JSON.stringify(rpcPayload, null, 0));
+      const rpcResult = await supabase.rpc('save_diagnoses_atomic', rpcPayload);
+      console.log('[ENCOUNTER DIAGNOSES POST] RPC RESULT:', rpcResult.data);
+      console.log('[ENCOUNTER DIAGNOSES POST] RPC ERROR:', rpcResult.error);
+      if (!rpcResult.error) {
+        const rpcOut = rpcResult.data?.diagnoses ?? rpcResult.data;
+        if (Array.isArray(rpcOut) && rpcOut.length > 0) {
+          const verRpc = await verifyEncounterDiagnosesPersisted(encounterId, rpcOut);
+          if (!verRpc.ok) {
+            console.error('[ENCOUNTER DIAGNOSES POST] VERIFY FAILED:', verRpc);
+            return res.status(500).json({
+              ok: false,
+              error: 'diagnosis_verify_failed',
+              message: 'Diagnosis not persisted in database',
+              details: verRpc,
+            });
+          }
+          await mirrorEncounterDiagnosesToPatientTreatmentsJson(encounterId, rpcOut);
+          invalidateTreatmentsCacheForPatient(encPeek?.patient_id);
+          console.log('[ENCOUNTER DIAGNOSES POST] CREATED (rpc):', {
+            encounterId,
+            count: rpcOut.length,
+            ids: rpcOut.map((r) => r?.id).filter(Boolean),
+          });
+          return res.json({
+            ok: true,
+            encounterId,
+            diagnoses: rpcOut,
+            message: 'Diagnoses saved successfully',
+          });
+        }
+        // RPC yok / boş dönüş — doğrudan INSERT'a düş
+      } else {
+        console.warn('[DOCTOR ENCOUNTERS] save_diagnoses_atomic:', rpcResult.error?.message || rpcResult.error);
+      }
+    } catch (rpcErr) {
+      console.warn('[DOCTOR ENCOUNTERS] save_diagnoses_atomic exception:', rpcErr?.message || rpcErr);
+    }
+
+    /** Real schema uses created_by_doctor_id (FK → doctors.id), not doctor_id. */
+    const rowsCore = diagnoses.map((d) => {
+      const code = String(d?.icd10_code || d?.code || '').trim();
+      const desc = String(d?.icd10_description || d?.description || '').trim();
+      const toothNum = normalizeDiagnosisToothNumber(d);
+      const notes = d?.notes != null && String(d.notes).trim() ? String(d.notes).trim() : null;
+      return {
+        encounter_id: encounterId,
+        icd10_code: code || 'Z01.20',
+        icd10_description: desc || (code ? `ICD ${code}` : 'Tanı kaydı'),
+        tooth_number: toothNum,
+        notes,
+        is_primary: false,
+        created_at: new Date().toISOString(),
+      };
+    });
+
+    const tryInserts = [
+      () => rowsCore.map((r) => ({ ...r, created_by_doctor_id: docUuid })),
+      () => rowsCore.map((r) => ({ ...r, doctor_id: docUuid })),
+      () =>
+        rowsCore.map((r) => {
+          const { notes, tooth_number, ...rest } = r;
+          return { ...rest, created_by_doctor_id: docUuid };
+        }),
+    ];
+
+    let data = null;
+    let lastError = null;
+    for (const build of tryInserts) {
+      const payload = build();
+      console.log('[ENCOUNTER DIAGNOSES POST] INSERT PAYLOAD:', JSON.stringify(payload, null, 0));
+      const ins = await supabase.from('encounter_diagnoses').insert(payload).select('*');
+      console.log('[ENCOUNTER DIAGNOSES POST] INSERT RESULT:', ins.data);
+      console.log('[ENCOUNTER DIAGNOSES POST] INSERT ERROR:', ins.error);
+      if (!ins.error && Array.isArray(ins.data) && ins.data.length > 0) {
+        data = ins.data;
+        lastError = null;
+        break;
+      }
+      if (!ins.error && (!ins.data || ins.data.length === 0)) {
+        lastError = { message: 'insert_returned_no_rows', code: 'EMPTY_INSERT' };
+        console.error('[ENCOUNTER DIAGNOSES POST] INSERT OK but no rows returned (batch)');
+        continue;
+      }
+      lastError = ins.error;
+      const code = String(ins.error?.code || '');
+      const msg = String(ins.error?.message || '').toLowerCase();
+      const retryable =
+        ['42703', 'PGRST204', 'PGRST205'].includes(code) ||
+        msg.includes('could not find') ||
+        msg.includes('column');
+      if (!retryable) {
+        if (code === '23505') {
+          const dupMsg =
+            'Veritabanında eski kısıt olabilir: UNIQUE (encounter_id, is_primary) aynı muayenede yalnızca bir tanıya izin verir. Supabase SQL: migrations/20260326_encounter_diagnoses_unique_primary_fix.sql dosyasını çalıştırın.';
+          console.error('[DOCTOR ENCOUNTERS] diagnoses 23505:', msg);
+          const oneByOne = [];
+          for (const row of payload) {
+            console.log('[ENCOUNTER DIAGNOSES POST] INSERT PAYLOAD (single):', JSON.stringify(row, null, 0));
+            const single = await supabase.from('encounter_diagnoses').insert(row).select('*').single();
+            console.log('[ENCOUNTER DIAGNOSES POST] INSERT RESULT (single):', single.data);
+            console.log('[ENCOUNTER DIAGNOSES POST] INSERT ERROR (single):', single.error);
+            if (single.error) {
+              lastError = single.error;
+              if (String(single.error?.code || '') === '23505') {
+                return res.status(503).json({
+                  ok: false,
+                  error: 'diagnosis_schema_constraint',
+                  message: dupMsg,
+                  detail: single.error.message,
+                });
+              }
+              break;
+            }
+            if (!single.data || (typeof single.data === 'object' && !single.data.id)) {
+              lastError = { message: 'insert_returned_no_row', code: 'EMPTY_INSERT' };
+              console.error('[ENCOUNTER DIAGNOSES POST] INSERT OK but single row missing id');
+              break;
+            }
+            oneByOne.push(single.data);
+          }
+          if (oneByOne.length === payload.length && oneByOne.length > 0) {
+            data = oneByOne;
+            lastError = null;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    const savedRows = Array.isArray(data) ? data : data ? [data] : [];
+    if (!data || savedRows.length === 0) {
+      console.error('[ENCOUNTER DIAGNOSES POST] DIAGNOSIS INSERT FAILED:', lastError);
+      const pg = String(lastError?.code || '');
+      const isEmptyResult =
+        pg === 'EMPTY_INSERT' || String(lastError?.message || '').includes('insert_returned_no');
+      const hint =
+        pg === '23503'
+          ? 'created_by_doctor_id veya encounter_id yabancı anahtar hatası — doktor/hasta UUID kontrol edin.'
+          : undefined;
+      return res.status(500).json({
+        ok: false,
+        error: isEmptyResult ? 'insert_empty' : 'insert_failed',
+        message: isEmptyResult
+          ? 'Tanılar veritabanına yazılmadı (empty result)'
+          : 'Tanılar kaydedilemedi',
+        details: lastError?.message || null,
+        code: lastError?.code || undefined,
+        hint,
+      });
+    }
+
+    const verIns = await verifyEncounterDiagnosesPersisted(encounterId, savedRows);
+    if (!verIns.ok) {
+      console.error('[ENCOUNTER DIAGNOSES POST] VERIFY FAILED:', verIns);
+      return res.status(500).json({
+        ok: false,
+        error: 'diagnosis_verify_failed',
+        message: 'Diagnosis not persisted in database',
+        details: verIns,
+      });
+    }
+
+    await mirrorEncounterDiagnosesToPatientTreatmentsJson(encounterId, savedRows);
+    invalidateTreatmentsCacheForPatient(encPeek?.patient_id);
+    console.log('[ENCOUNTER DIAGNOSES POST] CREATED (insert):', {
+      encounterId,
+      count: savedRows.length,
+      ids: savedRows.map((r) => r?.id).filter(Boolean),
+    });
+    return res.json({ ok: true, encounterId, diagnoses: savedRows });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTERS] ENCOUNTER ERROR / diagnoses post exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error', message: error.message });
+  }
+});
+
+const ENCOUNTER_NOTE_EDIT_WINDOW_MS = 5 * 60 * 1000;
+
+function mapEncounterNoteRow(row, actorDoctorId) {
+  const createdAt = String(row?.created_at || '').trim();
+  const createdTs = createdAt ? Date.parse(createdAt) : NaN;
+  const canEdit =
+    String(row?.doctor_id || '').trim() === String(actorDoctorId || '').trim() &&
+    Number.isFinite(createdTs) &&
+    Date.now() - createdTs <= ENCOUNTER_NOTE_EDIT_WINDOW_MS;
+
+  return {
+    id: String(row?.id || ''),
+    encounter_id: String(row?.encounter_id || ''),
+    doctor_id: String(row?.doctor_id || ''),
+    content: String(row?.content || ''),
+    is_edited: !!row?.is_edited,
+    edited_at: row?.edited_at || null,
+    edited_by: row?.edited_by || null,
+    is_correction: !!row?.is_correction,
+    correction_for: row?.correction_for || null,
+    author_role: String(row?.author_role || 'DOCTOR'),
+    created_at: row?.created_at || null,
+    can_edit: canEdit,
+    edit_window_seconds_remaining: canEdit
+      ? Math.max(0, Math.floor((ENCOUNTER_NOTE_EDIT_WINDOW_MS - (Date.now() - createdTs)) / 1000))
+      : 0,
+  };
+}
+
+async function doctorOwnsEncounterById(encounterId, doctorId) {
+  const result = await supabase
+    .from('patient_encounters')
+    .select('id')
+    .eq('id', encounterId)
+    .eq('created_by_doctor_id', doctorId)
+    .maybeSingle();
+  return !!result.data;
+}
+
+app.get('/api/doctor/encounters/:id/notes', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = String(req.doctorId || '').trim();
+    const encounterId = String(req.params.id || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounterId_required' });
+
+    const ownsEncounter = await doctorOwnsEncounterById(encounterId, doctorId);
+    if (!ownsEncounter) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    const selectCandidates = [
+      'id,encounter_id,doctor_id,content,is_edited,edited_at,edited_by,is_correction,correction_for,author_role,created_at',
+      'id,encounter_id,doctor_id,content,is_edited,edited_at,edited_by,is_correction,correction_for,created_at',
+      'id,encounter_id,doctor_id,content,is_correction,correction_for,created_at',
+      'id,encounter_id,doctor_id,content,created_at',
+    ];
+
+    let rows = [];
+    let lastError = null;
+    for (const selectClause of selectCandidates) {
+      const result = await supabase
+        .from('encounter_notes')
+        .select(selectClause)
+        .eq('encounter_id', encounterId)
+        .order('created_at', { ascending: false });
+
+      if (!result.error) {
+        rows = Array.isArray(result.data) ? result.data : [];
+        lastError = null;
+        break;
+      }
+
+      lastError = result.error;
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) {
+        break;
+      }
+    }
+
+    if (lastError) {
+      const code = String(lastError?.code || '');
+      if (['42P01', 'PGRST205'].includes(code)) {
+        return res.json({ ok: true, notes: [] });
+      }
+      console.error('[DOCTOR ENCOUNTER NOTES] list failed:', lastError);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    return res.json({ ok: true, notes: rows.map((row) => mapEncounterNoteRow(row, doctorId)) });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTER NOTES] list exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/api/doctor/encounters/:id/notes', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = String(req.doctorId || '').trim();
+    const encounterId = String(req.params.id || '').trim();
+    const content = String(req.body?.content || '').trim();
+    if (!encounterId) return res.status(400).json({ ok: false, error: 'encounterId_required' });
+    if (!content) return res.status(400).json({ ok: false, error: 'content_required' });
+
+    const ownsEncounter = await doctorOwnsEncounterById(encounterId, doctorId);
+    if (!ownsEncounter) return res.status(404).json({ ok: false, error: 'encounter_not_found' });
+
+    const payloadCandidates = [
+      {
+        encounter_id: encounterId,
+        doctor_id: doctorId,
+        content,
+        is_edited: false,
+        is_correction: false,
+        author_role: 'DOCTOR',
+      },
+      {
+        encounter_id: encounterId,
+        doctor_id: doctorId,
+        content,
+        is_edited: false,
+        is_correction: false,
+      },
+      {
+        encounter_id: encounterId,
+        doctor_id: doctorId,
+        content,
+      },
+    ];
+
+    let inserted = null;
+    let lastError = null;
+    for (const payload of payloadCandidates) {
+      const result = await supabase
+        .from('encounter_notes')
+        .insert(payload)
+        .select('id,encounter_id,doctor_id,content,is_edited,edited_at,edited_by,is_correction,correction_for,author_role,created_at')
+        .single();
+
+      if (!result.error) {
+        inserted = result.data || null;
+        lastError = null;
+        break;
+      }
+
+      lastError = result.error;
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204'].includes(code)) {
+        break;
+      }
+    }
+
+    if (lastError || !inserted) {
+      console.error('[DOCTOR ENCOUNTER NOTES] create failed:', lastError);
+      return res.status(500).json({ ok: false, error: 'note_create_failed' });
+    }
+
+    return res.json({ ok: true, note: mapEncounterNoteRow(inserted, doctorId) });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTER NOTES] create exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.put('/api/doctor/notes/:noteId', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = String(req.doctorId || '').trim();
+    const noteId = String(req.params.noteId || '').trim();
+    const content = String(req.body?.content || '').trim();
+
+    if (!noteId) return res.status(400).json({ ok: false, error: 'note_id_required' });
+    if (!content) return res.status(400).json({ ok: false, error: 'content_required' });
+
+    const noteLookup = await supabase
+      .from('encounter_notes')
+      .select('id,encounter_id,doctor_id,created_at,is_correction')
+      .eq('id', noteId)
+      .maybeSingle();
+
+    if (noteLookup.error) {
+      console.error('[DOCTOR ENCOUNTER NOTES] edit lookup failed:', noteLookup.error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    const existingNote = noteLookup.data;
+    if (!existingNote) return res.status(404).json({ ok: false, error: 'note_not_found' });
+
+    const ownsEncounter = await doctorOwnsEncounterById(String(existingNote.encounter_id || ''), doctorId);
+    if (!ownsEncounter) return res.status(403).json({ ok: false, error: 'forbidden' });
+    if (String(existingNote.doctor_id || '').trim() !== doctorId) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+
+    const createdTs = Date.parse(String(existingNote.created_at || ''));
+    if (!Number.isFinite(createdTs) || Date.now() - createdTs > ENCOUNTER_NOTE_EDIT_WINDOW_MS) {
+      return res.status(403).json({ ok: false, error: 'edit_window_expired', message: 'Edit süresi doldu. Correction note ekleyebilirsiniz.' });
+    }
+
+    const payloadCandidates = [
+      {
+        content,
+        is_edited: true,
+        edited_at: new Date().toISOString(),
+        edited_by: doctorId,
+      },
+      {
+        content,
+        is_edited: true,
+        edited_at: new Date().toISOString(),
+      },
+      { content },
+    ];
+
+    let updated = null;
+    let lastError = null;
+    for (const payload of payloadCandidates) {
+      const result = await supabase
+        .from('encounter_notes')
+        .update(payload)
+        .eq('id', noteId)
+        .select('id,encounter_id,doctor_id,content,is_edited,edited_at,edited_by,is_correction,correction_for,author_role,created_at')
+        .single();
+
+      if (!result.error) {
+        updated = result.data || null;
+        lastError = null;
+        break;
+      }
+
+      lastError = result.error;
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204'].includes(code)) {
+        break;
+      }
+    }
+
+    if (lastError || !updated) {
+      console.error('[DOCTOR ENCOUNTER NOTES] edit failed:', lastError);
+      return res.status(500).json({ ok: false, error: 'note_edit_failed' });
+    }
+
+    return res.json({ ok: true, note: mapEncounterNoteRow(updated, doctorId) });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTER NOTES] edit exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/api/doctor/notes/:noteId/correction', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorId = String(req.doctorId || '').trim();
+    const noteId = String(req.params.noteId || '').trim();
+    const content = String(req.body?.content || '').trim();
+
+    if (!noteId) return res.status(400).json({ ok: false, error: 'note_id_required' });
+    if (!content) return res.status(400).json({ ok: false, error: 'content_required' });
+
+    const originalLookup = await supabase
+      .from('encounter_notes')
+      .select('id,encounter_id')
+      .eq('id', noteId)
+      .maybeSingle();
+
+    if (originalLookup.error) {
+      console.error('[DOCTOR ENCOUNTER NOTES] correction lookup failed:', originalLookup.error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    const original = originalLookup.data;
+    if (!original) return res.status(404).json({ ok: false, error: 'note_not_found' });
+
+    const ownsEncounter = await doctorOwnsEncounterById(String(original.encounter_id || ''), doctorId);
+    if (!ownsEncounter) return res.status(403).json({ ok: false, error: 'forbidden' });
+
+    const payloadCandidates = [
+      {
+        encounter_id: original.encounter_id,
+        doctor_id: doctorId,
+        content,
+        is_correction: true,
+        correction_for: original.id,
+        author_role: 'DOCTOR',
+      },
+      {
+        encounter_id: original.encounter_id,
+        doctor_id: doctorId,
+        content,
+        is_correction: true,
+        correction_for: original.id,
+      },
+      {
+        encounter_id: original.encounter_id,
+        doctor_id: doctorId,
+        content,
+      },
+    ];
+
+    let inserted = null;
+    let lastError = null;
+    for (const payload of payloadCandidates) {
+      const result = await supabase
+        .from('encounter_notes')
+        .insert(payload)
+        .select('id,encounter_id,doctor_id,content,is_edited,edited_at,edited_by,is_correction,correction_for,author_role,created_at')
+        .single();
+
+      if (!result.error) {
+        inserted = result.data || null;
+        lastError = null;
+        break;
+      }
+
+      lastError = result.error;
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204'].includes(code)) {
+        break;
+      }
+    }
+
+    if (lastError || !inserted) {
+      console.error('[DOCTOR ENCOUNTER NOTES] correction create failed:', lastError);
+      return res.status(500).json({ ok: false, error: 'correction_create_failed' });
+    }
+
+    return res.json({ ok: true, note: mapEncounterNoteRow(inserted, doctorId) });
+  } catch (error) {
+    console.error('[DOCTOR ENCOUNTER NOTES] correction exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+async function addEncounterIdsFromTreatmentDoctorMembership(doctorKeysRaw, encounterIds) {
+  if (!doctorKeysRaw?.length) return;
+  try {
+    const planIdSet = await collectTreatmentIdsFromTreatmentDoctorsTable(doctorKeysRaw);
+    const planIds = [...planIdSet];
+    if (planIds.length === 0) return;
+    const planSelectCandidates = ['id, encounter_id', 'encounter_id'];
+    for (const sel of planSelectCandidates) {
+      const pr = await supabase.from('treatment_plans').select(sel).in('id', planIds);
+      if (!pr.error && Array.isArray(pr.data)) {
+        for (const row of pr.data) {
+          const eid = String(row?.encounter_id || '').trim();
+          if (eid) encounterIds.add(eid);
+        }
+        return;
+      }
+      const c = String(pr.error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(c)) break;
+    }
+  } catch (e) {
+    console.warn('[DOCTOR TREATMENT PLANS] treatment_doctors merge exception:', e?.message || e);
+  }
+}
+
+app.get('/api/doctor/treatment-plans', requireDoctorAuth, async (req, res) => {
+  try {
+    const uuidRe = DOCTOR_ROW_UUID_RE;
+    const doctorUuidKeys = [];
+    const pushUuid = (arr, v) => {
+      const s = String(v || "").trim();
+      if (s && uuidRe.test(s)) arr.push(s);
+    };
+    pushUuid(doctorUuidKeys, req?.doctor?.id);
+    pushUuid(doctorUuidKeys, req.doctorId);
+    let resolvedUuids = [...new Set(doctorUuidKeys)];
+
+    if (resolvedUuids.length === 0) {
+      const code = String(req?.doctor?.doctor_id || req.doctorId || "").trim();
+      const rid = await resolveDoctorsIdByClinicDoctorCode(code);
+      if (rid) resolvedUuids = [rid];
+    }
+
+    if (resolvedUuids.length === 0) {
+      return res.json({ ok: true, treatment_plans: [] });
+    }
+
+    const doctorKeysRawForTeam = [...new Set([
+      String(req?.doctor?.id || '').trim(),
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean))];
+
+    const encounterIds = new Set();
+    // patient_encounters.created_by_doctor_id = doctors.id (UUID). Klinik kodu (SZ45) yukarıda UUID’ye çevrildi.
+    // Many DBs have no patient_encounters.doctor_id — skip to avoid 42703 spam.
+    const encounterSelectCandidates = [
+      'id, created_by_doctor_id, status, created_at',
+      'id, created_by_doctor_id, created_at',
+      'id, created_at',
+      'id',
+    ];
+
+    const encounterFilterFields = ['created_by_doctor_id'];
+    let encounterLookupWorked = false;
+    let encounterHardError = null;
+
+    for (const selectClause of encounterSelectCandidates) {
+      let selectWorked = false;
+
+      for (const filterField of encounterFilterFields) {
+        for (const doctorKey of resolvedUuids) {
+          const result = await timedDbQuery(
+            `[DOCTOR TREATMENT PLANS] patient_encounters ${filterField}=${doctorKey}`,
+            () => supabase
+              .from('patient_encounters')
+              .select(selectClause)
+              .eq(filterField, doctorKey)
+              .order('created_at', { ascending: false })
+          );
+
+          if (!result.error) {
+            selectWorked = true;
+            (Array.isArray(result.data) ? result.data : []).forEach((row) => {
+              if (row?.id) encounterIds.add(String(row.id));
+            });
+            continue;
+          }
+
+          const code = String(result.error?.code || '');
+          const msg = String(result.error?.message || '').toLowerCase();
+          const castIssue = code === '22P02' || msg.includes('invalid input syntax');
+          const schemaIssue = ['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code);
+
+          if (castIssue || schemaIssue) {
+            continue;
+          }
+
+          encounterHardError = result.error;
+          break;
+        }
+
+        if (encounterHardError) break;
+      }
+
+      if (encounterHardError) break;
+      if (selectWorked) {
+        encounterLookupWorked = true;
+        break;
+      }
+    }
+
+    if (encounterHardError) {
+      console.error('[DOCTOR TREATMENT PLANS] encounter lookup failed:', encounterHardError);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    await addEncounterIdsFromTreatmentDoctorMembership(doctorKeysRawForTeam, encounterIds);
+
+    if (encounterIds.size === 0) {
+      return res.json({ ok: true, treatment_plans: [] });
+    }
+
+    const planSelectCandidates = [
+      'id, encounter_id, patient_id, status, created_at, submitted_at, completed_at, created_by_doctor_id',
+      'id, encounter_id, patient_id, status, created_at, created_by_doctor_id',
+      'id, encounter_id, status, created_at, created_by_doctor_id',
+      'id, encounter_id, patient_id, status, created_at',
+      'id, encounter_id, status, created_at',
+      'id, encounter_id, created_at',
+      'id, encounter_id',
+    ];
+
+    const encounterIdList = [...encounterIds];
+    let plans = [];
+    let planLookupWorked = false;
+    let planHardError = null;
+
+    for (const selectClause of planSelectCandidates) {
+      const result = await timedDbQuery(
+        `[DOCTOR TREATMENT PLANS] treatment_plans by encounter ids (${encounterIdList.length})`,
+        () => supabase
+          .from('treatment_plans')
+          .select(selectClause)
+          .in('encounter_id', encounterIdList)
+          .order('created_at', { ascending: false })
+      );
+
+      if (!result.error) {
+        planLookupWorked = true;
+        plans = Array.isArray(result.data) ? result.data : [];
+        break;
+      }
+
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205', '42P01'].includes(code)) {
+        planHardError = result.error;
+        break;
+      }
+    }
+
+    if (planHardError) {
+      console.error('[DOCTOR TREATMENT PLANS] list failed:', planHardError);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    if (!planLookupWorked) {
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    return res.json({ ok: true, treatment_plans: plans });
+  } catch (error) {
+    console.error('[DOCTOR TREATMENT PLANS] list exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+const PATIENT_COST_DISCLAIMER_TR =
+  "Bu fiyatlar tahminidir. Nihai fiyat muayene sonrası değişebilir.";
+
+/**
+ * Patient may only read/approve plans that belong to their encounter / plan row.
+ */
+async function assertPatientCanAccessTreatmentPlan(tokenPatientId, rawPlanId) {
+  const context = await loadTreatmentPlanContext(String(rawPlanId || "").trim());
+  if (!context?.plan) return { ok: false, code: 404, error: "plan_not_found" };
+  const resolvedPlanId = String(context.plan.id || "").trim();
+  let ownerPid = String(context.encounter?.patient_id || "").trim();
+  if (!ownerPid) {
+    const { data: prow, error: pe } = await supabase
+      .from("treatment_plans")
+      .select("patient_id")
+      .eq("id", resolvedPlanId)
+      .maybeSingle();
+    if (!pe && prow?.patient_id) ownerPid = String(prow.patient_id).trim();
+  }
+  const resolvedTokenPid = await resolveMessagesPatientDbId(tokenPatientId);
+  if (!ownerPid || !resolvedTokenPid || ownerPid !== resolvedTokenPid) {
+    return { ok: false, code: 403, error: "plan_access_denied" };
+  }
+  return { ok: true, context, resolvedPlanId };
+}
+
+/** Maps DB treatment_plans.status → patient-facing approval tri-state. */
+function mapTreatmentPlanApproval(dbStatus) {
+  const s = String(dbStatus || "").toLowerCase();
+  if (s === "approved") return { status: "approved" };
+  if (s === "rejected") return { status: "rejected" };
+  if (s === "completed") return { status: "completed" };
+  return { status: "pending" };
+}
+
+function buildPatientCostItemsFromLines(lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  return list.map((l) => ({
+    name: l.label,
+    tooth: l.tooth || null,
+    price: l.unitPrice,
+    currency: l.currency,
+    price_kind: "ESTIMATED",
+  }));
+}
+
+function escapeHtmlForPdf(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function resolveTreatmentPlanLineItemsForPdf(items, priceMap) {
+  const list = Array.isArray(items) ? items : [];
+  const pseudo = list.map((row) => ({
+    type: row.procedure_code || row.type,
+    eventType: row.procedure_code || row.type,
+    treatment: row.procedure_code || row.type,
+    procedure_name: row.procedure_name || row.procedure_description,
+    title: row.procedure_name,
+    price: row.price,
+    currency: row.currency,
+  }));
+  const enriched = applyEventPrices(pseudo, priceMap);
+  const lines = [];
+  let dominantCurrency = "EUR";
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i];
+    const p = enriched[i] || {};
+    let unit = Number(row?.price);
+    if (!Number.isFinite(unit)) unit = Number(p?.price);
+    if (!Number.isFinite(unit)) unit = 0;
+    const cur = String(row?.currency || p?.currency || "EUR").trim() || "EUR";
+    dominantCurrency = cur;
+    const label = String(row?.procedure_name || row?.procedure_description || row?.procedure_code || "Procedure").trim();
+    const tooth = String(row?.tooth_fdi_code ?? row?.tooth_number ?? "").trim();
+    lines.push({ label, tooth, unitPrice: unit, currency: cur });
+  }
+  const total = lines.reduce((sum, l) => sum + (Number.isFinite(l.unitPrice) ? l.unitPrice : 0), 0);
+  return { lines, total, currency: dominantCurrency };
+}
+
+function buildTreatmentCostSummaryHtml({ title, clinicName, patientName, planLabel, lines, total, currency }) {
+  const cur = escapeHtmlForPdf(currency || "EUR");
+  const rowsHtml = (lines || [])
+    .map(
+      (l) => `
+    <tr>
+      <td>${escapeHtmlForPdf(l.label)}</td>
+      <td style="text-align:center;">${escapeHtmlForPdf(l.tooth || "—")}</td>
+      <td style="text-align:right;">${escapeHtmlForPdf(l.unitPrice.toFixed(2))} ${cur}</td>
+    </tr>`
+    )
+    .join("");
+  return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #111827; font-size: 12px; }
+  h1 { font-size: 20px; margin: 0 0 8px 0; }
+  .meta { color: #6b7280; margin-bottom: 20px; font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px 10px; }
+  th { background: #f9fafb; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: #374151; }
+  .total-row td { font-weight: 700; font-size: 14px; border-top: 2px solid #111827; }
+  .footer { margin-top: 24px; font-size: 10px; color: #9ca3af; }
+</style></head><body>
+  <h1>${escapeHtmlForPdf(title)}</h1>
+  <div class="meta">
+    ${clinicName ? `<div>${escapeHtmlForPdf(clinicName)}</div>` : ""}
+    ${patientName ? `<div>${escapeHtmlForPdf(patientName)}</div>` : ""}
+    ${planLabel ? `<div>${escapeHtmlForPdf(planLabel)}</div>` : ""}
+    <div>${escapeHtmlForPdf(new Date().toISOString().slice(0, 10))}</div>
+  </div>
+  <table>
+    <thead><tr><th>Procedure</th><th style="text-align:center;">Tooth</th><th style="text-align:right;">Price</th></tr></thead>
+    <tbody>${rowsHtml || `<tr><td colspan="3" style="text-align:center;color:#6b7280;">No line items</td></tr>`}</tbody>
+    <tfoot>
+      <tr class="total-row"><td colspan="2">Total</td><td style="text-align:right;">${escapeHtmlForPdf(Number(total).toFixed(2))} ${cur}</td></tr>
+    </tfoot>
+  </table>
+  <div class="footer">Amounts are computed from clinic price list and saved treatment line items.</div>
+</body></html>`;
+}
+
+async function generateTreatmentCostPdfBuffer(html) {
+  let puppeteer;
+  try {
+    puppeteer = require("puppeteer");
+  } catch (e) {
+    const err = new Error("puppeteer_not_installed");
+    err.code = "PDF_ENGINE_MISSING";
+    throw err;
+  }
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "domcontentloaded" });
+    return await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "24px", right: "24px", bottom: "24px", left: "24px" },
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
+async function fetchMergedTreatmentPlanItemsForPlan(resolvedPlanId, req) {
+  const planId = String(resolvedPlanId || "").trim();
+  if (!planId) return [];
+
+  const readItemsFromTable = async (tableName) => {
+    const result = await timedDbQuery(
+      `[TREATMENT PLAN ITEMS] ${tableName} by plan=${planId}`,
+      () => supabase.from(tableName).select("*").eq("treatment_plan_id", planId)
+    );
+
+    if (!result.error) {
+      return { ok: true, items: Array.isArray(result.data) ? result.data : [] };
+    }
+
+    if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(String(result.error?.code || ""))) {
+      return { ok: false, hardError: result.error };
+    }
+
+    return { ok: false, items: [] };
+  };
+
+  const primaryRead = await readItemsFromTable("treatment_items");
+  if (primaryRead.hardError) {
+    throw primaryRead.hardError;
+  }
+
+  const fallbackRead = await readItemsFromTable("treatment_plan_items");
+  if (fallbackRead.hardError) {
+    throw fallbackRead.hardError;
+  }
+
+  if (!primaryRead.ok && !fallbackRead.ok) {
+    throw new Error("treatment_items_fetch_failed");
+  }
+
+  const mergedItems = [
+    ...(Array.isArray(primaryRead.items) ? primaryRead.items : []),
+    ...(Array.isArray(fallbackRead.items) ? fallbackRead.items : []),
+  ];
+
+  const seen = new Set();
+  let items = mergedItems.filter((row) => {
+    const key = String(
+      row?.id ||
+        [
+          row?.treatment_plan_id,
+          row?.tooth_fdi_code || row?.tooth_number || "",
+          row?.procedure_code || row?.procedure_name || row?.procedure_description || "",
+          row?.status || "",
+          row?.created_at || "",
+        ].join("|")
+    );
+    if (!key) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((a, b) => {
+    const aTs = Date.parse(String(a?.created_at || a?.updated_at || ""));
+    const bTs = Date.parse(String(b?.created_at || b?.updated_at || ""));
+    const safeA = Number.isFinite(aTs) ? aTs : 0;
+    const safeB = Number.isFinite(bTs) ? bTs : 0;
+    return safeB - safeA;
+  });
+
+  if (!Array.isArray(items) || items.length === 0) {
+    try {
+      const planSelectCandidates = ["id, encounter_id, patient_id", "id, encounter_id", "id"];
+
+      let planData = null;
+      for (const selectClause of planSelectCandidates) {
+        const planResult = await supabase.from("treatment_plans").select(selectClause).eq("id", planId).maybeSingle();
+
+        if (!planResult.error) {
+          planData = planResult.data || null;
+          break;
+        }
+
+        if (!["42703", "PGRST204", "PGRST205"].includes(String(planResult.error?.code || ""))) {
+          break;
+        }
+      }
+
+      let patientIdFromPlan = String(planData?.patient_id || "").trim();
+      if (!patientIdFromPlan) {
+        const encounterId = String(planData?.encounter_id || "").trim();
+        if (encounterId) {
+          const encounterResult = await supabase
+            .from("patient_encounters")
+            .select("id, patient_id")
+            .eq("id", encounterId)
+            .maybeSingle();
+
+          if (!encounterResult.error && encounterResult.data?.patient_id) {
+            patientIdFromPlan = String(encounterResult.data.patient_id).trim();
+          }
+        }
+      }
+
+      if (patientIdFromPlan) {
+        const treatmentsFile = path.join(DATA_DIR, "treatments", `${patientIdFromPlan}.json`);
+        const legacyPayload = await loadExistingTreatmentsPayload(
+          patientIdFromPlan,
+          req.clinicId || null,
+          treatmentsFile,
+          { teeth: [] }
+        );
+
+        const teeth = Array.isArray(legacyPayload?.teeth) ? legacyPayload.teeth : [];
+        const existingKeys = new Set(
+          (Array.isArray(items) ? items : []).map((row) => {
+            const toothKey = String(row?.tooth_fdi_code || row?.tooth_number || "").trim();
+            const procKey = String(row?.procedure_code || row?.procedure_name || "").trim().toUpperCase();
+            const statusKey = String(row?.status || "").trim().toUpperCase();
+            return `${toothKey}|${procKey}|${statusKey}`;
+          })
+        );
+
+        const legacyItems = [];
+        teeth.forEach((tooth) => {
+          const toothCode = String(
+            tooth?.toothId ??
+              tooth?.tooth_id ??
+              tooth?.toothNumber ??
+              tooth?.tooth_number ??
+              tooth?.toothNo ??
+              tooth?.tooth_no ??
+              ""
+          ).trim();
+          if (!toothCode) return;
+
+          const proceduresList = Array.isArray(tooth?.procedures) ? tooth.procedures : [];
+          proceduresList.forEach((proc) => {
+            const procCode = String(proc?.type || proc?.procedure_code || proc?.procedureId || proc?.id || "PROCEDURE")
+              .trim()
+              .toUpperCase();
+            const procStatus = String(proc?.status || "PLANNED").trim().toUpperCase();
+            const dedupeKey = `${toothCode}|${procCode}|${procStatus}`;
+            if (existingKeys.has(dedupeKey)) return;
+
+            const dateValue = proc?.scheduledAt ?? proc?.date ?? proc?.createdAt;
+            let createdIso = null;
+            if (typeof dateValue === "string") {
+              const ts = Date.parse(dateValue);
+              if (Number.isFinite(ts)) createdIso = new Date(ts).toISOString();
+            } else {
+              const ts = Number(dateValue);
+              if (Number.isFinite(ts)) createdIso = new Date(ts).toISOString();
+            }
+
+            if (!createdIso) {
+              const fallbackTs = Number(proc?.createdAt);
+              createdIso = Number.isFinite(fallbackTs) ? new Date(fallbackTs).toISOString() : new Date().toISOString();
+            }
+
+            legacyItems.push({
+              id: String(proc?.id || proc?.procedureId || rid("legacy_proc")),
+              treatment_plan_id: planId,
+              tooth_fdi_code: toothCode,
+              tooth_number: toothCode,
+              procedure_code: procCode,
+              procedure_name: procCode,
+              procedure_description: procCode,
+              status: procStatus.toLowerCase(),
+              category: procedures.categoryForType(procCode),
+              type: procCode,
+              chair_no: String(proc?.chair_no || proc?.chairNo || proc?.chair || "").trim() || null,
+              chair: String(proc?.chair || proc?.chairNo || proc?.chair_no || "").trim() || null,
+              scheduled_at: createdIso,
+              created_at: createdIso,
+              updated_at: createdIso,
+            });
+          });
+        });
+
+        if (legacyItems.length > 0) {
+          items = [...legacyItems, ...(Array.isArray(items) ? items : [])];
+        }
+      }
+    } catch (legacyMergeError) {
+      console.error("[TREATMENT PLAN ITEMS] legacy merge warning:", legacyMergeError);
+    }
+  }
+
+  const itemsWithOverrides =
+    Array.isArray(items) && items.length > 0
+      ? items.map((row) => {
+          const itemId = String(row?.id || "").trim();
+          if (!itemId) return row;
+          const override = readTreatmentItemOverride(itemId);
+          return applyTreatmentItemOverride(row, override);
+        })
+      : items;
+
+  return Array.isArray(itemsWithOverrides) ? itemsWithOverrides : [];
+}
+
+app.get('/api/treatment-plans/:id/items', requireDoctorOrAdminAuth, async (req, res) => {
+  try {
+    const planId = String(req.params.id || '').trim();
+    const skipPlanItemsCache = String(req.query?.nocache || '').trim() === '1';
+
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    const context = await loadTreatmentPlanContext(planId);
+    if (!context?.plan) {
+      return res.status(404).json({ ok: false, error: 'plan_not_found' });
+    }
+
+    const resolvedPlanId = String(context.plan.id || '').trim() || planId;
+
+    const planItemsCacheKey = [
+      String(resolvedPlanId || '').trim(),
+      String(req.authRole || '').trim(),
+      String(req.clinicId || '').trim(),
+      String(req.doctorId || '').trim(),
+      String(TREATMENTS_CACHE_BUSTER),
+    ].join('|');
+
+    if (!skipPlanItemsCache) {
+      const cachedItemsPayload = getCachedPlanItemsPayload(planItemsCacheKey);
+      if (cachedItemsPayload) {
+        return res.json(cachedItemsPayload);
+      }
+    }
+
+    if (req.authRole === 'ADMIN') {
+      const requestClinicId = String(req.clinicId || '').trim();
+      if (requestClinicId && context.clinicId && requestClinicId !== context.clinicId) {
+        return res.status(403).json({ ok: false, error: 'plan_access_denied' });
+      }
+    }
+
+    if (req.authRole === 'DOCTOR') {
+      if (!(await doctorHasAnyTreatmentPlanAccess(resolvedPlanId, req))) {
+        return res.status(403).json({ ok: false, error: 'plan_access_denied' });
+      }
+    }
+
+    let itemsWithOverrides;
+    try {
+      itemsWithOverrides = await fetchMergedTreatmentPlanItemsForPlan(resolvedPlanId, req);
+    } catch (fetchErr) {
+      console.error('[TREATMENT PLAN ITEMS] fetch failed:', fetchErr);
+      return res.status(500).json({ ok: false, error: 'treatment_items_fetch_failed' });
+    }
+
+    const responsePayload = { ok: true, data: itemsWithOverrides };
+    if (!skipPlanItemsCache) {
+      setCachedPlanItemsPayload(planItemsCacheKey, responsePayload);
+    }
+    return res.json(responsePayload);
+  } catch (error) {
+    console.error('[TREATMENT PLAN ITEMS] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+/** POST — treatment cost summary PDF (prices + total computed server-side only). */
+app.post('/api/doctor/treatment-plans/:id/pdf', requireDoctorAuth, async (req, res) => {
+  try {
+    const rawId = String(req.params.id || '').trim();
+    if (!rawId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    const context = await loadTreatmentPlanContext(rawId);
+    if (!context?.plan) {
+      return res.status(404).json({ ok: false, error: 'plan_not_found' });
+    }
+
+    const resolvedPlanId = String(context.plan.id || '').trim() || rawId;
+    if (!(await doctorHasAnyTreatmentPlanAccess(resolvedPlanId, req))) {
+      return res.status(403).json({ ok: false, error: 'plan_access_denied' });
+    }
+
+    const clinicIdForPrices = String(context.clinicId || req.clinicId || '').trim();
+    const priceMap = clinicIdForPrices ? await fetchTreatmentPricesMap(clinicIdForPrices) : {};
+
+    let items;
+    try {
+      items = await fetchMergedTreatmentPlanItemsForPlan(resolvedPlanId, req);
+    } catch (e) {
+      console.error('[TREATMENT PLAN PDF] items fetch failed:', e);
+      return res.status(500).json({ ok: false, error: 'treatment_items_fetch_failed' });
+    }
+
+    const { lines, total, currency } = resolveTreatmentPlanLineItemsForPdf(items, priceMap);
+
+    const patientId = String(context.encounter?.patient_id || '').trim();
+    let patientName = '';
+    if (patientId) {
+      try {
+        const patient = await getPatientById(patientId);
+        patientName = String(patient?.full_name || patient?.name || patient?.fullName || '').trim();
+      } catch (pe) {
+        console.warn('[TREATMENT PLAN PDF] patient lookup:', pe?.message || pe);
+      }
+    }
+
+    let clinicName = '';
+    if (req.clinicId) {
+      try {
+        const clinic = await getClinicById(req.clinicId);
+        clinicName = String(clinic?.name || clinic?.clinic_name || clinic?.title || '').trim();
+      } catch (ce) {
+        console.warn('[TREATMENT PLAN PDF] clinic lookup:', ce?.message || ce);
+      }
+    }
+
+    const html = buildTreatmentCostSummaryHtml({
+      title: 'Treatment cost summary',
+      clinicName,
+      patientName: patientName || patientId || '',
+      planLabel: `Plan ${resolvedPlanId}`,
+      lines,
+      total,
+      currency,
+    });
+
+    let pdfBuffer;
+    try {
+      pdfBuffer = await generateTreatmentCostPdfBuffer(html);
+    } catch (pdfErr) {
+      if (pdfErr?.code === 'PDF_ENGINE_MISSING') {
+        return res.status(503).json({ ok: false, error: 'pdf_engine_unavailable', message: 'Install puppeteer on the server.' });
+      }
+      console.error('[TREATMENT PLAN PDF] render failed:', pdfErr);
+      return res.status(500).json({ ok: false, error: 'pdf_generation_failed' });
+    }
+
+    const safeSlug = resolvedPlanId.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 64);
+    const filename = `treatment-cost-${safeSlug}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(Buffer.from(pdfBuffer));
+  } catch (error) {
+    console.error('[TREATMENT PLAN PDF] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+// ── Patient: treatment plan cost summary + approve / reject (ESTIMATED prices only) ──
+app.get("/api/patient/treatment-plans/:id", requireToken, async (req, res) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const tokenPid = String(req.patientId || "").trim();
+    if (!rawId) return res.status(400).json({ ok: false, error: "plan_id_required" });
+
+    const access = await assertPatientCanAccessTreatmentPlan(tokenPid, rawId);
+    if (!access.ok) return res.status(access.code).json({ ok: false, error: access.error });
+
+    const { context, resolvedPlanId } = access;
+    const clinicId = String(context.clinicId || "").trim();
+    const priceMap = clinicId ? await fetchTreatmentPricesMap(clinicId) : {};
+
+    const fakeReq = { clinicId };
+    let items;
+    try {
+      items = await fetchMergedTreatmentPlanItemsForPlan(resolvedPlanId, fakeReq);
+    } catch (e) {
+      console.error("[PATIENT TREATMENT PLAN] items fetch:", e);
+      return res.status(500).json({ ok: false, error: "treatment_items_fetch_failed" });
+    }
+
+    const { lines, total, currency } = resolveTreatmentPlanLineItemsForPdf(items, priceMap);
+    const planStatus = String(context.plan?.status || "draft").toLowerCase();
+    const approval = mapTreatmentPlanApproval(planStatus);
+    const costItems = buildPatientCostItemsFromLines(lines);
+    const prices = lines.map((l) => ({
+      amount: l.unitPrice,
+      currency: l.currency,
+      price_kind: "ESTIMATED",
+    }));
+
+    return res.json({
+      ok: true,
+      plan_id: resolvedPlanId,
+      status: approval.status,
+      approval_status: approval.status,
+      items: costItems,
+      prices,
+      total: {
+        amount: total,
+        currency,
+        price_kind: "ESTIMATED",
+      },
+      disclaimer: PATIENT_COST_DISCLAIMER_TR,
+    });
+  } catch (error) {
+    console.error("[PATIENT TREATMENT PLAN GET]", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/patient/treatment-plans/:id/approve", requireToken, async (req, res) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const tokenPid = String(req.patientId || "").trim();
+    if (!rawId) return res.status(400).json({ ok: false, error: "plan_id_required" });
+
+    const access = await assertPatientCanAccessTreatmentPlan(tokenPid, rawId);
+    if (!access.ok) return res.status(access.code).json({ ok: false, error: access.error });
+
+    const { context, resolvedPlanId } = access;
+    const st = String(context.plan?.status || "").toLowerCase();
+    if (st === "approved") return res.status(409).json({ ok: false, error: "already_approved" });
+    if (st === "rejected") return res.status(409).json({ ok: false, error: "already_rejected" });
+    if (st === "completed") return res.status(409).json({ ok: false, error: "plan_completed" });
+
+    const { error } = await supabase
+      .from("treatment_plans")
+      .update({ status: "approved", updated_at: new Date().toISOString() })
+      .eq("id", resolvedPlanId);
+
+    if (error) {
+      console.error("[PATIENT TREATMENT PLAN APPROVE]", error);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+    bumpTreatmentsCache();
+    return res.json({ ok: true, approval_status: "approved", status: "approved", disclaimer: PATIENT_COST_DISCLAIMER_TR });
+  } catch (error) {
+    console.error("[PATIENT TREATMENT PLAN APPROVE]", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+app.post("/api/patient/treatment-plans/:id/reject", requireToken, async (req, res) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const tokenPid = String(req.patientId || "").trim();
+    if (!rawId) return res.status(400).json({ ok: false, error: "plan_id_required" });
+
+    const access = await assertPatientCanAccessTreatmentPlan(tokenPid, rawId);
+    if (!access.ok) return res.status(access.code).json({ ok: false, error: access.error });
+
+    const { context, resolvedPlanId } = access;
+    const st = String(context.plan?.status || "").toLowerCase();
+    if (st === "approved") return res.status(409).json({ ok: false, error: "already_approved" });
+    if (st === "rejected") return res.status(409).json({ ok: false, error: "already_rejected" });
+    if (st === "completed") return res.status(409).json({ ok: false, error: "plan_completed" });
+
+    const { error } = await supabase
+      .from("treatment_plans")
+      .update({ status: "rejected", updated_at: new Date().toISOString() })
+      .eq("id", resolvedPlanId);
+
+    if (error) {
+      console.error("[PATIENT TREATMENT PLAN REJECT]", error);
+      return res.status(500).json({ ok: false, error: "update_failed" });
+    }
+    bumpTreatmentsCache();
+    return res.json({ ok: true, approval_status: "rejected", status: "rejected", disclaimer: PATIENT_COST_DISCLAIMER_TR });
+  } catch (error) {
+    console.error("[PATIENT TREATMENT PLAN REJECT]", error);
+    return res.status(500).json({ ok: false, error: "internal_error" });
+  }
+});
+
+async function requireDoctorOrAdminAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ ok: false, error: 'token_required' });
+  }
+
+  const token = authHeader.substring(7);
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const role = String(decoded?.role || '').toUpperCase();
+
+    if (role === 'DOCTOR') {
+      return requireDoctorAuth(req, res, () => {
+        req.authRole = 'DOCTOR';
+        next();
+      });
+    }
+
+    if (role === 'ADMIN') {
+      return requireAdminAuth(req, res, () => {
+        req.authRole = 'ADMIN';
+        next();
+      });
+    }
+
+    return res.status(403).json({ ok: false, error: 'invalid_role' });
+  } catch (_error) {
+    return res.status(401).json({ ok: false, error: 'invalid_token' });
+  }
+}
+
+/** treatment_doctors.treatment_id FK → treatment_plans.id (never use encounter_id or raw route id). */
+function canonicalTreatmentPlanIdForTeam(plan) {
+  if (!plan) return '';
+  return String(plan.id || '').trim();
+}
+
+async function loadTreatmentPlanContext(planId) {
+  const planSelectCandidates = [
+    'id, encounter_id, created_by_doctor_id, status',
+    'id, encounter_id, created_by_doctor_id',
+    'id, encounter_id, status',
+    'id, encounter_id',
+    'id',
+  ];
+
+  async function fetchPlanById(id) {
+    let row = null;
+    for (const selectClause of planSelectCandidates) {
+      const result = await supabase
+        .from('treatment_plans')
+        .select(selectClause)
+        .eq('id', id)
+        .maybeSingle();
+
+      if (!result.error) {
+        row = result.data || null;
+        break;
+      }
+
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(String(result.error?.code || ''))) {
+        throw result.error;
+      }
+    }
+    return row;
+  }
+
+  async function fetchLatestPlanByEncounterId(encounterId) {
+    const encSelects = [
+      'id, encounter_id, created_by_doctor_id, status, created_at',
+      'id, encounter_id, patient_id, status, created_at',
+      'id, encounter_id, status, created_at',
+      'id, encounter_id, created_at',
+      ...planSelectCandidates.filter((c) => c.includes('created_at')),
+    ];
+    const lists = encSelects.length ? encSelects : planSelectCandidates;
+    let row = null;
+    for (const selectClause of lists) {
+      const result = await supabase
+        .from('treatment_plans')
+        .select(selectClause)
+        .eq('encounter_id', encounterId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!result.error) {
+        row = result.data || null;
+        break;
+      }
+
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(String(result.error?.code || ''))) {
+        throw result.error;
+      }
+    }
+    return row;
+  }
+
+  let plan = await fetchPlanById(planId);
+  // URL'de bazen treatment_plans.id yerine patient_encounters.id geliyor
+  if (!plan) {
+    plan = await fetchLatestPlanByEncounterId(planId);
+  }
+
+  if (!plan) return null;
+
+  let encounter = null;
+  const encounterId = String(plan?.encounter_id || '').trim();
+  if (encounterId) {
+    const encounterSelectCandidates = [
+      'id, patient_id, clinic_id, status',
+      'id, patient_id, clinic_id',
+      'id, patient_id, status',
+      'id, patient_id',
+      'id, clinic_id',
+      'id',
+    ];
+
+    for (const selectClause of encounterSelectCandidates) {
+      const result = await supabase
+        .from('patient_encounters')
+        .select(selectClause)
+        .eq('id', encounterId)
+        .maybeSingle();
+
+      if (!result.error) {
+        encounter = result.data || null;
+        break;
+      }
+
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(String(result.error?.code || ''))) {
+        throw result.error;
+      }
+    }
+  }
+
+  return {
+    plan,
+    encounter,
+    clinicId: String(encounter?.clinic_id || '').trim() || null,
+    createdByDoctorId: String(plan?.created_by_doctor_id || '').trim() || null,
+  };
+}
+
+/** View: any team role. Edit: PRIMARY | ASSISTANT only (see doctorCanEditTreatmentPlan). */
+async function resolveDoctorIdToUuid(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const byId = await supabase.from('doctors').select('id').eq('id', s).maybeSingle();
+  if (!byId.error && byId.data?.id) return String(byId.data.id).trim();
+  const byCode = await supabase.from('doctors').select('id').eq('doctor_id', s).maybeSingle();
+  if (!byCode.error && byCode.data?.id) return String(byCode.data.id).trim();
+  return null;
+}
+
+/**
+ * Role resolution: prefer treatment_doctors (source of truth).
+ * Legacy fallbacks: treatment_plan_doctors, then treatment_plans columns (migration / old data only).
+ */
+async function getDoctorRoleForTreatment(treatmentPlanId, doctorId) {
+  const pid = String(treatmentPlanId || '').trim();
+  const did = String(doctorId || '').trim();
+  if (!pid || !did) return null;
+
+  const schemaMissing = (err) => {
+    const code = String(err?.code || '');
+    const msg = String(err?.message || '').toLowerCase();
+    return (
+      ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) ||
+      msg.includes('does not exist') ||
+      msg.includes('column')
+    );
+  };
+
+  const tdRes = await supabase
+    .from('treatment_doctors')
+    .select('role')
+    .eq('treatment_id', pid)
+    .eq('doctor_id', did)
+    .maybeSingle();
+
+  if (!tdRes.error && tdRes.data?.role) {
+    return String(tdRes.data.role).toUpperCase();
+  }
+  if (tdRes.error && !schemaMissing(tdRes.error)) {
+    console.warn('[TREATMENT ROLE] treatment_doctors:', tdRes.error);
+  }
+
+  const tpdAttempts = [
+    () => supabase.from('treatment_plan_doctors').select('id, role').eq('treatment_plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id').eq('treatment_plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id, role').eq('plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id').eq('plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id').eq('treatment_plan_id', pid).eq('assigned_doctor_id', did).limit(1),
+  ];
+
+  for (const run of tpdAttempts) {
+    const { data, error } = await run();
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const r = data[0]?.role;
+      return r ? String(r).toUpperCase() : 'ASSISTANT';
+    }
+    if (schemaMissing(error)) continue;
+  }
+
+  const planFallbackSelects = ['id, created_by_doctor_id, assigned_doctor_id', 'id, created_by_doctor_id'];
+  for (const sel of planFallbackSelects) {
+    const pr = await supabase.from('treatment_plans').select(sel).eq('id', pid).maybeSingle();
+    if (pr.error) {
+      if (schemaMissing(pr.error)) continue;
+      continue;
+    }
+    const row = pr.data;
+    if (!row) return null;
+    const cb = String(row.created_by_doctor_id || '').trim();
+    const ad = String(row.assigned_doctor_id || '').trim();
+    if (cb && cb === did) return 'PRIMARY';
+    if (ad && ad === did) return 'ASSISTANT';
+    return null;
+  }
+
+  return null;
+}
+
+/** Task / item assignee must appear on the team (treatment_doctors or legacy treatment_plan_doctors), not plan columns alone. */
+async function isDoctorOnTreatmentTeam(treatmentPlanId, doctorId) {
+  const pid = String(treatmentPlanId || '').trim();
+  const did = String(doctorId || '').trim();
+  if (!pid || !did) return false;
+
+  const schemaMissing = (err) => {
+    const code = String(err?.code || '');
+    const msg = String(err?.message || '').toLowerCase();
+    return (
+      ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) ||
+      msg.includes('does not exist') ||
+      msg.includes('column')
+    );
+  };
+
+  const td = await supabase
+    .from('treatment_doctors')
+    .select('id')
+    .eq('treatment_id', pid)
+    .eq('doctor_id', did)
+    .limit(1);
+  if (!td.error && Array.isArray(td.data) && td.data.length > 0) return true;
+  if (td.error && !schemaMissing(td.error)) return false;
+
+  const tpdAttempts = [
+    () => supabase.from('treatment_plan_doctors').select('id').eq('treatment_plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id').eq('plan_id', pid).eq('doctor_id', did).limit(1),
+    () => supabase.from('treatment_plan_doctors').select('id').eq('treatment_plan_id', pid).eq('assigned_doctor_id', did).limit(1),
+  ];
+  for (const run of tpdAttempts) {
+    const { data, error } = await run();
+    if (!error && Array.isArray(data) && data.length > 0) return true;
+    if (schemaMissing(error)) continue;
+    break;
+  }
+  return false;
+}
+
+function doctorCanEditTreatmentPlan(role) {
+  const r = String(role || '').toUpperCase();
+  return r === 'PRIMARY' || r === 'ASSISTANT';
+}
+
+function doctorIsPrimaryForTreatmentPlan(role) {
+  return String(role || '').toUpperCase() === 'PRIMARY';
+}
+
+function getDoctorAccessKeys(req) {
+  const raw = [
+    String(req.doctorId || '').trim(),
+    String(req?.doctor?.id || '').trim(),
+    String(req?.doctor?.doctor_id || '').trim(),
+  ].filter(Boolean);
+
+  return {
+    raw: [...new Set(raw)],
+    normalized: new Set(raw.map((v) => v.toLowerCase())),
+  };
+}
+
+async function isDoctorAssignedToTreatmentPlan(planId, doctorId) {
+  const role = await getDoctorRoleForTreatment(planId, doctorId);
+  return role !== null;
+}
+
+async function doctorHasAnyTreatmentPlanAccess(planId, req) {
+  const keys = getDoctorAccessKeys(req);
+  for (const key of keys.raw) {
+    if (!key) continue;
+    if (await isDoctorAssignedToTreatmentPlan(planId, key)) return true;
+  }
+  return false;
+}
+
+async function doctorRequestCanEditTreatmentPlan(planId, req) {
+  const keys = getDoctorAccessKeys(req);
+  for (const key of keys.raw) {
+    if (!key) continue;
+    const role = await getDoctorRoleForTreatment(planId, key);
+    if (doctorCanEditTreatmentPlan(role)) return true;
+  }
+  return false;
+}
+
+async function doctorRequestIsPrimaryTreatmentPlan(planId, req) {
+  const keys = getDoctorAccessKeys(req);
+  for (const key of keys.raw) {
+    if (!key) continue;
+    const role = await getDoctorRoleForTreatment(planId, key);
+    if (doctorIsPrimaryForTreatmentPlan(role)) return true;
+  }
+  return false;
+}
+
+/** Insert when a doctor is newly added to treatment_doctors (assignee = doctors.id). Fails soft if table missing. */
+async function insertNewTreatmentAssignmentNotification(supabaseClient, { assigneeDoctorId, treatmentPlanId, extraData }) {
+  const uid = String(assigneeDoctorId || "").trim();
+  const tid = String(treatmentPlanId || "").trim();
+  if (!uid || !tid) return;
+  try {
+    const dataPayload = { treatment_id: tid };
+    if (extraData && typeof extraData === "object" && !Array.isArray(extraData)) {
+      Object.assign(dataPayload, extraData);
+    }
+    const { error } = await supabaseClient.from("notifications").insert({
+      user_id: uid,
+      type: "NEW_TREATMENT_ASSIGNED",
+      title: "Yeni hasta atandı",
+      message: "Size yeni bir hasta / tedavi atandı",
+      data: dataPayload,
+      is_read: false,
+    });
+    if (error) {
+      const c = String(error.code || "");
+      if (["42P01", "42703", "PGRST204", "PGRST205"].includes(c)) return;
+      console.warn("[notifications] insert failed:", error.message || error);
+    }
+  } catch (e) {
+    console.warn("[notifications] insert exception:", e?.message || e);
+  }
+}
+
+/**
+ * Permissions use treatment_doctors as source of truth. Legacy inserts may only touch
+ * treatment_plan_doctors — always ensure a matching treatment_doctors row exists.
+ */
+async function ensureTreatmentDoctorRowForPlan(supabase, planId, doctorId, role, nowIso) {
+  const rid = String(planId || '').trim();
+  const did = String(doctorId || '').trim();
+  if (!rid || !did) return { ok: false, error: 'missing_ids' };
+
+  const { data: existing, error: selErr } = await supabase
+    .from('treatment_doctors')
+    .select('id')
+    .eq('treatment_id', rid)
+    .eq('doctor_id', did)
+    .maybeSingle();
+
+  const selCode = String(selErr?.code || '');
+  const selMsg = String(selErr?.message || '').toLowerCase();
+  if (selErr && !['42P01', '42703', 'PGRST204', 'PGRST205'].includes(selCode) && !selMsg.includes('does not exist')) {
+    console.warn('[ensureTreatmentDoctorRowForPlan] select:', selErr);
+  }
+  if (existing?.id) {
+    return { ok: true, synced: true, already: true };
+  }
+
+  if (['42P01', '42703', 'PGRST204', 'PGRST205'].includes(selCode) || selMsg.includes('does not exist')) {
+    return { ok: true, skipped: true };
+  }
+
+  const { error: insErr } = await supabase.from('treatment_doctors').insert({
+    treatment_id: rid,
+    doctor_id: did,
+    role: role || 'ASSISTANT',
+    created_at: nowIso || new Date().toISOString(),
+  });
+
+  if (!insErr) {
+    await insertNewTreatmentAssignmentNotification(supabase, {
+      assigneeDoctorId: did,
+      treatmentPlanId: rid,
+    });
+    return { ok: true, synced: true, inserted: true };
+  }
+
+  const insCode = String(insErr.code || '');
+  const insMsg = String(insErr.message || '').toLowerCase();
+  if (insCode === '23505' || insMsg.includes('duplicate') || insMsg.includes('unique')) {
+    return { ok: true, synced: true, duplicate: true };
+  }
+  if (['42P01', '42703', 'PGRST204', 'PGRST205'].includes(insCode)) {
+    return { ok: true, skipped: true };
+  }
+
+  console.error('[ensureTreatmentDoctorRowForPlan] insert failed:', insErr);
+  return { ok: false, error: insErr };
+}
+
+/**
+ * Admin "Hekim ata" only sets patients.primary_doctor_id — doctor app visibility uses treatment_doctors.
+ * After assign, add the doctor to treatment_doctors for every treatment_plans row linked via this patient's encounters.
+ */
+async function syncAssignedDoctorOnPatientTreatmentPlans(patientUuid, doctorIdRaw) {
+  const pid = String(patientUuid || "").trim();
+  const raw = String(doctorIdRaw || "").trim();
+  if (!pid || !raw) return { ok: false, reason: "missing_ids" };
+
+  let canonicalDoctorId = "";
+  const { data: docById } = await supabase.from("doctors").select("id").eq("id", raw).maybeSingle();
+  if (docById?.id) canonicalDoctorId = String(docById.id).trim();
+  if (!canonicalDoctorId) {
+    const { data: docByCode } = await supabase.from("doctors").select("id").eq("doctor_id", raw).maybeSingle();
+    if (docByCode?.id) canonicalDoctorId = String(docByCode.id).trim();
+  }
+  if (!canonicalDoctorId || !DOCTOR_FK_UUID_RE.test(canonicalDoctorId)) {
+    return { ok: false, reason: "doctor_unresolved" };
+  }
+
+  const { data: patientRow } = await supabase.from("patients").select("id, patient_id").eq("id", pid).maybeSingle();
+  const patientIdKeys = [pid];
+  if (patientRow?.patient_id != null && String(patientRow.patient_id).trim()) {
+    patientIdKeys.push(String(patientRow.patient_id).trim());
+  }
+
+  const { data: encs, error: encErr } = await supabase
+    .from("patient_encounters")
+    .select("id")
+    .in("patient_id", patientIdKeys);
+  if (encErr) {
+    console.warn("[syncAssignedDoctorOnPatientTreatmentPlans] encounters:", encErr.message || encErr);
+    return { ok: false, error: encErr };
+  }
+  const eids = [...new Set((encs || []).map((e) => String(e?.id || "").trim()).filter(Boolean))];
+  if (!eids.length) return { ok: true, plans: 0 };
+
+  const { data: plans, error: planErr } = await supabase
+    .from("treatment_plans")
+    .select("id")
+    .in("encounter_id", eids);
+  if (planErr) {
+    const c = String(planErr.code || "");
+    if (!["42P01", "42703", "PGRST204", "PGRST205"].includes(c)) {
+      console.warn("[syncAssignedDoctorOnPatientTreatmentPlans] treatment_plans:", planErr.message || planErr);
+    }
+    return { ok: false, error: planErr };
+  }
+  const planIds = [...new Set((plans || []).map((p) => String(p?.id || "").trim()).filter(Boolean))];
+  const nowIso = new Date().toISOString();
+  let synced = 0;
+  for (const planId of planIds) {
+    const r = await ensureTreatmentDoctorRowForPlan(supabase, planId, canonicalDoctorId, "ASSISTANT", nowIso);
+    if (r?.ok && !r?.skipped) synced += 1;
+  }
+  return { ok: true, plans: planIds.length, synced };
+}
+
+async function addDoctorToTreatmentPlanHandler(req, res) {
+  try {
+    const planId = String(req.params.id || req.params.planId || '').trim();
+    const targetDoctorId = String(req.body?.doctorId || '').trim();
+    const requestedRole = String(req.body?.role || 'ASSISTANT').trim().toUpperCase();
+    const roleAliases = {
+      ASSIST: 'ASSISTANT',
+      CONSULT: 'CONSULTANT',
+      SURGEON: 'CONSULTANT',
+      DOCTOR: 'ASSISTANT',
+    };
+    const role = roleAliases[requestedRole] || requestedRole || 'ASSISTANT';
+    if (!['PRIMARY', 'ASSISTANT', 'CONSULTANT', 'VIEW_ONLY'].includes(role)) {
+      return res.status(400).json({ ok: false, error: 'invalid_role' });
+    }
+
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    if (!targetDoctorId) {
+      return res.status(400).json({ ok: false, error: 'doctor_id_required' });
+    }
+
+    const context = await loadTreatmentPlanContext(planId);
+    if (!context?.plan) {
+      return res.status(404).json({ ok: false, error: 'plan_not_found' });
+    }
+
+    const canonicalPlanId = canonicalTreatmentPlanIdForTeam(context.plan);
+    if (!canonicalPlanId) {
+      return res.status(404).json({ ok: false, error: 'plan_not_found' });
+    }
+
+    if (!(await doctorRequestIsPrimaryTreatmentPlan(canonicalPlanId, req))) {
+      return res.status(403).json({ ok: false, error: 'only_primary_can_assign_doctors' });
+    }
+
+    const fetchDoctorBy = async (field, value) => {
+      if (!field || !value) return { data: null, error: null };
+      const selectCandidates = [
+        'id, doctor_id, clinic_id, clinic_code, status, email, name, full_name',
+        'id, doctor_id, clinic_id, clinic_code, status, email',
+        'id, doctor_id, clinic_id, clinic_code, status',
+        'id, doctor_id, clinic_id, clinic_code',
+      ];
+
+      for (const selectClause of selectCandidates) {
+        const result = await supabase
+          .from('doctors')
+          .select(selectClause)
+          .eq(field, value)
+          .maybeSingle();
+
+        if (!result.error) {
+          return { data: result.data || null, error: null };
+        }
+
+        const code = String(result.error?.code || '');
+        if (!['42703', 'PGRST204', 'PGRST205', '22P02'].includes(code)) {
+          return { data: null, error: result.error };
+        }
+      }
+
+      return { data: null, error: null };
+    };
+
+    let doctorLookup = await fetchDoctorBy('id', targetDoctorId);
+    if (!doctorLookup.data) {
+      const byDoctorCode = await fetchDoctorBy('doctor_id', targetDoctorId);
+      if (byDoctorCode.error) {
+        return res.status(500).json({ ok: false, error: 'doctor_lookup_failed' });
+      }
+      doctorLookup = byDoctorCode;
+    }
+
+    if (doctorLookup.error) {
+      console.error('[DOCTOR PLAN ADD] doctor lookup failed:', doctorLookup.error);
+      return res.status(500).json({ ok: false, error: 'doctor_lookup_failed' });
+    }
+
+    const targetDoctor = doctorLookup.data;
+    if (!targetDoctor) {
+      return res.status(404).json({ ok: false, error: 'doctor_not_found' });
+    }
+
+    const planClinicId = String(context.clinicId || '').trim();
+    const doctorClinicId = String(targetDoctor?.clinic_id || '').trim();
+    if (planClinicId && doctorClinicId && planClinicId !== doctorClinicId) {
+      return res.status(403).json({ ok: false, error: 'doctor_clinic_mismatch' });
+    }
+
+    const canonicalTargetDoctorId = String(targetDoctor?.id || targetDoctorId).trim();
+    const roleForTd = role;
+    const nowIso = new Date().toISOString();
+
+    console.log("ASSIGN DEBUG", {
+      routePlanOrEncounterId: planId,
+      treatmentPlanId: canonicalPlanId,
+      /** treatment_doctors.treatment_id FK = treatment_plans.id (no treatment_plans.treatment_id column) */
+      treatmentIdEqualsPlanId: canonicalPlanId,
+      planId: context.plan?.id ?? null,
+      doctorId: canonicalTargetDoctorId,
+    });
+    try {
+      const { data: tdDbgAssign } = await supabase
+        .from("treatment_doctors")
+        .select("treatment_id, doctor_id, role")
+        .eq("doctor_id", canonicalTargetDoctorId)
+        .limit(40);
+      console.log("TREATMENT_DOCTORS FOR DOCTOR", { doctorId: canonicalTargetDoctorId, rows: tdDbgAssign });
+    } catch (e) {
+      console.warn("[DOCTOR PLAN ADD] treatment_doctors debug fetch:", e?.message || e);
+    }
+
+    const alreadyAssigned = await isDoctorAssignedToTreatmentPlan(canonicalPlanId, canonicalTargetDoctorId);
+    if (alreadyAssigned) {
+      const syncEarly = await ensureTreatmentDoctorRowForPlan(
+        supabase,
+        canonicalPlanId,
+        canonicalTargetDoctorId,
+        roleForTd,
+        nowIso
+      );
+      if (!syncEarly.ok) {
+        return res.status(500).json({ ok: false, error: 'treatment_doctors_sync_failed' });
+      }
+      return res.json({
+        ok: true,
+        alreadyAssigned: true,
+        treatmentDoctorsSynced: !syncEarly.skipped,
+      });
+    }
+
+    if (roleForTd === 'PRIMARY') {
+      await supabase.from('treatment_doctors').update({ role: 'ASSISTANT' }).eq('treatment_id', canonicalPlanId).eq('role', 'PRIMARY');
+      await supabase.from('treatment_plans').update({ assigned_doctor_id: canonicalTargetDoctorId }).eq('id', canonicalPlanId);
+    }
+
+    let inserted = false;
+    const tdInsert = await supabase
+      .from('treatment_doctors')
+      .insert({
+        treatment_id: canonicalPlanId,
+        doctor_id: canonicalTargetDoctorId,
+        role: roleForTd,
+        created_at: nowIso,
+      })
+      .select('id')
+      .limit(1);
+
+    if (!tdInsert.error) {
+      inserted = true;
+      await insertNewTreatmentAssignmentNotification(supabase, {
+        assigneeDoctorId: canonicalTargetDoctorId,
+        treatmentPlanId: canonicalPlanId,
+      });
+    } else {
+      const tdCode = String(tdInsert.error?.code || '');
+      const tdMsg = String(tdInsert.error?.message || '').toLowerCase();
+      if (tdCode === '23505' || tdMsg.includes('duplicate')) {
+        const syncDup = await ensureTreatmentDoctorRowForPlan(
+          supabase,
+          canonicalPlanId,
+          canonicalTargetDoctorId,
+          roleForTd,
+          nowIso
+        );
+        if (!syncDup.ok) {
+          return res.status(500).json({ ok: false, error: 'treatment_doctors_sync_failed' });
+        }
+        return res.json({
+          ok: true,
+          alreadyAssigned: true,
+          treatmentDoctorsSynced: !syncDup.skipped,
+        });
+      }
+      if (!['42P01', '42703', 'PGRST204', 'PGRST205'].includes(tdCode)) {
+        console.error('[DOCTOR PLAN ADD] treatment_doctors insert failed:', tdInsert.error);
+      }
+    }
+
+    if (!inserted) {
+      const payloadCandidates = [
+        { treatment_plan_id: canonicalPlanId, doctor_id: canonicalTargetDoctorId, role },
+        { plan_id: canonicalPlanId, doctor_id: canonicalTargetDoctorId, role },
+        { treatment_plan_id: canonicalPlanId, assigned_doctor_id: canonicalTargetDoctorId, role },
+        { treatment_plan_id: canonicalPlanId, doctor_id: canonicalTargetDoctorId },
+        { plan_id: canonicalPlanId, doctor_id: canonicalTargetDoctorId },
+      ];
+
+      for (const payload of payloadCandidates) {
+        const result = await supabase
+          .from('treatment_plan_doctors')
+          .insert(payload)
+          .select('id')
+          .limit(1);
+
+        if (!result.error) {
+          inserted = true;
+          break;
+        }
+
+        const code = String(result.error?.code || '');
+        const msg = String(result.error?.message || '').toLowerCase();
+        const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+        if (schemaIssue) continue;
+
+        const roleConstraintIssue = code === '23514' && msg.includes('role');
+        if (roleConstraintIssue) continue;
+
+        if (code === '23505' || msg.includes('duplicate')) {
+          const syncDupTpd = await ensureTreatmentDoctorRowForPlan(
+            supabase,
+            canonicalPlanId,
+            canonicalTargetDoctorId,
+            roleForTd,
+            nowIso
+          );
+          if (!syncDupTpd.ok) {
+            return res.status(500).json({ ok: false, error: 'treatment_doctors_sync_failed' });
+          }
+          return res.json({
+            ok: true,
+            alreadyAssigned: true,
+            treatmentDoctorsSynced: !syncDupTpd.skipped,
+          });
+        }
+
+        console.error('[DOCTOR PLAN ADD] insert failed:', result.error);
+        return res.status(500).json({ ok: false, error: 'add_doctor_failed' });
+      }
+    }
+
+    if (!inserted) {
+      return res.status(500).json({ ok: false, error: 'add_doctor_failed' });
+    }
+
+    const syncTd = await ensureTreatmentDoctorRowForPlan(
+      supabase,
+      canonicalPlanId,
+      canonicalTargetDoctorId,
+      roleForTd,
+      nowIso
+    );
+    if (!syncTd.ok) {
+      return res.status(500).json({ ok: false, error: 'treatment_doctors_sync_failed' });
+    }
+
+    return res.json({
+      ok: true,
+      assignedDoctorId: canonicalTargetDoctorId,
+      treatmentPlanId: canonicalPlanId,
+      role,
+      treatmentDoctorsSynced: !syncTd.skipped,
+    });
+  } catch (error) {
+    console.error('[DOCTOR PLAN ADD] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+}
+
+app.post('/api/doctor/treatment-plan/:id/add-doctor', requireDoctorAuth, addDoctorToTreatmentPlanHandler);
+app.post('/api/doctor/treatment-plans/:id/add-doctor', requireDoctorAuth, addDoctorToTreatmentPlanHandler);
+app.post('/api/doctor/treatments/:id/assign-doctor', requireDoctorAuth, addDoctorToTreatmentPlanHandler);
+app.post('/api/treatments/:id/assign-doctor', requireDoctorAuth, addDoctorToTreatmentPlanHandler);
+
+function normalizePlanChatMessage(row) {
+  const createdRaw = row?.createdAt ?? row?.created_at ?? now();
+  let createdAt = new Date().toISOString();
+  if (typeof createdRaw === 'string') {
+    const parsed = Date.parse(createdRaw);
+    createdAt = Number.isFinite(parsed) ? new Date(parsed).toISOString() : new Date().toISOString();
+  } else if (typeof createdRaw === 'number') {
+    createdAt = new Date(createdRaw).toISOString();
+  }
+
+  const senderRoleRaw = row?.senderRole ?? row?.sender_role ?? row?.sender ?? row?.from ?? 'DOCTOR';
+  const senderRole = String(senderRoleRaw || '').toUpperCase() === 'ADMIN' ? 'ADMIN' : 'DOCTOR';
+
+  return {
+    id: String(row?.id || row?.message_id || rid('plan_chat')),
+    text: String(row?.text ?? row?.message ?? row?.content ?? ''),
+    senderRole,
+    senderName: String(row?.senderName ?? row?.sender_name ?? '').trim() || (senderRole === 'ADMIN' ? 'Admin' : 'Doctor'),
+    createdAt,
+  };
+}
+
+function normalizePlanChatReadState(raw) {
+  const normalizeTimestamp = (value) => {
+    const parsed = Date.parse(String(value || ''));
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  };
+
+  return {
+    doctorLastReadAt: normalizeTimestamp(raw?.doctorLastReadAt ?? raw?.doctor_last_read_at),
+    adminLastReadAt: normalizeTimestamp(raw?.adminLastReadAt ?? raw?.admin_last_read_at),
+  };
+}
+
+function getPlanChatReadStateFilePath(planId) {
+  return path.join(DATA_DIR, 'plan-chats', `${planId}.read-state.json`);
+}
+
+function readPlanChatReadStateFromFile(planId) {
+  const filePath = getPlanChatReadStateFilePath(planId);
+  const payload = readJson(filePath, {});
+  return normalizePlanChatReadState(payload);
+}
+
+function writePlanChatReadStateToFile(planId, state) {
+  const chatDir = path.join(DATA_DIR, 'plan-chats');
+  if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
+
+  const filePath = getPlanChatReadStateFilePath(planId);
+  writeJson(filePath, {
+    planId,
+    updatedAt: now(),
+    ...normalizePlanChatReadState(state),
+  });
+}
+
+function annotatePlanChatMessagesWithReadState(messages, readState) {
+  const parseTs = (value) => Date.parse(String(value || ''));
+  const doctorReadTs = parseTs(readState?.doctorLastReadAt);
+  const adminReadTs = parseTs(readState?.adminLastReadAt);
+
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    const senderRole = String(message?.senderRole || '').toUpperCase() === 'ADMIN' ? 'ADMIN' : 'DOCTOR';
+    const messageTs = parseTs(message?.createdAt);
+    const validMessageTs = Number.isFinite(messageTs) ? messageTs : null;
+
+    const readByDoctor = senderRole === 'DOCTOR'
+      ? true
+      : Number.isFinite(doctorReadTs) && validMessageTs !== null
+        ? doctorReadTs >= validMessageTs
+        : false;
+    const readByAdmin = senderRole === 'ADMIN'
+      ? true
+      : Number.isFinite(adminReadTs) && validMessageTs !== null
+        ? adminReadTs >= validMessageTs
+        : false;
+
+    return {
+      ...message,
+      readByDoctor,
+      readByAdmin,
+    };
+  });
+}
+
+function getPlanChatFilePath(planId) {
+  return path.join(DATA_DIR, 'plan-chats', `${planId}.json`);
+}
+
+function readPlanChatFromFile(planId) {
+  const filePath = getPlanChatFilePath(planId);
+  const payload = readJson(filePath, { messages: [] });
+  const rows = Array.isArray(payload?.messages) ? payload.messages : [];
+  return rows.map(normalizePlanChatMessage);
+}
+
+function appendPlanChatToFile(planId, message) {
+  const chatDir = path.join(DATA_DIR, 'plan-chats');
+  if (!fs.existsSync(chatDir)) fs.mkdirSync(chatDir, { recursive: true });
+
+  const filePath = getPlanChatFilePath(planId);
+  const payload = readJson(filePath, { messages: [] });
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  messages.push(message);
+  writeJson(filePath, {
+    planId,
+    updatedAt: now(),
+    messages,
+  });
+}
+
+async function fetchPlanChatMessages(planId) {
+  if (!isSupabaseEnabled()) {
+    return readPlanChatFromFile(planId);
+  }
+
+  const result = await supabase
+    .from('messages')
+    .select('*')
+    .eq('treatment_plan_id', planId)
+    .order('created_at', { ascending: true });
+
+  if (!result.error) {
+    const rows = Array.isArray(result.data) ? result.data : [];
+    return rows.map(normalizePlanChatMessage);
+  }
+
+  const code = String(result.error?.code || '');
+  const msg = String(result.error?.message || '').toLowerCase();
+  const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+  if (schemaIssue) {
+    return readPlanChatFromFile(planId);
+  }
+
+  throw result.error;
+}
+
+async function getPlanChatReadState(planId) {
+  return readPlanChatReadStateFromFile(planId);
+}
+
+async function markPlanChatRead(planId, authRole, uptoRaw) {
+  const role = String(authRole || '').toUpperCase() === 'ADMIN' ? 'ADMIN' : 'DOCTOR';
+  const uptoParsed = Date.parse(String(uptoRaw || ''));
+  const uptoIso = Number.isFinite(uptoParsed) ? new Date(uptoParsed).toISOString() : new Date().toISOString();
+
+  const current = await getPlanChatReadState(planId);
+  const key = role === 'ADMIN' ? 'adminLastReadAt' : 'doctorLastReadAt';
+  const currentParsed = Date.parse(String(current?.[key] || ''));
+
+  const next = {
+    ...current,
+    [key]: Number.isFinite(currentParsed) && currentParsed > Date.parse(uptoIso)
+      ? new Date(currentParsed).toISOString()
+      : uptoIso,
+  };
+
+  writePlanChatReadStateToFile(planId, next);
+  return normalizePlanChatReadState(next);
+}
+
+async function ensurePlanChatAccess(req, planId) {
+  const context = await loadTreatmentPlanContext(planId);
+  if (!context?.plan) {
+    return { ok: false, status: 404, error: 'plan_not_found' };
+  }
+
+  if (req.authRole === 'ADMIN') {
+    const requestClinicId = String(req.clinicId || '').trim();
+    if (requestClinicId && context.clinicId && requestClinicId !== context.clinicId) {
+      return { ok: false, status: 403, error: 'plan_access_denied' };
+    }
+  }
+
+  if (req.authRole === 'DOCTOR') {
+    const realPlanId = String(context.plan?.id || planId || '').trim();
+    if (!(await doctorHasAnyTreatmentPlanAccess(realPlanId, req))) {
+      return { ok: false, status: 403, error: 'plan_access_denied' };
+    }
+  }
+
+  return { ok: true, context };
+}
+
+async function insertPlanChatMessage(planId, message) {
+  const normalized = normalizePlanChatMessage(message);
+
+  if (!isSupabaseEnabled()) {
+    appendPlanChatToFile(planId, normalized);
+    return normalized;
+  }
+
+  const isoNow = new Date().toISOString();
+  const payloadCandidates = [
+    {
+      treatment_plan_id: planId,
+      sender: normalized.senderRole.toLowerCase(),
+      sender_role: normalized.senderRole,
+      sender_name: normalized.senderName,
+      message: normalized.text,
+      type: 'text',
+      created_at: isoNow,
+    },
+    {
+      treatment_plan_id: planId,
+      sender_role: normalized.senderRole,
+      message: normalized.text,
+      created_at: isoNow,
+    },
+    {
+      treatment_plan_id: planId,
+      message: normalized.text,
+      created_at: isoNow,
+    },
+  ];
+
+  for (const payload of payloadCandidates) {
+    const result = await supabase
+      .from('messages')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (!result.error) {
+      return normalizePlanChatMessage({
+        ...result.data,
+        senderRole: normalized.senderRole,
+        senderName: normalized.senderName,
+      });
+    }
+
+    const code = String(result.error?.code || '');
+    const msg = String(result.error?.message || '').toLowerCase();
+    const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+    if (schemaIssue) continue;
+
+    throw result.error;
+  }
+
+  appendPlanChatToFile(planId, normalized);
+  return normalized;
+}
+
+app.get('/api/treatment-plans/:planId/chat', requireDoctorOrAdminAuth, async (req, res) => {
+  try {
+    const planId = String(req.params.planId || '').trim();
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    const access = await ensurePlanChatAccess(req, planId);
+    if (!access.ok) {
+      return res.status(access.status).json({ ok: false, error: access.error });
+    }
+
+    const canonicalPlanId = String(access.context?.plan?.id || planId).trim();
+    const messages = await fetchPlanChatMessages(canonicalPlanId);
+    const readState = await getPlanChatReadState(canonicalPlanId);
+    const enrichedMessages = annotatePlanChatMessagesWithReadState(messages, readState);
+    return res.json({ ok: true, messages: enrichedMessages, data: enrichedMessages, readState });
+  } catch (error) {
+    console.error('[TREATMENT PLAN CHAT][GET] failed:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/api/treatment-plans/:planId/chat', requireDoctorOrAdminAuth, async (req, res) => {
+  try {
+    const planId = String(req.params.planId || '').trim();
+    const text = String(req.body?.text || '').trim();
+
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+    if (!text) {
+      return res.status(400).json({ ok: false, error: 'text_required' });
+    }
+
+    const access = await ensurePlanChatAccess(req, planId);
+    if (!access.ok) {
+      return res.status(access.status).json({ ok: false, error: access.error });
+    }
+
+    if (req.authRole === 'DOCTOR') {
+      const canonicalPlanIdForEdit = String(access.context?.plan?.id || planId).trim();
+      if (!(await doctorRequestCanEditTreatmentPlan(canonicalPlanIdForEdit, req))) {
+        return res.status(403).json({ ok: false, error: 'forbidden', message: 'VIEW_ONLY cannot post messages' });
+      }
+    }
+
+    const canonicalPlanId = String(access.context?.plan?.id || planId).trim();
+    const senderRole = req.authRole === 'ADMIN' ? 'ADMIN' : 'DOCTOR';
+    const senderName = senderRole === 'ADMIN'
+      ? String(req.clinic?.name || req.clinicCode || 'Admin')
+      : String(req.doctor?.name || req.doctor?.full_name || req.doctor?.email || 'Doctor');
+
+    const message = await insertPlanChatMessage(canonicalPlanId, {
+      id: rid('plan_chat'),
+      text,
+      senderRole,
+      senderName,
+      createdAt: new Date().toISOString(),
+    });
+
+    const readState = await markPlanChatRead(canonicalPlanId, senderRole, message?.createdAt || new Date().toISOString());
+    const enrichedMessage = annotatePlanChatMessagesWithReadState([message], readState)[0] || message;
+
+    return res.status(201).json({ ok: true, message: enrichedMessage, data: enrichedMessage, readState });
+  } catch (error) {
+    console.error('[TREATMENT PLAN CHAT][POST] failed:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/api/treatment-plans/:planId/chat/read', requireDoctorOrAdminAuth, async (req, res) => {
+  try {
+    const planId = String(req.params.planId || '').trim();
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    const access = await ensurePlanChatAccess(req, planId);
+    if (!access.ok) {
+      return res.status(access.status).json({ ok: false, error: access.error });
+    }
+
+    const canonicalPlanId = String(access.context?.plan?.id || planId).trim();
+    const upto = String(req.body?.upto || req.body?.upTo || '').trim() || new Date().toISOString();
+    const readState = await markPlanChatRead(canonicalPlanId, req.authRole, upto);
+    return res.json({ ok: true, readState });
+  } catch (error) {
+    console.error('[TREATMENT PLAN CHAT][READ] failed:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.get('/api/doctor/chair-availability', requireDoctorAuth, async (req, res) => {
+  try {
+    const date = String(req.query.date || '').trim();
+    const chairInput = String(req.query.chair || req.query.chairNo || '1').trim();
+    const requestedDuration = parseMinuteValue(req.query.duration_minutes ?? req.query.duration ?? 10, 10) || 10;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ ok: false, error: 'invalid_date', message: 'date must be YYYY-MM-DD' });
+    }
+
+    const normalizeChair = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const prefixed = raw.match(/^chair\s*(\d+)$/i);
+      if (prefixed) return String(Number(prefixed[1]));
+      if (/^\d+$/.test(raw)) return String(Number(raw));
+      return raw.toUpperCase();
+    };
+
+    const targetChair = normalizeChair(chairInput || '1');
+    if (!targetChair) {
+      return res.status(400).json({ ok: false, error: 'invalid_chair' });
+    }
+
+    const workStartMinutes = 9 * 60;
+    const workEndMinutes = 18 * 60;
+    const slotMinutes = 10;
+    const dayStartIso = `${date}T00:00:00.000Z`;
+    const dayEndDate = new Date(`${date}T00:00:00.000Z`);
+    dayEndDate.setUTCDate(dayEndDate.getUTCDate() + 1);
+    const dayEndIso = dayEndDate.toISOString();
+
+    if (!isSupabaseEnabled()) {
+      const fallbackSlots = [];
+      for (let m = workStartMinutes; m + requestedDuration <= workEndMinutes; m += slotMinutes) {
+        fallbackSlots.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+      }
+      return res.json({ ok: true, date, chair: targetChair, suggestedTimes: fallbackSlots.slice(0, 18) });
+    }
+
+    const fetchDayRows = async (tableName) => {
+      const attempts = [];
+
+      if (req.clinicId) {
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).eq('date', date));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).eq('appointment_date', date));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+      }
+
+      if (req.clinicCode) {
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).eq('date', date));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).eq('appointment_date', date));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+        attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+      }
+
+      for (const run of attempts) {
+        const { data, error } = await run();
+        if (!error) {
+          return Array.isArray(data) ? data : [];
+        }
+        const code = String(error?.code || '');
+        const msg = String(error?.message || '').toLowerCase();
+        const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+        if (schemaIssue) continue;
+      }
+
+      return [];
+    };
+
+    const [appointments, requests] = await Promise.all([
+      fetchDayRows('appointments'),
+      fetchDayRows('appointment_requests'),
+    ]);
+
+    const toIso = (value) => {
+      if (!value) return null;
+      const ts = Date.parse(String(value));
+      if (!Number.isFinite(ts)) return null;
+      return new Date(ts).toISOString();
+    };
+
+    const dateTimeToIsoSafe = (dateValue, timeValue) => {
+      const d = String(dateValue || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+      const tRaw = String(timeValue || '00:00').trim();
+      const t = /^\d{2}:\d{2}$/.test(tRaw) ? `${tRaw}:00` : tRaw;
+      return toIso(`${d}T${t}`);
+    };
+
+    const dayRows = [...appointments, ...requests];
+    const occupied = [];
+
+    dayRows.forEach((row) => {
+      const normalizedRowChair = normalizeChair(
+        row?.chair ?? row?.chair_no ?? row?.chairNo ?? row?.chair_name ?? row?.chairName ?? row?.chair_id ?? row?.chairId
+      );
+      if (!normalizedRowChair || normalizedRowChair !== targetChair) return;
+
+      const startIso =
+        toIso(row?.start_at) ||
+        toIso(row?.startAt) ||
+        dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+      if (!startIso) return;
+
+      const startTs = Date.parse(startIso);
+      if (!Number.isFinite(startTs)) return;
+
+      const explicitEndIso = toIso(row?.end_at) || toIso(row?.endAt) || null;
+      const explicitEndTs = explicitEndIso ? Date.parse(explicitEndIso) : NaN;
+      const durationFromRow = parseMinuteValue(
+        row?.duration_minutes ?? row?.estimated_duration_minutes ?? row?.duration ?? row?.estimated_duration,
+        0
+      );
+
+      let occupiedMinutes = durationFromRow;
+      if (!occupiedMinutes && Number.isFinite(explicitEndTs) && explicitEndTs > startTs) {
+        occupiedMinutes = Math.max(10, Math.round((explicitEndTs - startTs) / 60000));
+      }
+      if (!occupiedMinutes) occupiedMinutes = 10;
+
+      const endTs = startTs + occupiedMinutes * 60000;
+      occupied.push([startTs, endTs]);
+    });
+
+    occupied.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    occupied.forEach(([start, end]) => {
+      if (!merged.length) {
+        merged.push([start, end]);
+        return;
+      }
+      const last = merged[merged.length - 1];
+      if (start <= last[1]) {
+        last[1] = Math.max(last[1], end);
+      } else {
+        merged.push([start, end]);
+      }
+    });
+
+    const suggestedTimes = [];
+    const nowTs = Date.now();
+
+    for (let minute = workStartMinutes; minute + requestedDuration <= workEndMinutes; minute += slotMinutes) {
+      const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+      const mm = String(minute % 60).padStart(2, '0');
+      const startIso = `${date}T${hh}:${mm}:00.000Z`;
+      const startTs = Date.parse(startIso);
+      if (!Number.isFinite(startTs)) continue;
+      if (date === new Date().toISOString().slice(0, 10) && startTs < nowTs) continue;
+
+      const endTs = startTs + requestedDuration * 60000;
+      const overlaps = merged.some(([busyStart, busyEnd]) => startTs < busyEnd && endTs > busyStart);
+      if (!overlaps) {
+        suggestedTimes.push(`${hh}:${mm}`);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      date,
+      chair: targetChair,
+      duration_minutes: requestedDuration,
+      suggestedTimes: suggestedTimes.slice(0, 24),
+    });
+  } catch (error) {
+    console.error('[DOCTOR CHAIR AVAILABILITY] failed:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.post('/api/treatment/plans/:id/items', requireDoctorAuth, async (req, res) => {
+  try {
+    const planId = String(req.params.id || '').trim();
+    if (!planId) {
+      return res.status(400).json({ ok: false, error: 'plan_id_required' });
+    }
+
+    const doctorKeys = [...new Set([
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.id || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean))];
+
+    const {
+      tooth_number,
+      tooth_fdi_code,
+      procedure_id,
+      procedure_code,
+      procedure_name,
+      procedure_description,
+      category,
+      type,
+      linked_icd10_code,
+      status,
+      chair_no,
+      chairNo,
+      chair,
+      scheduled_at,
+      scheduledAt,
+      scheduled_date,
+    } = req.body || {};
+
+    const toothValue = String(tooth_number || tooth_fdi_code || '').trim();
+    const codeValue = String(procedure_code || procedure_id || '').trim();
+    const nameValue = String(procedure_name || procedure_description || codeValue || 'Procedure').trim();
+    const chairNoValue = String(chair_no || chairNo || chair || '').trim() || null;
+
+    const parseScheduledAtIso = (value) => {
+      if (!value) return null;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return new Date(value).toISOString();
+      }
+      const raw = String(value).trim();
+      if (!raw) return null;
+      const parsed = Date.parse(raw);
+      if (!Number.isFinite(parsed)) return null;
+      return new Date(parsed).toISOString();
+    };
+
+    const scheduledAtValue =
+      parseScheduledAtIso(scheduled_at) ||
+      parseScheduledAtIso(scheduledAt) ||
+      parseScheduledAtIso(scheduled_date) ||
+      null;
+
+    if (!toothValue || !codeValue) {
+      return res.status(400).json({ ok: false, error: 'missing_required_fields' });
+    }
+
+    const planSelectCandidates = [
+      'id, encounter_id, patient_id, created_by_doctor_id, assigned_doctor_id',
+      'id, encounter_id, created_by_doctor_id, assigned_doctor_id',
+      'id, encounter_id, created_by_doctor_id',
+      'id, encounter_id',
+      'id',
+    ];
+
+    let planData = null;
+    let planError = null;
+    for (const selectClause of planSelectCandidates) {
+      const result = await supabase
+        .from('treatment_plans')
+        .select(selectClause)
+        .eq('id', planId)
+        .maybeSingle();
+
+      if (!result.error) {
+        planData = result.data || null;
+        break;
+      }
+
+      planError = result.error;
+      const code = String(result.error?.code || '');
+      if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) {
+        break;
+      }
+    }
+
+    if (!planData) {
+      if (planError) {
+        console.error('[TREATMENT PLAN ITEMS] plan lookup failed:', planError);
+      }
+      return res.status(404).json({ ok: false, error: 'plan_not_found' });
+    }
+
+    if (!(await doctorRequestCanEditTreatmentPlan(planId, req))) {
+      return res.status(403).json({ ok: false, error: 'forbidden', message: 'VIEW_ONLY or not a treatment team member' });
+    }
+
+    let assigneeUuidForItem = null;
+    const assignedDoctorRaw = String(
+      req.body?.assignedDoctorId ||
+        req.body?.assigned_doctor_id ||
+        req.body?.assignedDoctor ||
+        req.body?.doctorId ||
+        req.body?.doctor_id ||
+        ''
+    ).trim();
+    if (assignedDoctorRaw) {
+      assigneeUuidForItem = await resolveDoctorIdToUuid(assignedDoctorRaw);
+      if (!assigneeUuidForItem) {
+        return res.status(400).json({ ok: false, error: 'assigned_doctor_not_found' });
+      }
+      if (!(await isDoctorOnTreatmentTeam(planId, assigneeUuidForItem))) {
+        return res.status(400).json({
+          ok: false,
+          error: 'assigned_doctor_not_in_treatment',
+          message: 'Assigned doctor must be on the treatment team (treatment_doctors)',
+        });
+      }
+    }
+
+    const actingDoctorIdForItem =
+      assigneeUuidForItem || String(req.doctorId || req?.doctor?.id || req?.doctor?.doctor_id || '').trim();
+
+    if (scheduledAtValue) {
+      const activeDoctorId = String(doctorKeys[0] || '').trim();
+
+      const normalizeChair = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const prefixed = raw.match(/^chair\s*(\d+)$/i);
+        if (prefixed) return String(Number(prefixed[1]));
+        if (/^\d+$/.test(raw)) return String(Number(raw));
+        return raw.toUpperCase();
+      };
+
+      const dateOnly = scheduledAtValue.slice(0, 10);
+      const dayStartIso = `${dateOnly}T00:00:00.000Z`;
+      const dayEndDate = new Date(dayStartIso);
+      dayEndDate.setUTCDate(dayEndDate.getUTCDate() + 1);
+      const dayEndIso = dayEndDate.toISOString();
+      const requestStartTs = Date.parse(scheduledAtValue);
+      const requestEndTs = requestStartTs + (parseMinuteValue(req.body?.duration_minutes ?? req.body?.duration ?? 10, 10) || 10) * 60000;
+      const targetChair = normalizeChair(chairNoValue);
+
+      const fetchDayRows = async (tableName) => {
+        const attempts = [];
+
+        if (req.clinicId) {
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).eq('date', dateOnly));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).eq('appointment_date', dateOnly));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_id', req.clinicId).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+        }
+
+        if (req.clinicCode) {
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).eq('date', dateOnly));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).eq('appointment_date', dateOnly));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).gte('start_at', dayStartIso).lt('start_at', dayEndIso));
+          attempts.push(() => supabase.from(tableName).select('*').eq('clinic_code', req.clinicCode).gte('startAt', dayStartIso).lt('startAt', dayEndIso));
+        }
+
+        for (const run of attempts) {
+          const result = await run();
+          if (!result.error) return Array.isArray(result.data) ? result.data : [];
+          const code = String(result.error?.code || '');
+          const msg = String(result.error?.message || '').toLowerCase();
+          const schemaIssue = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('does not exist') || msg.includes('column');
+          if (schemaIssue) continue;
+        }
+
+        return [];
+      };
+
+      const toIso = (value) => {
+        if (!value) return null;
+        const ts = Date.parse(String(value));
+        if (!Number.isFinite(ts)) return null;
+        return new Date(ts).toISOString();
+      };
+
+      const dateTimeToIsoSafe = (dateValue, timeValue) => {
+        const d = String(dateValue || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+        const tRaw = String(timeValue || '00:00').trim();
+        const t = /^\d{2}:\d{2}$/.test(tRaw) ? `${tRaw}:00` : tRaw;
+        return toIso(`${d}T${t}`);
+      };
+
+      const getDurationFromRow = (row, fallback = 10) => {
+        const parsed = parseMinuteValue(
+          row?.duration_minutes ?? row?.estimated_duration_minutes ?? row?.duration ?? row?.estimated_duration,
+          0
+        );
+        if (parsed > 0) return parsed;
+        const endIso = toIso(row?.end_at) || toIso(row?.endAt) || null;
+        const startIso = toIso(row?.start_at) || toIso(row?.startAt) || dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+        if (startIso && endIso) {
+          const diff = Math.round((Date.parse(endIso) - Date.parse(startIso)) / 60000);
+          if (Number.isFinite(diff) && diff > 0) return Math.max(10, Math.min(240, diff));
+        }
+        return fallback;
+      };
+
+      const overlaps = (startA, endA, startB, endB) => startA < endB && endA > startB;
+      const ignoredStatuses = new Set(['CANCELLED', 'CANCELED', 'REJECTED']);
+
+      const [appointments, requests] = await Promise.all([
+        fetchDayRows('appointments'),
+        fetchDayRows('appointment_requests'),
+      ]);
+      const dayRows = [...appointments, ...requests];
+
+      if (activeDoctorId) {
+        for (const row of dayRows) {
+          const rowStatus = String(row?.status || '').trim().toUpperCase();
+          if (ignoredStatuses.has(rowStatus)) continue;
+
+          const rowDoctor = String(row?.doctor_id || row?.doctorId || row?.doctor || '').trim();
+          if (!rowDoctor || rowDoctor !== activeDoctorId) continue;
+
+          const startIso =
+            toIso(row?.start_at) ||
+            toIso(row?.startAt) ||
+            dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+          if (!startIso) continue;
+
+          const rowStartTs = Date.parse(startIso);
+          if (!Number.isFinite(rowStartTs)) continue;
+          const rowDuration = getDurationFromRow(row, 10);
+          const rowEndTs = rowStartTs + rowDuration * 60000;
+
+          if (overlaps(requestStartTs, requestEndTs, rowStartTs, rowEndTs)) {
+            return res.status(409).json({
+              ok: false,
+              error: 'doctor_visit_conflict',
+              message: 'Doctor has another visit appointment at this time',
+            });
+          }
+        }
+      }
+
+      if (targetChair) {
+        for (const row of dayRows) {
+          const rowStatus = String(row?.status || '').trim().toUpperCase();
+          if (ignoredStatuses.has(rowStatus)) continue;
+
+          const rowChair = normalizeChair(row?.chair ?? row?.chair_no ?? row?.chairNo ?? row?.chair_name ?? row?.chairName ?? row?.chair_id ?? row?.chairId);
+          if (!rowChair || rowChair !== targetChair) continue;
+
+          const startIso =
+            toIso(row?.start_at) ||
+            toIso(row?.startAt) ||
+            dateTimeToIsoSafe(row?.date || row?.appointment_date, row?.time);
+          if (!startIso) continue;
+
+          const rowStartTs = Date.parse(startIso);
+          if (!Number.isFinite(rowStartTs)) continue;
+          const rowDuration = getDurationFromRow(row, 10);
+          const rowEndTs = rowStartTs + rowDuration * 60000;
+
+          if (overlaps(requestStartTs, requestEndTs, rowStartTs, rowEndTs)) {
+            return res.status(409).json({
+              ok: false,
+              error: 'chair_conflict',
+              message: 'Chair is not available at this time',
+            });
+          }
+        }
+      }
+    }
+
+    let patientIdFromPlan = String(planData.patient_id || '').trim();
+    if (!patientIdFromPlan) {
+      const encounterId = String(planData.encounter_id || '').trim();
+      if (encounterId) {
+        const encounterResult = await supabase
+          .from('patient_encounters')
+          .select('id, patient_id')
+          .eq('id', encounterId)
+          .maybeSingle();
+
+        if (!encounterResult.error && encounterResult.data?.patient_id) {
+          patientIdFromPlan = String(encounterResult.data.patient_id).trim();
+        }
+      }
+    }
+
+    const payloadBase = {
+      treatment_plan_id: planId,
+      procedure_code: codeValue,
+      status: String(status || 'planned').toLowerCase(),
+    };
+
+    const commonCandidates = [
+      {
+        treatment_plan_id: planId,
+        procedure_code: codeValue,
+        procedure_name: nameValue,
+        status: String(status || 'planned').toLowerCase(),
+      },
+      {
+        treatment_plan_id: planId,
+        tooth_fdi_code: toothValue,
+        procedure_code: codeValue,
+        procedure_name: nameValue,
+        status: String(status || 'planned').toLowerCase(),
+      },
+      {
+        treatment_plan_id: planId,
+        tooth_number: toothValue,
+        procedure_code: codeValue,
+        procedure_name: nameValue,
+        status: String(status || 'planned').toLowerCase(),
+      },
+      {
+        ...payloadBase,
+        linked_icd10_code: linked_icd10_code || null,
+        category: category || null,
+        type: type || null,
+        created_by_doctor_id: actingDoctorIdForItem || null,
+        tooth_fdi_code: toothValue,
+        procedure_id: String(procedure_id || codeValue),
+        procedure_description: nameValue,
+        chair_no: chairNoValue,
+        chair: chairNoValue,
+        scheduled_at: scheduledAtValue,
+        scheduled_date: scheduledAtValue,
+        due_date: scheduledAtValue,
+      },
+      {
+        ...payloadBase,
+        linked_icd10_code: linked_icd10_code || null,
+        category: category || null,
+        type: type || null,
+        created_by_doctor_id: actingDoctorIdForItem || null,
+        tooth_fdi_code: toothValue,
+        procedure_name: nameValue,
+        chair_no: chairNoValue,
+        chair: chairNoValue,
+        scheduled_at: scheduledAtValue,
+        scheduled_date: scheduledAtValue,
+        due_date: scheduledAtValue,
+      },
+    ];
+
+    const treatmentItemsExtraCandidates = [
+      {
+        treatment_plan_id: planId,
+        patient_id: patientIdFromPlan || null,
+        tooth_number: toothValue,
+        procedure_name: nameValue,
+        procedure_code: codeValue,
+        status: String(status || 'planned').toUpperCase(),
+        chair_no: chairNoValue,
+        chair: chairNoValue,
+        scheduled_at: scheduledAtValue,
+        scheduled_date: scheduledAtValue,
+        due_date: scheduledAtValue,
+      },
+    ];
+
+    const itemTables = ['treatment_items', 'treatment_plan_items'];
+    let lastInsertError = null;
+
+    const projectItemToPatientTreatments = async (createdItem) => {
+      const targetPatientId = String(patientIdFromPlan || '').trim();
+      if (!targetPatientId) return;
+
+      const projectionToothId = String(createdItem?.tooth_fdi_code || createdItem?.tooth_number || toothValue || '').trim();
+      if (!projectionToothId) return;
+
+      const treatmentsDir = path.join(DATA_DIR, 'treatments');
+      if (!fs.existsSync(treatmentsDir)) {
+        fs.mkdirSync(treatmentsDir, { recursive: true });
+      }
+      const treatmentsFile = path.join(treatmentsDir, `${targetPatientId}.json`);
+      const existing = await loadExistingTreatmentsPayload(
+        targetPatientId,
+        req.clinicId || null,
+        treatmentsFile,
+        { teeth: [], patientId: targetPatientId, schemaVersion: 1, updatedAt: now() }
+      );
+
+      const nextPayload = isPlainObject(existing)
+        ? { ...existing }
+        : { teeth: [], patientId: targetPatientId, schemaVersion: 1, updatedAt: now() };
+
+      if (!Array.isArray(nextPayload.teeth)) nextPayload.teeth = [];
+
+      let targetTooth = nextPayload.teeth.find((tooth) => {
+        const candidate = String(
+          tooth?.toothId ?? tooth?.tooth_id ?? tooth?.tooth_number ?? tooth?.toothNumber ?? ''
+        ).trim();
+        return candidate === projectionToothId;
+      });
+
+      if (!targetTooth) {
+        targetTooth = { toothId: projectionToothId, procedures: [] };
+        nextPayload.teeth.push(targetTooth);
+      }
+
+      if (!Array.isArray(targetTooth.procedures)) targetTooth.procedures = [];
+
+      const projectedProcedureId = String(createdItem?.id || `${planId}-${projectionToothId}-${codeValue}`).trim();
+      const alreadyExists = targetTooth.procedures.some(
+        (proc) => String(proc?.procedureId || proc?.id || '').trim() === projectedProcedureId
+      );
+
+      const projectedAssignedDoctorId = String(
+        actingDoctorIdForItem ||
+          req?.doctorId ||
+          req?.doctor?.id ||
+          req?.doctor?.doctor_id ||
+          createdItem?.created_by_doctor_id ||
+          createdItem?.doctor_id ||
+          ''
+      ).trim();
+      const projectedAssignedDoctorName = String(
+        req?.doctor?.name || req?.doctor?.full_name || req?.doctor?.email || ''
+      ).trim();
+
+      const parseDateToTimestamp = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        const ts = Date.parse(String(value));
+        return Number.isFinite(ts) ? ts : null;
+      };
+
+      if (!alreadyExists) {
+        const projectedType = procedures.normalizeType(
+          createdItem?.procedure_code || createdItem?.procedure_name || createdItem?.procedure_description || codeValue
+        );
+        const projectedStatus = procedures.normalizeStatus(String(createdItem?.status || status || 'PLANNED'));
+        const projectedDateTs = parseDateToTimestamp(
+          createdItem?.scheduled_at ||
+          createdItem?.scheduled_date ||
+          createdItem?.due_date ||
+          scheduledAtValue ||
+          null
+        );
+        const projectedCreatedAt = createdItem?.created_at
+          ? Date.parse(String(createdItem.created_at)) || now()
+          : now();
+
+        targetTooth.procedures.push({
+          id: projectedProcedureId,
+          procedureId: projectedProcedureId,
+          type: projectedType,
+          category: procedures.categoryForType(projectedType),
+          status: projectedStatus,
+          date: projectedDateTs || projectedCreatedAt,
+          scheduledAt: projectedDateTs,
+          chairNo: String(createdItem?.chair_no || createdItem?.chair || chairNoValue || '').trim() || null,
+          chair: String(createdItem?.chair || createdItem?.chair_no || chairNoValue || '').trim() || null,
+          assignedDoctorId: projectedAssignedDoctorId || null,
+          assignedDoctorName: projectedAssignedDoctorName || null,
+          createdAt: projectedCreatedAt,
+        });
+      } else {
+        const existingProc = targetTooth.procedures.find(
+          (proc) => String(proc?.procedureId || proc?.id || '').trim() === projectedProcedureId
+        );
+        if (existingProc) {
+          const nextScheduledAt = parseDateToTimestamp(
+            createdItem?.scheduled_at || createdItem?.scheduled_date || createdItem?.due_date || scheduledAtValue || null
+          );
+          if (nextScheduledAt && !existingProc.scheduledAt) existingProc.scheduledAt = nextScheduledAt;
+          if (!existingProc.date) existingProc.date = nextScheduledAt || existingProc.createdAt || now();
+          if (!existingProc.chairNo) existingProc.chairNo = String(createdItem?.chair_no || createdItem?.chair || chairNoValue || '').trim() || null;
+          if (!existingProc.chair) existingProc.chair = String(createdItem?.chair || createdItem?.chair_no || chairNoValue || '').trim() || null;
+          if (projectedAssignedDoctorId) existingProc.assignedDoctorId = projectedAssignedDoctorId;
+          if (projectedAssignedDoctorName) existingProc.assignedDoctorName = projectedAssignedDoctorName;
+        }
+      }
+
+      nextPayload.patientId = targetPatientId;
+      nextPayload.schemaVersion = Number(nextPayload.schemaVersion || 1);
+      nextPayload.updatedAt = now();
+      nextPayload.formCompleted = true;
+      nextPayload.formCompletedAt = nextPayload.formCompletedAt || nextPayload.updatedAt;
+
+      const saveResult = await saveTreatmentsSupabaseWithFallback(targetPatientId, nextPayload, 'doctor');
+      if (!saveResult.ok && canUseFileFallback()) {
+        writeJson(treatmentsFile, nextPayload);
+      }
+    };
+
+    const insertWithPruning = async (tableName, payload) => {
+      let currentPayload = { ...(payload || {}) };
+      let helperLastError = null;
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const result = await supabase
+          .from(tableName)
+          .insert(currentPayload)
+          .select('*')
+          .maybeSingle();
+
+        if (!result.error) return result;
+        helperLastError = result.error;
+
+        const missingColumn = getMissingColumnName(result.error);
+        if (!isMissingColumnError(result.error) || !missingColumn || !(missingColumn in currentPayload)) {
+          return result;
+        }
+
+        delete currentPayload[missingColumn];
+      }
+
+      return { data: null, error: helperLastError };
+    };
+
+    for (const tableName of itemTables) {
+      if (tableName === 'treatment_plan_items') {
+        const previousCode = String(lastInsertError?.code || '');
+        const previousMsg = String(lastInsertError?.message || '').toLowerCase();
+        const canFallback = ['42P01', '42703', 'PGRST204', 'PGRST205'].includes(previousCode)
+          || previousMsg.includes('does not exist')
+          || previousMsg.includes('column');
+        if (!canFallback) {
+          break;
+        }
+      }
+
+      const insertCandidates = tableName === 'treatment_items'
+        ? [...commonCandidates, ...treatmentItemsExtraCandidates]
+        : commonCandidates;
+
+      for (const payload of insertCandidates) {
+        const result = await insertWithPruning(tableName, payload);
+
+        if (!result.error && result.data) {
+          const item = result.data;
+          try {
+            await projectItemToPatientTreatments(item);
+          } catch (projectionError) {
+            console.error('[TREATMENT PLAN ITEMS] projection warning:', projectionError);
+          }
+          bumpTreatmentsCache();
+          return res.json({
+            ok: true,
+            item: {
+              id: item.id,
+              treatment_plan_id: item.treatment_plan_id,
+              tooth_fdi_code: item.tooth_fdi_code || item.tooth_number || null,
+              procedure_id: item.procedure_id || null,
+              procedure_code: item.procedure_code || codeValue,
+              procedure_name: item.procedure_name || item.procedure_description || nameValue,
+              procedure_description: item.procedure_description || item.procedure_name || nameValue,
+              category: item.category || category || null,
+              type: item.type || type || null,
+              linked_icd10_code: item.linked_icd10_code || linked_icd10_code || null,
+              chair_no: item.chair_no || item.chair || chairNoValue || null,
+              chair: item.chair || item.chair_no || chairNoValue || null,
+              scheduled_at: item.scheduled_at || item.scheduledAt || item.scheduled_date || item.due_date || scheduledAtValue || null,
+              status: String(item.status || 'planned').toUpperCase(),
+              created_at: item.created_at || null,
+            },
+          });
+        }
+
+        const code = String(result.error?.code || '');
+        lastInsertError = result.error || lastInsertError;
+        if (!['42P01', '42703', 'PGRST204', 'PGRST205', '23502', '23514', '22P02'].includes(code)) {
+          console.error('[TREATMENT PLAN ITEMS] create failed:', result.error);
+          return res.status(500).json({ ok: false, error: 'item_create_failed' });
+        }
+      }
+    }
+
+    return res.status(500).json({
+      ok: false,
+      error: 'item_create_failed',
+      details: lastInsertError?.message || null,
+      code: String(lastInsertError?.code || ''),
+    });
+  } catch (error) {
+    console.error('[TREATMENT PLAN ITEMS] create exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+app.get('/api/doctor/tasks', requireDoctorAuth, async (req, res) => {
+  try {
+    const doctorKeysRaw = [...new Set([
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.id || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean))];
+    const doctorKeysUuidFk = await doctorKeysForUuidFkInQuery(doctorKeysRaw);
+
+    if (doctorKeysRaw.length === 0) {
+      return res.json({ ok: true, tasks: [] });
+    }
+
+    const planSelects = [
+      'id, encounter_id, patient_id, created_by_doctor_id, status, created_at',
+      'id, encounter_id, patient_id, created_by_doctor_id, created_at',
+      'id, encounter_id, patient_id, created_by_doctor_id',
+      'id, encounter_id, created_by_doctor_id, status, created_at',
+      'id, encounter_id, created_by_doctor_id, created_at',
+      'id, encounter_id, created_by_doctor_id',
+    ];
+
+    let plans = [];
+    let plansLoaded = false;
+    let planError = null;
+
+    for (const selectClause of planSelects) {
+      const merged = [];
+      let hadHardError = false;
+
+      for (const key of doctorKeysUuidFk) {
+        const result = await timedDbQuery(
+          `[DOCTOR TASKS] treatment_plans created_by_doctor_id=${key}`,
+          () => supabase
+            .from('treatment_plans')
+            .select(selectClause)
+            .eq('created_by_doctor_id', key)
+            .order('created_at', { ascending: false })
+        );
+
+        if (!result.error) {
+          (Array.isArray(result.data) ? result.data : []).forEach((row) => merged.push(row));
+          continue;
+        }
+
+        planError = result.error;
+        const code = String(result.error.code || '');
+        const msg = String(result.error.message || '').toLowerCase();
+        const castIssue = code === '22P02' || msg.includes('invalid input syntax');
+        const schemaIssue = ['42703', 'PGRST204'].includes(code);
+
+        if (castIssue) {
+          continue;
+        }
+
+        if (schemaIssue) {
+          hadHardError = true;
+          break;
+        }
+
+        hadHardError = true;
+        break;
+      }
+
+      if (!hadHardError) {
+        try {
+          const tdPlanIdSet = await collectTreatmentIdsFromTreatmentDoctorsTable(doctorKeysRaw);
+          const tdPlanIds = [...tdPlanIdSet];
+          if (tdPlanIds.length > 0) {
+            const tdRes = await timedDbQuery(
+              `[DOCTOR TASKS] treatment_plans by treatment_doctors (${tdPlanIds.length})`,
+              () =>
+                supabase
+                  .from('treatment_plans')
+                  .select(selectClause)
+                  .in('id', tdPlanIds)
+                  .order('created_at', { ascending: false })
+            );
+            if (!tdRes.error) {
+              (tdRes.data || []).forEach((row) => merged.push(row));
+            }
+          }
+        } catch (tdCatch) {
+          console.warn('[DOCTOR TASKS] treatment_doctors plan merge:', tdCatch?.message || tdCatch);
+        }
+
+        const seen = new Set();
+        plans = merged.filter((row) => {
+          const id = String(row?.id || '');
+          if (!id) return false;
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+        plansLoaded = true;
+        break;
+      }
+    }
+
+    if (!plansLoaded) {
+      console.error('[DOCTOR TASKS] plans fetch failed:', planError);
+      return res.status(500).json({ ok: false, error: 'plans_fetch_failed' });
+    }
+
+    if (!plans.length) {
+      return res.json({ ok: true, tasks: [] });
+    }
+
+    const planIds = plans.map((p) => p.id).filter(Boolean);
+    const encounterIds = [...new Set(plans.map((p) => p.encounter_id).filter(Boolean))];
+
+    const readItemsFromTable = async (tableName) => {
+      const itemSelects = [
+        'id, treatment_plan_id, tooth_number, tooth_fdi_code, procedure_name, procedure_code, type, category, status, due_date, priority, high_priority, created_at, updated_at',
+        'id, treatment_plan_id, tooth_number, tooth_fdi_code, procedure_name, procedure_code, status, created_at, updated_at',
+        'id, treatment_plan_id, status, created_at',
+      ];
+
+      for (const selectClause of itemSelects) {
+        const result = await timedDbQuery(
+          `[DOCTOR TASKS] ${tableName} by plan ids (${planIds.length})`,
+          () => supabase
+            .from(tableName)
+            .select(selectClause)
+            .in('treatment_plan_id', planIds)
+            .order('created_at', { ascending: false })
+        );
+
+        if (!result.error) {
+          return Array.isArray(result.data) ? result.data : [];
+        }
+
+        const code = String(result.error.code || '');
+        if (code === '42P01') {
+          return [];
+        }
+        if (!['42703', 'PGRST204', 'PGRST205'].includes(code)) {
+          throw result.error;
+        }
+      }
+
+      return [];
+    };
+
+    let treatmentItems = [];
+    try {
+      const primary = await readItemsFromTable('treatment_items');
+      const fallback = await readItemsFromTable('treatment_plan_items');
+      // Aynı id iki tabloda kopyaysa yalnızca treatment_items kazanır (yanlış plan eşlemesi önlenir)
+      const byItemId = new Map();
+      for (const row of primary || []) {
+        const iid = String(row?.id || '').trim();
+        if (iid) byItemId.set(iid, row);
+      }
+      for (const row of fallback || []) {
+        const iid = String(row?.id || '').trim();
+        if (iid && !byItemId.has(iid)) byItemId.set(iid, row);
+      }
+      treatmentItems = Array.from(byItemId.values());
+    } catch (err) {
+      console.error('[DOCTOR TASKS] items fetch failed:', err);
+      return res.status(500).json({ ok: false, error: 'items_fetch_failed' });
+    }
+
+    const encounterMap = new Map();
+    if (encounterIds.length) {
+      const encounterSelects = [
+        'id, patient_id, created_at',
+        'id, patient_id',
+      ];
+
+      for (const selectClause of encounterSelects) {
+        const { data, error } = await timedDbQuery(
+          `[DOCTOR TASKS] patient_encounters by ids (${encounterIds.length})`,
+          () => supabase
+            .from('patient_encounters')
+            .select(selectClause)
+            .in('id', encounterIds)
+        );
+
+        if (!error) {
+          (data || []).forEach((row) => {
+            if (row?.id) encounterMap.set(String(row.id), row);
+          });
+          break;
+        }
+      }
+    }
+
+    const patientIdSet = new Set();
+    encounterMap.forEach((enc) => {
+      if (enc?.patient_id) patientIdSet.add(String(enc.patient_id));
+    });
+    plans.forEach((p) => {
+      if (p?.patient_id != null && String(p.patient_id).trim()) patientIdSet.add(String(p.patient_id).trim());
+    });
+
+    const patientMap = new Map();
+    if (patientIdSet.size) {
+      const ids = Array.from(patientIdSet).filter(Boolean);
+      const addRows = (rows) => {
+        (rows || []).forEach((p) => {
+          const idA = String(p?.id || '');
+          const idB = String(p?.patient_id || '');
+          const label = String(p?.name || p?.full_name || p?.patient_id || p?.id || '').trim();
+          if (idA) patientMap.set(idA, label);
+          if (idB) patientMap.set(idB, label);
+        });
+      };
+      for (let i = 0; i < ids.length; i += 80) {
+        const chunk = ids.slice(i, i + 80);
+        const r1 = await timedDbQuery(`[DOCTOR TASKS] patients by id (${chunk.length})`, () =>
+          supabase.from('patients').select('id, patient_id, full_name, name').in('id', chunk)
+        );
+        if (!r1.error) addRows(r1.data);
+        const r2 = await timedDbQuery(`[DOCTOR TASKS] patients by patient_id (${chunk.length})`, () =>
+          supabase.from('patients').select('id, patient_id, full_name, name').in('patient_id', chunk)
+        );
+        if (!r2.error) addRows(r2.data);
+      }
+    }
+
+    const planMap = new Map();
+    plans.forEach((p) => {
+      if (p?.id) planMap.set(String(p.id), p);
+    });
+
+    const tasks = (treatmentItems || [])
+      .map((item) => {
+        const treatmentPlanId = String(item?.treatment_plan_id || '');
+        if (!treatmentPlanId) return null;
+
+        const plan = planMap.get(treatmentPlanId);
+        if (!plan) return null;
+
+        const encounter = encounterMap.get(String(plan?.encounter_id || '')) || null;
+        const encPid = String(encounter?.patient_id || '').trim();
+        const planPid = String(plan?.patient_id != null ? plan.patient_id : '').trim();
+        // Tedavi planının hastası öncelikli (encounter yanlış/eski patient_id taşıyorsa yanlış isim önlenir)
+        const patientId = planPid || encPid;
+        const statusRaw = String(item?.status || 'PLANNED').toUpperCase();
+        const status = statusRaw === 'ACTIVE' ? 'IN_PROGRESS' : statusRaw;
+
+        return {
+          id: String(item?.id || ''),
+          patient_id: patientId,
+          patient: {
+            id: patientId,
+            name: patientMap.get(patientId) || patientId || 'Unknown Patient',
+          },
+          treatment_plan_id: treatmentPlanId,
+          tooth_number: String(item?.tooth_number || item?.tooth_fdi_code || ''),
+          type: String(item?.type || 'PROCEDURE').toUpperCase(),
+          procedure_name: String(item?.procedure_name || item?.procedure_code || 'Procedure'),
+          procedure_category: String(item?.category || ''),
+          due_date: item?.due_date || item?.updated_at || item?.created_at || plan?.created_at || encounter?.created_at || null,
+          scheduled_by: 'DOCTOR',
+          priority: String(item?.priority || 'MEDIUM').toUpperCase(),
+          high_priority: item?.high_priority === true,
+          status,
+          created_at: item?.created_at || null,
+        };
+      })
+      .filter((task) => !!task && !!task.id)
+      .filter((task) => ['PLANNED', 'IN_PROGRESS'].includes(String(task.status || '').toUpperCase()));
+
+    return res.json({ ok: true, tasks });
+  } catch (error) {
+    console.error('[DOCTOR TASKS] list exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+});
+
+async function patchDoctorTaskStatusHandler(req, res) {
+  try {
+    const taskId = String(req.params.id || '').trim();
+    const incomingStatus = String(req.body?.status || '').trim().toUpperCase();
+
+    if (!taskId) {
+      return res.status(400).json({ ok: false, error: 'task_id_required' });
+    }
+
+    if (!incomingStatus) {
+      return res.status(400).json({ ok: false, error: 'status_required' });
+    }
+
+    const mapStatus = (value) => {
+      if (value === 'DONE' || value === 'COMPLETED') return 'done';
+      if (value === 'IN_PROGRESS' || value === 'ACTIVE') return 'in_progress';
+      return 'planned';
+    };
+
+    const nextStatus = mapStatus(incomingStatus);
+
+    const verifyOwnership = async (tableName) => {
+      const itemResult = await supabase
+        .from(tableName)
+        .select('id, treatment_plan_id')
+        .eq('id', taskId)
+        .maybeSingle();
+
+      if (itemResult.error || !itemResult.data) return { ok: false, exists: false };
+
+      const planId = String(itemResult.data.treatment_plan_id || '');
+      if (!planId) return { ok: false, exists: true };
+
+      const plan = await supabase
+        .from('treatment_plans')
+        .select('id')
+        .eq('id', planId)
+        .maybeSingle();
+
+      if (plan.error || !plan.data) return { ok: false, exists: true };
+
+      const canEdit = await doctorRequestCanEditTreatmentPlan(planId, req);
+      return { ok: canEdit, exists: true };
+    };
+
+    const patchTable = async (tableName) => {
+      const ownership = await verifyOwnership(tableName);
+      if (!ownership.exists) return { updated: false, forbidden: false };
+      if (!ownership.ok) return { updated: false, forbidden: true };
+
+      const statusCandidates =
+        nextStatus === 'done'
+          ? ['done', 'DONE', 'completed', 'COMPLETED']
+          : nextStatus === 'in_progress'
+            ? ['in_progress', 'IN_PROGRESS', 'active', 'ACTIVE']
+            : ['planned', 'PLANNED'];
+
+      for (const statusValue of statusCandidates) {
+        const result = await supabase
+          .from(tableName)
+          .update({ status: statusValue, updated_at: new Date().toISOString() })
+          .eq('id', taskId)
+          .select('id, status')
+          .maybeSingle();
+
+        if (!result.error && result.data) {
+          return { updated: true, data: result.data, forbidden: false };
+        }
+
+        const code = String(result.error?.code || '');
+
+        if (code === '42703' || code === 'PGRST204') {
+          const fallback = await supabase
+            .from(tableName)
+            .update({ status: statusValue })
+            .eq('id', taskId)
+            .select('id, status')
+            .maybeSingle();
+
+          if (!fallback.error && fallback.data) {
+            return { updated: true, data: fallback.data, forbidden: false };
+          }
+
+          const fallbackCode = String(fallback.error?.code || '');
+          if (fallbackCode === '23514' || fallbackCode === '22P02') {
+            continue;
+          }
+
+          return { updated: false, forbidden: false };
+        }
+
+        if (code === '23514' || code === '22P02') {
+          continue;
+        }
+
+        return { updated: false, forbidden: false };
+      }
+
+      return { updated: false, forbidden: false };
+    };
+
+    const primary = await patchTable('treatment_items');
+    if (primary.forbidden) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+    if (primary.updated) {
+      return res.json({ ok: true, task: primary.data });
+    }
+
+    const fallback = await patchTable('treatment_plan_items');
+    if (fallback.forbidden) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+    if (fallback.updated) {
+      return res.json({ ok: true, task: fallback.data });
+    }
+
+    return res.status(404).json({ ok: false, error: 'task_not_found' });
+  } catch (error) {
+    console.error('[DOCTOR TASKS] patch exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+}
+
+app.patch('/api/doctor/tasks/:id', requireDoctorAuth, patchDoctorTaskStatusHandler);
+app.put('/api/treatment/treatment-items/:id/status', requireDoctorAuth, patchDoctorTaskStatusHandler);
+app.patch('/api/treatment/treatment-items/:id/status', requireDoctorAuth, patchDoctorTaskStatusHandler);
+
+app.put('/api/treatment/treatment-items/:id', requireDoctorAuth, async (req, res) => {
+  try {
+    const itemId = String(req.params.id || '').trim();
+    if (!itemId) {
+      return res.status(400).json({ ok: false, error: 'item_id_required' });
+    }
+
+    const doctorKeys = [...new Set([
+      String(req.doctorId || '').trim(),
+      String(req?.doctor?.id || '').trim(),
+      String(req?.doctor?.doctor_id || '').trim(),
+    ].filter(Boolean))];
+
+    const {
+      title,
+      procedure_name,
+      procedure_code,
+      scheduledDate,
+      scheduled_at,
+      scheduled_date,
+      due_date,
+      price,
+      doctorId,
+      doctor_id,
+      chairNo,
+      chair_no,
+      chair,
+      note,
+      notes,
+    } = req.body || {};
+
+    const parseIso = (value) => {
+      if (!value) return null;
+      const ts = Date.parse(String(value));
+      return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+    };
+
+    const normalizedTitle = String(title || procedure_name || '').trim() || null;
+    const normalizedCode = String(procedure_code || '').trim() || null;
+    const normalizedDoctor = String(doctorId || doctor_id || '').trim() || null;
+    const normalizedChair = String(chairNo || chair_no || chair || '').trim() || null;
+    const normalizedNote = String(note || notes || '').trim() || null;
+    const normalizedScheduled =
+      parseIso(scheduledDate) ||
+      parseIso(scheduled_at) ||
+      parseIso(scheduled_date) ||
+      parseIso(due_date) ||
+      null;
+
+    const normalizedPrice =
+      price === undefined || price === null || String(price).trim() === ''
+        ? null
+        : Number(price);
+
+    const overridePatch = {};
+    if (title !== undefined || procedure_name !== undefined) {
+      overridePatch.title = normalizedTitle;
+    }
+    if (procedure_code !== undefined) {
+      overridePatch.procedure_code = normalizedCode;
+    }
+    if (scheduledDate !== undefined || scheduled_at !== undefined || scheduled_date !== undefined || due_date !== undefined) {
+      overridePatch.planned_date = normalizedScheduled;
+    }
+    if (price !== undefined) {
+      overridePatch.price = normalizedPrice;
+    }
+    if (doctorId !== undefined || doctor_id !== undefined) {
+      overridePatch.doctor_id = normalizedDoctor;
+    }
+    if (chairNo !== undefined || chair_no !== undefined || chair !== undefined) {
+      overridePatch.chair_no = normalizedChair;
+    }
+    if (note !== undefined || notes !== undefined) {
+      overridePatch.note = normalizedNote;
+    }
+
+    if (price !== undefined && price !== null && String(price).trim() !== '' && !Number.isFinite(normalizedPrice)) {
+      return res.status(400).json({ ok: false, error: 'invalid_price' });
+    }
+
+    const hasAnyUpdate = [
+      title,
+      procedure_name,
+      procedure_code,
+      scheduledDate,
+      scheduled_at,
+      scheduled_date,
+      due_date,
+      price,
+      doctorId,
+      doctor_id,
+      chairNo,
+      chair_no,
+      chair,
+      note,
+      notes,
+    ].some((value) => value !== undefined);
+
+    if (!hasAnyUpdate) {
+      return res.status(400).json({ ok: false, error: 'no_updatable_fields' });
+    }
+
+    if (normalizedDoctor) {
+      let resolvedPlanId = null;
+      for (const t of ['treatment_items', 'treatment_plan_items']) {
+        const probe = await supabase.from(t).select('treatment_plan_id').eq('id', itemId).maybeSingle();
+        if (!probe.error && probe.data?.treatment_plan_id) {
+          resolvedPlanId = String(probe.data.treatment_plan_id);
+          break;
+        }
+      }
+      if (resolvedPlanId) {
+        const uuid = await resolveDoctorIdToUuid(normalizedDoctor);
+        if (!uuid) {
+          return res.status(400).json({ ok: false, error: 'doctor_not_found' });
+        }
+        if (!(await isDoctorOnTreatmentTeam(resolvedPlanId, uuid))) {
+          return res.status(400).json({ ok: false, error: 'assigned_doctor_not_in_treatment' });
+        }
+      }
+    }
+
+    const verifyOwnership = async (tableName) => {
+      const item = await supabase
+        .from(tableName)
+        .select('id, treatment_plan_id')
+        .eq('id', itemId)
+        .maybeSingle();
+
+      if (item.error || !item.data) return { exists: false, ok: false };
+
+      const planId = String(item.data.treatment_plan_id || '');
+      if (!planId) return { exists: true, ok: true };
+
+      const plan = await supabase
+        .from('treatment_plans')
+        .select('id')
+        .eq('id', planId)
+        .maybeSingle();
+
+      if (plan.error || !plan.data) return { exists: true, ok: false };
+
+      const canEdit = await doctorRequestCanEditTreatmentPlan(planId, req);
+      return { exists: true, ok: canEdit };
+    };
+
+    const applyUpdateCandidates = async (tableName, columnNames, value) => {
+      if (value === undefined) return { updated: false, skipped: true };
+
+      for (const columnName of columnNames) {
+        const result = await supabase
+          .from(tableName)
+          .update({ [columnName]: value })
+          .eq('id', itemId)
+          .select('id')
+          .maybeSingle();
+
+        if (!result.error) return { updated: true };
+
+        const code = String(result.error?.code || '');
+        const msg = String(result.error?.message || '').toLowerCase();
+        const schemaIssue = ['42703', 'PGRST204', 'PGRST205'].includes(code) || msg.includes('column') || msg.includes('does not exist');
+        if (schemaIssue) continue;
+
+        if (code === '22P02' || code === '23514') continue;
+        return { updated: false, hardError: result.error };
+      }
+
+      return { updated: false };
+    };
+
+    const patchTable = async (tableName) => {
+      const ownership = await verifyOwnership(tableName);
+      if (!ownership.exists) return { exists: false, updated: false, forbidden: false };
+      if (!ownership.ok) return { exists: true, updated: false, forbidden: true };
+
+      const candidateUpdates = [
+        { cols: ['procedure_description', 'procedure_name'], value: normalizedTitle },
+        { cols: ['procedure_code', 'procedure_id'], value: normalizedCode },
+        { cols: ['price'], value: normalizedPrice },
+        { cols: ['doctor_id', 'created_by_doctor_id'], value: normalizedDoctor },
+        { cols: ['chair_no', 'chair'], value: normalizedChair },
+        { cols: ['note', 'notes'], value: normalizedNote },
+        { cols: ['scheduled_at', 'scheduled_date', 'due_date'], value: normalizedScheduled },
+      ];
+
+      let anyUpdated = false;
+      for (const upd of candidateUpdates) {
+        const result = await applyUpdateCandidates(tableName, upd.cols, upd.value);
+        if (result.hardError) return { exists: true, updated: false, forbidden: false, hardError: result.hardError };
+        if (result.updated) anyUpdated = true;
+      }
+
+      if (!anyUpdated) {
+        return { exists: true, updated: false, forbidden: false, noChangesApplied: true };
+      }
+
+      const row = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('id', itemId)
+        .maybeSingle();
+
+      if (!row.error && row.data) {
+        return { exists: true, updated: true, forbidden: false, item: row.data };
+      }
+
+      return { exists: true, updated: false, forbidden: false };
+    };
+
+    const primary = await patchTable('treatment_items');
+    if (primary.forbidden) return res.status(403).json({ ok: false, error: 'forbidden' });
+    if (primary.hardError) return res.status(500).json({ ok: false, error: 'item_update_failed' });
+    if (primary.updated) {
+      const overrideData = Object.keys(overridePatch).length ? saveTreatmentItemOverride(itemId, overridePatch) : null;
+      const itemWithOverride = overrideData ? applyTreatmentItemOverride(primary.item, overrideData) : primary.item;
+      bumpTreatmentsCache();
+      return res.json({ ok: true, item: itemWithOverride });
+    }
+
+    const fallback = await patchTable('treatment_plan_items');
+    if (fallback.forbidden) return res.status(403).json({ ok: false, error: 'forbidden' });
+    if (fallback.hardError) return res.status(500).json({ ok: false, error: 'item_update_failed' });
+    if (fallback.updated) {
+      const overrideData = Object.keys(overridePatch).length ? saveTreatmentItemOverride(itemId, overridePatch) : null;
+      const itemWithOverride = overrideData ? applyTreatmentItemOverride(fallback.item, overrideData) : fallback.item;
+      bumpTreatmentsCache();
+      return res.json({ ok: true, item: itemWithOverride });
+    }
+
+    if (primary.noChangesApplied || fallback.noChangesApplied) {
+      if (Object.keys(overridePatch).length) {
+        const overrideData = saveTreatmentItemOverride(itemId, overridePatch);
+        bumpTreatmentsCache();
+        return res.json({ ok: true, item: { id: itemId, ...overrideData }, persisted_via_override: true });
+      }
+      return res.status(422).json({ ok: false, error: 'no_changes_applied' });
+    }
+
+    return res.status(404).json({ ok: false, error: 'item_not_found' });
+  } catch (error) {
+    console.error('[TREATMENT ITEM UPDATE] exception:', error);
+    return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
 
