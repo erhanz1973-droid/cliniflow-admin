@@ -15,9 +15,9 @@ const multer = require("multer");
 const nodemailer = require("nodemailer");
 const { randomUUID } = require("crypto");
 const procedures = require("./shared/procedures");
-const { procedureIdForEncounterTreatmentColumn } = require("../lib/procedureIdForEncounterTreatment");
-const { fillIcdRowFromStatic } = require("../lib/icd10StaticLabels.cjs");
-const { SPECIALITY_SEED_NAMES, LANGUAGE_SEED_NAMES } = require("../lib/profileReferenceSeeds");
+const { procedureIdForEncounterTreatmentColumn } = require("./lib/procedureIdForEncounterTreatment");
+const { fillIcdRowFromStatic } = require("./lib/icd10StaticLabels.cjs");
+const { SPECIALITY_SEED_NAMES, LANGUAGE_SEED_NAMES } = require("./lib/profileReferenceSeeds");
 
 const {
   supabase,
@@ -56,7 +56,11 @@ const {
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT ? Number(process.env.PORT) : 10000;
+const _portEnv = process.env.PORT;
+const PORT =
+  _portEnv != null && String(_portEnv).trim() !== ""
+    ? Number.parseInt(String(_portEnv), 10) || 10000
+    : 10000;
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || "";
 const JWT_SECRET = process.env.JWT_SECRET || "yJ2uB87EHHAEqMyrePIrYQR0+pC3t8fFh5IJJ/QH6lY";
 const JWT_EXPIRES_IN = "30d";
@@ -937,11 +941,8 @@ async function calculateClinicOralHealthAverage(clinicId) {
 
 // ================== SUPER ADMIN GUARD ==================
 const publicDir = path.join(__dirname, "public");
-const rootPublicDir = path.join(process.cwd(), "public");
 
-// Canonical admin UI routes (must be before static middleware)
-// /admin.html → always serves cliniflow-admin/public/admin.html (handled below at line ~1688)
-
+// Canonical admin HTML routes (cliniflow-admin/public only — no repo-root public/)
 app.get("/admin-patients.html", (req, res) => {
   const patientsPath = path.join(publicDir, "admin-patients.html");
   if (fs.existsSync(patientsPath)) {
@@ -951,39 +952,27 @@ app.get("/admin-patients.html", (req, res) => {
 });
 
 app.get("/admin-patient-detail.html", (req, res) => {
-  const detailPath = path.join(rootPublicDir, "admin-patient-detail.html");
+  const detailPath = path.join(publicDir, "admin-patient-detail.html");
   if (fs.existsSync(detailPath)) {
     return res.sendFile(detailPath);
   }
-  return res.status(404).send("admin-patient-detail.html not found in workspace /public");
+  return res.status(404).send("admin-patient-detail.html not found in cliniflow-admin/public");
 });
 
 app.get("/admin-schedule.html", (req, res) => {
-  const schedulePath = path.join(rootPublicDir, "admin-schedule.html");
+  const schedulePath = path.join(publicDir, "admin-schedule.html");
   if (fs.existsSync(schedulePath)) {
     return res.sendFile(schedulePath);
   }
-
-  const fallbackPath = path.join(publicDir, "admin-schedule.html");
-  if (fs.existsSync(fallbackPath)) {
-    return res.sendFile(fallbackPath);
-  }
-
-  return res.status(404).send("admin-schedule.html not found");
+  return res.status(404).send("admin-schedule.html not found in cliniflow-admin/public");
 });
 
 app.get("/admin-treatment.html", (req, res) => {
-  const treatmentPath = path.join(rootPublicDir, "admin-treatment.html");
+  const treatmentPath = path.join(publicDir, "admin-treatment.html");
   if (fs.existsSync(treatmentPath)) {
     return res.sendFile(treatmentPath);
   }
-
-  const fallbackPath = path.join(publicDir, "admin-treatment.html");
-  if (fs.existsSync(fallbackPath)) {
-    return res.sendFile(fallbackPath);
-  }
-
-  return res.status(404).send("admin-treatment.html not found");
+  return res.status(404).send("admin-treatment.html not found in cliniflow-admin/public");
 });
 
 app.use(express.static(publicDir));
@@ -30344,20 +30333,24 @@ app.get(
 
 
 // ================== GLOBAL ERROR HANDLING ==================
-process.on('uncaughtException', (error) => {
-  console.error('[UNCAUGHT EXCEPTION]', error);
+process.on("uncaughtException", (error) => {
+  console.error("[UNCAUGHT EXCEPTION]", error);
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[UNHANDLED REJECTION]', reason);
-  console.error('[PROMISE]', promise);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[UNHANDLED REJECTION]", reason);
+  console.error("[PROMISE]", promise);
 });
 
 // ================== START ==================
-// Render uyumlu: Server HEMEN başlar, ağır işler sonra
-app.listen(PORT, "0.0.0.0", () => {
+// Render: bind the same http.Server instance; handle listen errors (avoid silent uncaughtException).
+server.on("error", (err) => {
+  console.error("[SERVER] listen/bind error:", err && err.message ? err.message : err);
+  process.exit(1);
+});
 
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 
 
@@ -30367,28 +30360,6 @@ app.listen(PORT, "0.0.0.0", () => {
 
 
 
-
-
-
-
-
-
-
   postBootInit();
-});
-
-// Global error handlers
-process.on('uncaughtException', (error) => {
-
-
-
-
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-
-
-
-
 });
 // Deployment trigger - Mon Feb 16 22:01:03 +04 2026
