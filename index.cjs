@@ -23023,13 +23023,23 @@ app.post("/admin/approve-doctor-v2", requireAdminAuth, async (req, res) => {
 
     console.log("[APPROVE V2] Approving doctor:", doctorId);
 
-    const patch = {
+    // Same minimal fields as POST /api/admin/approve-doctor — many DBs have no approved_at column
+    const minimalPatch = {
       status: "APPROVED",
-      approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    const withApprovedAt = {
+      ...minimalPatch,
+      approved_at: new Date().toISOString(),
+    };
 
-    const { data, error } = await updateDoctorRowByAdminId(doctorId, patch);
+    let { data, error } = await updateDoctorRowByAdminId(doctorId, withApprovedAt);
+    if (
+      error &&
+      /42703|PGRST204|approved_at|column|schema/i.test(String(error.message || error.details || ""))
+    ) {
+      ({ data, error } = await updateDoctorRowByAdminId(doctorId, minimalPatch));
+    }
 
     if (error) {
       console.error("[APPROVE V2] Supabase error:", error);
