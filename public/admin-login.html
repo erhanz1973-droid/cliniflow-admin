@@ -324,7 +324,12 @@
       const json = await res.json();
 
       if (!res.ok || !json.ok) {
-        showAlert("Login failed", "error");
+        const detail =
+          json.message ||
+          json.error ||
+          (typeof json === "string" ? json : null) ||
+          `HTTP ${res.status}`;
+        showAlert(`Login failed: ${detail}`, "error");
         return;
       }
 

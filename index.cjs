@@ -19836,8 +19836,26 @@ app.post("/api/admin/login", async (req, res) => {
       });
       
       if (admin) {
+        if (!admin.password_hash || typeof admin.password_hash !== "string") {
+          console.error("[ADMIN LOGIN] Admin row missing password_hash:", admin?.id);
+          return res.status(500).json({
+            ok: false,
+            error: "admin_account_misconfigured",
+            message: "Admin has no password hash in database; reset password or fix admins row.",
+          });
+        }
         // Verify password
-        const passwordMatch = await bcrypt.compare(String(password).trim(), admin.password_hash);
+        let passwordMatch = false;
+        try {
+          passwordMatch = await bcrypt.compare(String(password).trim(), admin.password_hash);
+        } catch (bcryptErr) {
+          console.error("[ADMIN LOGIN] bcrypt.compare failed:", bcryptErr?.message);
+          return res.status(500).json({
+            ok: false,
+            error: "password_verify_failed",
+            message: "Stored password hash is invalid; reset admin password in database.",
+          });
+        }
         console.log("[ADMIN LOGIN] Password match result:", passwordMatch);
         
         if (!passwordMatch) {
@@ -19877,7 +19895,12 @@ app.post("/api/admin/login", async (req, res) => {
       }
     } else {
       console.log("[ADMIN LOGIN] Supabase not enabled - cannot authenticate admins");
-      return res.status(500).json({ ok: false, error: "admin_service_unavailable" });
+      return res.status(503).json({
+        ok: false,
+        error: "admin_service_unavailable",
+        message:
+          "Admin login requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on this server (e.g. set them on the Render cliniflow-admin service).",
+      });
     }
   } catch (error) {
     console.error("[ADMIN LOGIN] Error:", error);
