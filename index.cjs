@@ -1123,6 +1123,18 @@ if (!fs.existsSync(REF_FILE)) {
 }
 
 const now = () => Date.now();
+
+/** Strip p_/d_/e_ prefixes and return bare UUID, or null if not a valid UUID. */
+function cleanUuid(id) {
+  if (!id) return null;
+  const s = String(id).trim().replace(/^[a-zA-Z][a-zA-Z0-9]*_/, '');
+  return UUID_RE.test(s) ? s : null;
+}
+/** Filter an array to only valid bare UUIDs (strips prefixes). */
+function cleanUuids(ids) {
+  return [...new Set((ids || []).map(cleanUuid).filter(Boolean))];
+}
+
 const TREATMENTS_CACHE_TTL_MS = 15000;
 let TREATMENTS_CACHE_BUSTER = 0;
 const TREATMENTS_RESPONSE_CACHE = new Map();
@@ -7985,17 +7997,14 @@ async function mergeEncounterTreatmentsIntoPatientTreatmentsData(data, patientId
     const patientRecord = await getPatientById(patientId);
     const internalUuid = String(patientRecord?.id || "").trim() || String(patientId).trim();
     const encExpand = await encounterPatientIdMatchSet(internalUuid, patientId);
-    const patientLookupIds = [
-      ...new Set(
-        [
-          String(patientId || "").trim(),
-          String(patientRecord?.id || "").trim(),
-          String(patientRecord?.patient_id || "").trim(),
-          ...encExpand,
-        ].filter(Boolean)
-      ),
-    ];
-    const pidInClause = patientLookupIds.length ? patientLookupIds : [String(patientId)];
+    // Strip p_/d_/e_ prefixes — patient_encounters.patient_id is UUID type
+    const pidInClause = cleanUuids([
+      patientId,
+      patientRecord?.id,
+      patientRecord?.patient_id,
+      ...encExpand,
+    ]);
+    if (pidInClause.length === 0) return; // no valid UUIDs — skip to avoid 22P02
 
     const etSelect =
       "id, encounter_id, tooth_number, procedure_type, status, scheduled_at, created_at, chair, assigned_doctor_id";
