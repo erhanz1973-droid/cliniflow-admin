@@ -6164,16 +6164,33 @@ app.get("/api/admin/metrics/monthly-procedures", requireAdminAuth, async (req, r
 });
 
 app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
+  const t0 = Date.now();
+  console.log("[ADMIN PATIENTS] request start clinicId:", req.clinicId);
   try {
-    // PRODUCTION: Supabase only, file-based disabled
     if (!isSupabaseEnabled()) {
+      console.error("[ADMIN PATIENTS] supabase not configured");
       return res.status(500).json({ ok: false, error: "supabase_not_configured" });
     }
     if (!req.clinicId) {
+      console.error("[ADMIN PATIENTS] no clinicId on req");
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
     }
 
-    const patients = await getPatientsByClinic(req.clinicId);
+    // Wrap Supabase query with a 10s timeout to avoid infinite hang
+    let patients = [];
+    try {
+      const fetchPromise = getPatientsByClinic(req.clinicId);
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("supabase_timeout")), 10000)
+      );
+      patients = await Promise.race([fetchPromise, timeoutPromise]);
+    } catch (fetchErr) {
+      console.error("[ADMIN PATIENTS] getPatientsByClinic error:", fetchErr?.message);
+      return res.status(500).json({ ok: false, error: fetchErr?.message || "fetch_failed" });
+    }
+
+    console.log("[ADMIN PATIENTS] fetched", patients.length, "patients in", Date.now() - t0, "ms");
+
     const normalized = (patients || []).map((p) => {
       const createdAt = p.created_at ? new Date(p.created_at).getTime() : (p.createdAt || 0);
       return {
@@ -6184,7 +6201,6 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
         status: p.status,
         created_at: p.created_at,
         primary_doctor_id: p.primary_doctor_id || null,
-        // Prefer legacy app id (p_xxx) if present
         patientId: p.patient_id || p.patientId || p.id,
         createdAt,
       };
@@ -6192,24 +6208,24 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
 
     normalized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
-    // Add oral health scores to each patient (uses patientId)
+    // Oral health scores are file-based (sync) — safe on Render ephemeral FS
     const patientsWithScores = normalized.map((patient) => {
       const patientId = patient.patientId || "";
       if (patientId) {
-        const scores = calculateOralHealthScore(patientId);
-        return {
-          ...patient,
-          beforeScore: scores.beforeScore,
-          afterScore: scores.afterScore,
-          oralHealthCompleted: scores.completed,
-        };
+        try {
+          const scores = calculateOralHealthScore(patientId);
+          return { ...patient, beforeScore: scores.beforeScore, afterScore: scores.afterScore, oralHealthCompleted: scores.completed };
+        } catch (scoreErr) {
+          console.warn("[ADMIN PATIENTS] calculateOralHealthScore error for", patientId, scoreErr?.message);
+        }
       }
       return patient;
     });
 
+    console.log("[ADMIN PATIENTS] responding", patientsWithScores.length, "patients, total", Date.now() - t0, "ms");
     res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores });
   } catch (error) {
-
+    console.error("[ADMIN PATIENTS] unhandled error:", error?.message);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
   }
 });
@@ -19614,9 +19630,12 @@ async function requireAdminAuth(req, res, next) {
       return res.status(401).json({ ok: false, error: "invalid_token", message: "Token geçersiz." });
     }
     
-    // SUPABASE: Primary lookup by clinicCode
+    // SUPABASE: Primary lookup by clinicCode (with timeout to prevent hang)
     if (isSupabaseEnabled()) {
-      const clinic = await getClinicByCode(clinicCode);
+      const clinic = await Promise.race([
+        getClinicByCode(clinicCode),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("clinic_lookup_timeout")), 8000)),
+      ]).catch((err) => { console.error("[requireAdminAuth] clinic lookup error:", err?.message); return null; });
       
       if (clinic) {
         req.clinicId = clinic.id;              // Supabase UUID
