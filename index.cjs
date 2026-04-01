@@ -23389,7 +23389,7 @@ app.get("/api/doctor/me", requireDoctorAuth, async (req, res) => {
       schedule,
       doctor: {
         doctorId: String(base?.doctor_id || doctor?.doctor_id || "").trim(),
-        name: base?.name || doctor?.name || "",
+        name: base?.name || base?.full_name || doctor?.name || doctor?.full_name || "",
         email: base?.email || doctor?.email || "",
         phone: base?.phone || doctor?.phone || "",
         title: base?.title ?? "",
