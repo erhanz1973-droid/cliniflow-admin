@@ -12415,10 +12415,56 @@ async function upsertAdminProcedureIntoEncounterTreatments({
   if (!toothNum || toothNum < 11 || toothNum > 48) return;
   const schedIso = patientTreatmentsDateToScheduledIso(dateFinal);
   const dbStatus = patientJsonProcedureStatusToEncounterTreatmentDbStatus(statusFinal);
+
+  // Resolve assigned doctor UUID
   let docVal = assignedDoctorId ? String(assignedDoctorId).trim() : null;
   if (docVal) {
     const resolved = await resolveDoctorsIdByClinicDoctorCode(docVal).catch(() => null);
     if (resolved) docVal = resolved;
+  }
+
+  // created_by_doctor_id is NOT NULL in encounter_treatments.
+  // Use the assigned doctor if available, otherwise fall back to any approved doctor for this clinic.
+  let createdByDoctorId = docVal || null;
+  if (!createdByDoctorId) {
+    try {
+      const clinicUuid = clinicId && /^[0-9a-f-]{36}$/i.test(clinicId) ? clinicId : null;
+      if (clinicUuid) {
+        const { data: anyDoc } = await supabase
+          .from("doctors")
+          .select("id")
+          .eq("clinic_id", clinicUuid)
+          .eq("status", "APPROVED")
+          .limit(1)
+          .maybeSingle();
+        if (anyDoc?.id) createdByDoctorId = String(anyDoc.id).trim();
+      }
+      // fallback: resolve clinicId via clinic_code if not UUID
+      if (!createdByDoctorId && clinicId) {
+        const { data: clinicRow } = await supabase
+          .from("clinics")
+          .select("id")
+          .eq("clinic_code", String(clinicId).toUpperCase())
+          .maybeSingle();
+        if (clinicRow?.id) {
+          const { data: anyDoc2 } = await supabase
+            .from("doctors")
+            .select("id")
+            .eq("clinic_id", clinicRow.id)
+            .eq("status", "APPROVED")
+            .limit(1)
+            .maybeSingle();
+          if (anyDoc2?.id) createdByDoctorId = String(anyDoc2.id).trim();
+        }
+      }
+    } catch (e) {
+      console.warn("[ET UPSERT] doctor fallback lookup failed:", e?.message);
+    }
+  }
+
+  if (!createdByDoctorId) {
+    console.warn("[ET UPSERT] skipping insert — cannot resolve created_by_doctor_id for tooth:", toothNum, "proc:", etId);
+    return;
   }
 
   // Check if row already exists
@@ -12451,13 +12497,14 @@ async function upsertAdminProcedureIntoEncounterTreatments({
       procedure_type: String(typeFinal || "").toUpperCase(),
       status: dbStatus,
       scheduled_at: schedIso,
+      created_by_doctor_id: createdByDoctorId,
     };
     if (chairNo) insertRow.chair = String(chairNo).trim();
     if (docVal) insertRow.assigned_doctor_id = docVal;
 
     const { error } = await supabase.from("encounter_treatments").insert(insertRow);
     if (error) console.warn("[ET UPSERT] insert failed:", error.message, "tooth:", toothNum, "proc:", etId);
-    else console.log("[ET UPSERT] inserted:", etId, "tooth:", toothNum, "enc:", encounterId);
+    else console.log("[ET UPSERT] inserted:", etId, "tooth:", toothNum, "enc:", encounterId, "created_by:", createdByDoctorId);
   }
 }
 
