@@ -10390,76 +10390,45 @@ async function patientHealthGetHandler(req, res) {
       return res.status(403).json({ ok: false, error: "patient_id_mismatch" });
     }
 
-    // PRODUCTION: Supabase is source of truth
+    // PRODUCTION: patient_health_forms is single source of truth
     if (isSupabaseEnabled()) {
-      const UUID_RE_H = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const isUuidH = UUID_RE_H.test(patientId);
+      // Resolve patientUuid for lookup
+      const { data: patRowG } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+      const patientUuidG = patRowG?.id || (UUID_RE.test(patientId) ? patientId : null);
 
-      // ── Source 1: patients.health JSONB column ─────────────────────────────
-      const { data: p, error } = await fetchPatientHealthRowSupabase(patientId);
-      console.log("[HEALTH GET] patientId:", patientId, "| patients row found:", !!p, "| health col:", p ? JSON.stringify(p.health).substring(0, 80) : "null", "| error:", error ? error.message : "none");
-
-      if (error && !isMissingColumnError(error, "health") && String(error.code || "") !== "PGRST116") {
-        console.error("[HEALTH] Supabase fetch failed", { message: error.message, code: error.code });
-        return res.status(500).json({ ok: false, error: "health_fetch_failed" });
+      // Build candidate list: UUID first, then original id for legacy records
+      const candidates = Array.from(new Set([patientUuidG, patientId].filter(Boolean)));
+      let hfRecord = null;
+      for (const cid of candidates) {
+        const { data: rows } = await supabase
+          .from("patient_health_forms")
+          .select("*")
+          .eq("patient_id", cid)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        if (rows && rows[0]) { hfRecord = rows[0]; break; }
       }
 
-      const patientUuid  = (p && p.id) || (isUuidH ? patientId : null);
-      const patientTextId = (p && p.patient_id) || (!isUuidH ? patientId : null);
-
-      let fd = {};
-      let healthMeta = {};
-
-      const rawHealth = p && p.health;
-      if (rawHealth && typeof rawHealth === "object" && rawHealth.formData) {
-        fd = rawHealth.formData || {};
-        healthMeta = rawHealth;
+      if (!hfRecord) {
+        return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
       }
 
-      // ── Source 2: patient_health_forms table (fallback / alternative storage) ─
-      if (!fd || Object.keys(fd).length === 0) {
-        const candidates = Array.from(new Set([patientUuid, patientTextId].filter(Boolean)));
-        for (let ci = 0; ci < candidates.length; ci++) {
-          const cid = candidates[ci];
-          const { data: hfRows } = await supabase.from("patient_health_forms")
-            .select("*")
-            .eq("patient_id", cid)
-            .order("updated_at", { ascending: false })
-            .limit(1);
-          const hf = hfRows && hfRows[0];
-          console.log("[HEALTH GET] patient_health_forms lookup pid=" + cid + " found:", !!hf);
-          if (hf) {
-            // This table stores fields directly or in form_data
-            const raw = hf.form_data || hf;
-            fd = {
-              allergies:       raw.allergies,
-              medications:     raw.medications,
-              chronicDiseases: raw.chronicDiseases,
-              conditions:      raw.conditions,
-              medicationsList: raw.medicationsList,
-              notes:           raw.notes,
-              submittedAt:     raw.submittedAt,
-            };
-            healthMeta = { isComplete: hf.is_complete, completedAt: hf.completed_at, updatedAt: hf.updated_at };
-            break;
-          }
-        }
-      }
+      const fd = typeof hfRecord.form_data === "string"
+        ? (() => { try { return JSON.parse(hfRecord.form_data); } catch { return {}; } })()
+        : (hfRecord.form_data || {});
 
-      const hasData = fd && Object.values(fd).some(function(v) {
-        return v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
-      });
-      const isComplete = healthMeta.isComplete === true || hasData;
-
-      console.log("[HEALTH GET] returning isComplete:", isComplete, "hasData:", hasData, "fd keys:", Object.keys(fd));
       return res.json({
         ok: true,
         form: fd,
         formData: fd,
-        isComplete: isComplete,
-        completedAt: healthMeta.completedAt || null,
-        updatedAt: healthMeta.updatedAt || null,
-        createdAt: healthMeta.createdAt || null,
+        isComplete: hfRecord.is_complete || false,
+        completedAt: hfRecord.completed_at || null,
+        updatedAt: hfRecord.updated_at || null,
+        createdAt: hfRecord.created_at || null,
       });
     }
 
@@ -10534,43 +10503,61 @@ async function patientHealthPostHandler(req, res) {
     };
 
     if (isSupabaseEnabled()) {
-      const { data, error } = await updatePatientHealthRowSupabase(patientId, payload);
-
-      if (error) {
-        const supabasePublic = {
-          code: error.code || null,
-          message: error.message || null,
-          details: error.details || null,
-          hint: error.hint || null,
-        };
-        console.error("[HEALTH] Supabase save failed", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        });
-        if (isMissingColumnError(error, "health")) {
-          return res.status(500).json({
-            ok: false,
-            error: "health_column_missing",
-            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
-            supabase: supabasePublic,
-          });
-        }
-        if (String(error.code || "") === "PGRST116") {
-          return res.status(404).json({ ok: false, error: "patient_not_found" });
-        }
-        return res.status(500).json({ ok: false, error: "health_save_failed", supabase: supabasePublic });
+      // Resolve patientUuid — single source of truth is patient_health_forms with UUID patient_id
+      const { data: patRow } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+      const patientUuid = patRow?.id || (UUID_RE.test(patientId) ? patientId : null);
+      if (!patientUuid) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
 
-      const health = data?.health || payload;
+      // Check existing record in patient_health_forms
+      const { data: existing } = await supabase
+        .from("patient_health_forms")
+        .select("id")
+        .eq("patient_id", patientUuid)
+        .maybeSingle();
+
+      const nowIso = new Date().toISOString();
+      let saveErr;
+      if (existing?.id) {
+        ({ error: saveErr } = await supabase
+          .from("patient_health_forms")
+          .update({
+            form_data: formData,
+            is_complete: isComplete,
+            updated_at: nowIso,
+            ...(isComplete && { completed_at: nowIso }),
+          })
+          .eq("id", existing.id));
+      } else {
+        ({ error: saveErr } = await supabase
+          .from("patient_health_forms")
+          .insert({
+            patient_id: patientUuid,
+            clinic_code: payload.clinicCode || null,
+            form_data: formData,
+            is_complete: isComplete,
+            created_at: nowIso,
+            updated_at: nowIso,
+            ...(isComplete && { completed_at: nowIso }),
+          }));
+      }
+
+      if (saveErr) {
+        console.error("[HEALTH] patient_health_forms save failed:", saveErr.message);
+        return res.status(500).json({ ok: false, error: "health_save_failed", details: saveErr.message });
+      }
+
       return res.json({
         ok: true,
-        formData: health.formData || {},
-        isComplete: health.isComplete === true,
-        completedAt: health.completedAt || null,
-        updatedAt: health.updatedAt || nowTs,
-        createdAt: health.createdAt || nowTs,
+        formData,
+        isComplete,
+        completedAt: isComplete ? nowIso : null,
+        updatedAt: nowIso,
       });
     }
 
@@ -10614,82 +10601,60 @@ async function patientHealthPutHandler(req, res) {
     const nowTs = now();
 
     if (isSupabaseEnabled()) {
-      // Fetch existing health to preserve createdAt/completedAt
-      const { data: existingRow, error: fetchErr } = await fetchPatientHealthRowSupabase(patientId);
-
-      if (fetchErr) {
-        const supabasePublic = {
-          code: fetchErr.code || null,
-          message: fetchErr.message || null,
-          details: fetchErr.details || null,
-          hint: fetchErr.hint || null,
-        };
-        console.error("[HEALTH] Supabase fetch failed (PUT)", {
-          message: fetchErr.message,
-          code: fetchErr.code,
-          details: fetchErr.details,
-        });
-        if (isMissingColumnError(fetchErr, "health")) {
-          return res.status(500).json({
-            ok: false,
-            error: "health_column_missing",
-            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
-            supabase: supabasePublic,
-          });
-        }
-        if (String(fetchErr.code || "") === "PGRST116") {
-          return res.status(404).json({ ok: false, error: "patient_not_found" });
-        }
-        return res.status(500).json({ ok: false, error: "health_fetch_failed", supabase: supabasePublic });
+      // Resolve patientUuid — single source of truth is patient_health_forms with UUID patient_id
+      const { data: patRow2 } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+      const patientUuid2 = patRow2?.id || (UUID_RE.test(patientId) ? patientId : null);
+      if (!patientUuid2) {
+        return res.status(404).json({ ok: false, error: "patient_not_found" });
       }
 
-      const existingHealth = existingRow?.health || {};
-      const payload = {
-        patientId,
-        formData,
-        isComplete,
-        createdAt: existingHealth.createdAt || nowTs,
-        updatedAt: nowTs,
-        completedAt: isComplete ? (existingHealth.completedAt || nowTs) : null,
-      };
+      // Check existing record in patient_health_forms
+      const { data: existing2 } = await supabase
+        .from("patient_health_forms")
+        .select("id, created_at, completed_at")
+        .eq("patient_id", patientUuid2)
+        .maybeSingle();
 
-      const { data: updatedRow, error: updateErr } = await updatePatientHealthRowSupabase(patientId, payload);
-
-      if (updateErr) {
-        const supabasePublic = {
-          code: updateErr.code || null,
-          message: updateErr.message || null,
-          details: updateErr.details || null,
-          hint: updateErr.hint || null,
-        };
-        console.error("[HEALTH] Supabase save failed (PUT)", {
-          message: updateErr.message,
-          code: updateErr.code,
-          details: updateErr.details,
-          hint: updateErr.hint,
-        });
-        if (isMissingColumnError(updateErr, "health")) {
-          return res.status(500).json({
-            ok: false,
-            error: "health_column_missing",
-            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
-            supabase: supabasePublic,
-          });
-        }
-        if (String(updateErr.code || "") === "PGRST116") {
-          return res.status(404).json({ ok: false, error: "patient_not_found" });
-        }
-        return res.status(500).json({ ok: false, error: "health_save_failed", supabase: supabasePublic });
+      const nowIso2 = new Date().toISOString();
+      let saveErr2;
+      if (existing2?.id) {
+        ({ error: saveErr2 } = await supabase
+          .from("patient_health_forms")
+          .update({
+            form_data: formData,
+            is_complete: isComplete,
+            updated_at: nowIso2,
+            ...(isComplete && !existing2.completed_at && { completed_at: nowIso2 }),
+          })
+          .eq("id", existing2.id));
+      } else {
+        ({ error: saveErr2 } = await supabase
+          .from("patient_health_forms")
+          .insert({
+            patient_id: patientUuid2,
+            form_data: formData,
+            is_complete: isComplete,
+            created_at: nowIso2,
+            updated_at: nowIso2,
+            ...(isComplete && { completed_at: nowIso2 }),
+          }));
       }
 
-      const health = updatedRow?.health || payload;
+      if (saveErr2) {
+        console.error("[HEALTH PUT] patient_health_forms save failed:", saveErr2.message);
+        return res.status(500).json({ ok: false, error: "health_save_failed", details: saveErr2.message });
+      }
+
       return res.json({
         ok: true,
-        formData: health.formData || {},
-        isComplete: health.isComplete === true,
-        completedAt: health.completedAt || null,
-        updatedAt: health.updatedAt || nowTs,
-        createdAt: health.createdAt || nowTs,
+        formData,
+        isComplete,
+        completedAt: isComplete ? (existing2?.completed_at || nowIso2) : null,
+        updatedAt: nowIso2,
       });
     }
 
@@ -10752,68 +10717,44 @@ app.get("/api/admin/patients/:patientId/health", requireAdminAuth, async (req, r
     const patientId = String(req.params.patientId || "").trim();
     if (!patientId) return res.status(400).json({ ok: false, error: "patient_id_required" });
 
-    // PRODUCTION: Supabase is source of truth (admin must see persisted health data)
+    // PRODUCTION: patient_health_forms is single source of truth
     if (isSupabaseEnabled()) {
-      const clinicFilter = req.clinicId || null;
-      const { data: p, error } = await fetchPatientHealthRowSupabase(patientId, clinicFilter);
-      if (error) {
-        console.error("[ADMIN HEALTH] Supabase fetch failed", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-        });
-        if (isMissingColumnError(error, "health")) {
-          return res.status(500).json({
-            ok: false,
-            error: "health_column_missing",
-            message: "Supabase schema missing: patients.health. Run migration 004_add_patient_travel.sql",
-          });
-        }
-        if (String(error.code || "") === "PGRST116") {
-          return res.status(404).json({ ok: false, error: "patient_not_found" });
-        }
-        return res.status(500).json({ ok: false, error: "health_fetch_failed" });
+      // Resolve patientUuid
+      const { data: patRowA } = await supabase
+        .from("patients")
+        .select("id")
+        .eq("patient_id", patientId)
+        .maybeSingle();
+      const patientUuidA = patRowA?.id || (UUID_RE.test(patientId) ? patientId : null);
+
+      const candidates = Array.from(new Set([patientUuidA, patientId].filter(Boolean)));
+      let hfA = null;
+      for (const cid of candidates) {
+        const { data: rows } = await supabase
+          .from("patient_health_forms")
+          .select("*")
+          .eq("patient_id", cid)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        if (rows && rows[0]) { hfA = rows[0]; break; }
       }
 
-      let health = isPlainObject(p && p.health) ? p.health : {};
-      let fd2 = health.formData || {};
-
-      // Fallback to patient_health_forms table if patients.health is empty
-      if (!fd2 || Object.keys(fd2).length === 0) {
-        const pUuid   = (p && p.id) || null;
-        const pTextId = (p && p.patient_id) || null;
-        const cands2 = Array.from(new Set([pUuid, pTextId, patientId].filter(Boolean)));
-        for (let ci2 = 0; ci2 < cands2.length; ci2++) {
-          const cid2 = cands2[ci2];
-          const qr2 = await supabase.from('patient_health_forms')
-            .select('*').eq('patient_id', cid2)
-            .order('updated_at', { ascending: false }).limit(1);
-          const hf2 = qr2.data && qr2.data[0];
-          if (hf2) {
-            const raw2 = hf2.form_data || hf2;
-            fd2 = {
-              allergies: raw2.allergies, medications: raw2.medications,
-              chronicDiseases: raw2.chronicDiseases, conditions: raw2.conditions,
-              medicationsList: raw2.medicationsList, notes: raw2.notes,
-              submittedAt: raw2.submittedAt,
-            };
-            health = { isComplete: hf2.is_complete, completedAt: hf2.completed_at, updatedAt: hf2.updated_at, formData: fd2 };
-            break;
-          }
-        }
+      if (!hfA) {
+        return res.json({ ok: true, form: {}, formData: {}, isComplete: false, completedAt: null, updatedAt: null });
       }
 
-      const hasData2 = fd2 && Object.values(fd2).some(function(v) {
-        return v !== null && v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0);
-      });
+      const fdA = typeof hfA.form_data === "string"
+        ? (() => { try { return JSON.parse(hfA.form_data); } catch { return {}; } })()
+        : (hfA.form_data || {});
+
       return res.json({
         ok: true,
-        form: fd2,
-        formData: fd2,
-        isComplete: health.isComplete === true || hasData2,
-        completedAt: health.completedAt || null,
-        updatedAt: health.updatedAt || null,
-        createdAt: health.createdAt || null,
+        form: fdA,
+        formData: fdA,
+        isComplete: hfA.is_complete || false,
+        completedAt: hfA.completed_at || null,
+        updatedAt: hfA.updated_at || null,
+        createdAt: hfA.created_at || null,
       });
     }
 
