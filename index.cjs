@@ -26856,7 +26856,7 @@ app.post('/api/doctor/encounters/:id/diagnoses', requireDoctorAuth, async (req, 
               details: verRpc,
             });
           }
-          await mirrorEncounterDiagnosesToPatientTreatmentsJson(encounterId, rpcOut);
+          // DEPRECATED: diagnosis mirror to patients.treatments removed — encounter_diagnoses is single source of truth
           invalidateTreatmentsCacheForPatient(encPeek?.patient_id);
           console.log('[ENCOUNTER DIAGNOSES POST] CREATED (rpc):', {
             encounterId,
@@ -27003,7 +27003,7 @@ app.post('/api/doctor/encounters/:id/diagnoses', requireDoctorAuth, async (req, 
       });
     }
 
-    await mirrorEncounterDiagnosesToPatientTreatmentsJson(encounterId, savedRows);
+    // DEPRECATED: diagnosis mirror to patients.treatments removed — encounter_diagnoses is single source of truth
     invalidateTreatmentsCacheForPatient(encPeek?.patient_id);
     console.log('[ENCOUNTER DIAGNOSES POST] CREATED (insert):', {
       encounterId,
