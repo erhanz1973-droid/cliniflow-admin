@@ -12578,7 +12578,9 @@ app.post("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asy
   ).trim();
   const assignedDoctorName = String(
     procedure.assignedDoctorName ||
+    procedure.assigned_doctor_name ||
     procedure.doctorName ||
+    procedure.doctor_name ||
     procedure.doctor ||
     ""
   ).trim();
