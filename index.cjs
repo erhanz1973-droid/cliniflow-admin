@@ -34,6 +34,7 @@ const {
   getPatientByPhone,
   getPatientByEmail,
   getPatientsByClinic,
+  getPatientsByClinicPaginated,
   createPatient,
   updatePatient,
   countPatientsByClinic,
@@ -6244,20 +6245,27 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
       return res.status(403).json({ ok: false, error: "clinic_not_authenticated" });
     }
 
-    // Wrap Supabase query with a 10s timeout to avoid infinite hang
-    let patients = [];
+    // ── Pagination params ─────────────────────────────────────────────────────
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+
+    // DB-level paginated fetch (avoids loading entire clinic patient list)
+    let fetchResult;
     try {
-      const fetchPromise = getPatientsByClinic(req.clinicId);
+      const fetchPromise = getPatientsByClinicPaginated(req.clinicId, { page, limit });
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error("supabase_timeout")), 10000)
       );
-      patients = await Promise.race([fetchPromise, timeoutPromise]);
+      fetchResult = await Promise.race([fetchPromise, timeoutPromise]);
     } catch (fetchErr) {
-      console.error("[ADMIN PATIENTS] getPatientsByClinic error:", fetchErr?.message);
+      console.error("[ADMIN PATIENTS] getPatientsByClinicPaginated error:", fetchErr?.message);
       return res.status(500).json({ ok: false, error: fetchErr?.message || "fetch_failed" });
     }
 
-    console.log("[ADMIN PATIENTS] fetched", patients.length, "patients in", Date.now() - t0, "ms");
+    const { data: patients, total } = fetchResult;
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    console.log("[ADMIN PATIENTS] fetched", patients.length, "of", total, "patients in", Date.now() - t0, "ms");
 
     const normalized = (patients || []).map((p) => {
       const createdAt = p.created_at ? new Date(p.created_at).getTime() : (p.createdAt || 0);
@@ -6274,8 +6282,6 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
       };
     });
 
-    normalized.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
     // Oral health scores are file-based (sync) — safe on Render ephemeral FS
     const patientsWithScores = normalized.map((patient) => {
       const patientId = patient.patientId || "";
@@ -6290,8 +6296,17 @@ app.get("/api/admin/patients", requireAdminAuth, async (req, res) => {
       return patient;
     });
 
-    console.log("[ADMIN PATIENTS] responding", patientsWithScores.length, "patients, total", Date.now() - t0, "ms");
-    res.json({ ok: true, list: patientsWithScores, patients: patientsWithScores });
+    console.log("[ADMIN PATIENTS] responding page", page, "of", totalPages, ", total", Date.now() - t0, "ms");
+    res.json({
+      ok: true,
+      patients: patientsWithScores,
+      list: patientsWithScores, // legacy compat
+      page,
+      limit,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
+    });
   } catch (error) {
     console.error("[ADMIN PATIENTS] unhandled error:", error?.message);
     res.status(500).json({ ok: false, error: error?.message || "internal_error" });
@@ -23701,9 +23716,22 @@ app.get("/api/doctor/patients", requireDoctorAuth, async (req, res) => {
       };
     });
 
+    // ── Pagination ────────────────────────────────────────────────────────────
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const total = formattedPatients.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const offset = (page - 1) * limit;
+    const paged = formattedPatients.slice(offset, offset + limit);
+
     return res.json({
       ok: true,
-      patients: formattedPatients
+      patients:   paged,
+      page,
+      limit,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
     });
 
   } catch (error) {
