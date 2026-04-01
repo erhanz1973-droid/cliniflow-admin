@@ -7747,12 +7747,28 @@ function mergeEncounterTreatmentRowsIntoPatientTeethPayload(
     }
 
     const procs = merged[toothNo].procedures;
-    const idx = procs.findIndex((p) => String(p.procedureId || p.id || "") === procId);
+    // Match by: "encounter-treatment-<uuid>", plain "<uuid>", or any variant
+    const plainUuid = String(row.id).trim();
+    const idx = procs.findIndex((p) => {
+      const pid = String(p.procedureId || p.id || "").trim();
+      if (!pid) return false;
+      if (pid === procId) return true;               // "encounter-treatment-<uuid>"
+      if (pid === plainUuid) return true;            // plain UUID (admin-saved)
+      // pid might be "encounter-treatment-X" and row.id = X
+      const m = /^encounter-treatment-([0-9a-f-]{36})$/i.exec(pid);
+      if (m && m[1].toLowerCase() === plainUuid.toLowerCase()) return true;
+      return false;
+    });
     if (idx >= 0) {
       const prev = procs[idx];
       procs[idx] = {
         ...prev,
         ...nextProc,
+        // Always preserve admin-entered price/financial fields
+        unit_price: prev.unit_price ?? nextProc.unit_price,
+        total_price: prev.total_price ?? nextProc.total_price,
+        currency: prev.currency ?? nextProc.currency,
+        quantity: prev.quantity ?? nextProc.quantity,
         createdAt: prev.createdAt != null ? prev.createdAt : nextProc.createdAt,
       };
     } else {
