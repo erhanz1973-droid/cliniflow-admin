@@ -6699,20 +6699,22 @@ app.get("/api/admin/patients/:patientId/full-record", requireAdminAuth, async (r
       .maybeSingle();
 
     const treatments = [];
+    // Diagnoses: single source of truth = encounter_diagnoses table.
+    // JSONB teeth diagnoses are intentionally ignored (use migration SQL to backfill).
     const diagnoses = [];
-
-    // ── Parse modern JSONB treatments.teeth ─────────────────────────────────
-    const teethArr = Array.isArray(patRow?.treatments?.teeth) ? patRow.treatments.teeth : [];
     const diagnosisDedupe = new Set();
     const addDiagnosis = (d) => {
       const tn = String(d.tooth_number ?? d.toothNumber ?? "").trim();
-      const code = String(d.icd10_code ?? d.code ?? "").trim();
-      const key = `${tn}__${code}`;
-      if (!tn) return;
+      const label = String(d.icd10_code ?? d.code ?? d.icd10_description ?? "").trim().toLowerCase();
+      const key = `${tn}__${label}`;
+      if (!tn || !label) return;
       if (diagnosisDedupe.has(key)) return;
       diagnosisDedupe.add(key);
       diagnoses.push(d);
     };
+
+    // ── Parse modern JSONB treatments.teeth (procedures only) ────────────────
+    const teethArr = Array.isArray(patRow?.treatments?.teeth) ? patRow.treatments.teeth : [];
 
     teethArr.forEach(tooth => {
       const tn = String(tooth?.toothId || tooth?.tooth_id || "").trim();
@@ -6727,18 +6729,8 @@ app.get("/api/admin/patients/:patientId/full-record", requireAdminAuth, async (r
           created_at: p.createdAt || p.scheduledAt || null,
         });
       });
-      const toothDiags = [
-        ...(Array.isArray(tooth.diagnosis) ? tooth.diagnosis : []),
-        ...(Array.isArray(tooth.diagnoses) ? tooth.diagnoses : []),
-      ];
-      toothDiags.forEach(d => {
-        addDiagnosis({
-          id: `diag-${tn}-${d.code || d.icd10_code || Math.random()}`,
-          tooth_number: tn,
-          icd10_code: d.code || d.icd10_code || null,
-          icd10_description: d.description || d.icd10_description || null,
-        });
-      });
+      // NOTE: tooth.diagnosis / tooth.diagnoses from JSONB intentionally ignored here.
+      // All diagnoses come from encounter_diagnoses below.
     });
 
     // ── encounter_treatments → admin/tedavi ekranı: JSON gecikse bile DB doğrusu ─
