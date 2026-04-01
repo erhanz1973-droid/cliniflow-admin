@@ -12345,6 +12345,107 @@ function patientJsonProcedureStatusToEncounterTreatmentDbStatus(statusUpper) {
 }
 
 /**
+ * Admin kaydettiği prosedürü encounter_treatments tablosuna da yazar.
+ * INSERT (yeni prosedür) veya UPDATE (mevcut prosedürü güncelle) yapar.
+ */
+async function upsertAdminProcedureIntoEncounterTreatments({
+  patientId,
+  clinicId,
+  procedureIdFinal,
+  toothId,
+  typeFinal,
+  statusFinal,
+  dateFinal,
+  chairNo,
+  assignedDoctorId,
+}) {
+  if (!isSupabaseEnabled()) return;
+  const etId = encounterTreatmentRowIdFromPatientProcedureId(procedureIdFinal);
+  if (!etId) return;
+
+  // Resolve internal patient UUID
+  const patientUuid = await resolveAdminPatientInternalId(patientId, clinicId);
+  if (!patientUuid) return;
+
+  // Find or create admin encounter
+  const pidSet = await encounterPatientIdMatchSet(patientUuid, patientId);
+  const pidList = [...pidSet].filter(Boolean);
+  let encounterId = null;
+  if (pidList.length > 0) {
+    const { data: encList } = await supabase
+      .from("patient_encounters")
+      .select("id")
+      .in("patient_id", pidList)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    encounterId = encList?.[0]?.id || null;
+  }
+  if (!encounterId) {
+    const { data: newEnc, error: newEncErr } = await supabase
+      .from("patient_encounters")
+      .insert({ patient_id: patientUuid, encounter_type: "admin_entry", status: "draft" })
+      .select("id")
+      .single();
+    if (newEncErr) {
+      console.warn("[ET UPSERT] encounter create failed:", newEncErr.message);
+      return;
+    }
+    encounterId = newEnc?.id;
+  }
+  if (!encounterId) return;
+
+  // Normalize fields
+  const toothNum = parseInt(String(toothId || ""), 10);
+  if (!toothNum || toothNum < 11 || toothNum > 48) return;
+  const schedIso = patientTreatmentsDateToScheduledIso(dateFinal);
+  const dbStatus = patientJsonProcedureStatusToEncounterTreatmentDbStatus(statusFinal);
+  let docVal = assignedDoctorId ? String(assignedDoctorId).trim() : null;
+  if (docVal) {
+    const resolved = await resolveDoctorsIdByClinicDoctorCode(docVal).catch(() => null);
+    if (resolved) docVal = resolved;
+  }
+
+  // Check if row already exists
+  const { data: existing } = await supabase
+    .from("encounter_treatments")
+    .select("id")
+    .eq("id", etId)
+    .maybeSingle();
+
+  if (existing?.id) {
+    // UPDATE existing row
+    const { error } = await supabase
+      .from("encounter_treatments")
+      .update({
+        status: dbStatus,
+        scheduled_at: schedIso,
+        chair: chairNo ? String(chairNo).trim() : null,
+        assigned_doctor_id: docVal,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", etId);
+    if (error) console.warn("[ET UPSERT] update failed:", error.message);
+    else console.log("[ET UPSERT] updated:", etId, "tooth:", toothNum);
+  } else {
+    // INSERT new row with explicit id = procedureIdFinal
+    const insertRow = {
+      id: etId,
+      encounter_id: encounterId,
+      tooth_number: toothNum,
+      procedure_type: String(typeFinal || "").toUpperCase(),
+      status: dbStatus,
+      scheduled_at: schedIso,
+    };
+    if (chairNo) insertRow.chair = String(chairNo).trim();
+    if (docVal) insertRow.assigned_doctor_id = docVal;
+
+    const { error } = await supabase.from("encounter_treatments").insert(insertRow);
+    if (error) console.warn("[ET UPSERT] insert failed:", error.message, "tooth:", toothNum, "proc:", etId);
+    else console.log("[ET UPSERT] inserted:", etId, "tooth:", toothNum, "enc:", encounterId);
+  }
+}
+
+/**
  * Admin / hasta POST ile JSON güncellenince aynı encounter_treatments satırını da güncelle (doktor ekranı kaynağı).
  */
 async function syncEncounterTreatmentRowFromPatientTreatmentsUpsert({
@@ -12669,15 +12770,20 @@ app.post("/api/patient/:patientId/treatments", requirePatientTreatmentsAuth, asy
         `[TREATMENTS POST] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
       try {
-        await syncEncounterTreatmentRowFromPatientTreatmentsUpsert({
+        // Upsert into encounter_treatments (INSERT if new, UPDATE if existing)
+        await upsertAdminProcedureIntoEncounterTreatments({
+          patientId,
+          clinicId: req.clinicId || req.body?.clinicCode || "",
           procedureIdFinal,
-          dateFinal,
+          toothId,
+          typeFinal,
           statusFinal,
+          dateFinal,
           chairNo,
-          assignedDoctorRaw: assignedDoctorId || null,
+          assignedDoctorId: assignedDoctorId || null,
         });
       } catch (etSyncErr) {
-        console.warn("[TREATMENTS POST] encounter_treatments sync exception:", etSyncErr?.message || etSyncErr);
+        console.warn("[TREATMENTS POST] encounter_treatments upsert exception:", etSyncErr?.message || etSyncErr);
       }
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
@@ -12886,6 +12992,10 @@ app.put("/api/patient/:patientId/treatments/:procedureId", requirePatientTreatme
             procedureId: String(proc.procedureId || proc.id || procedureId),
             toothId: String(tooth?.toothId || ""),
             procedureType: nextType,
+            statusFinal: nextStatus,
+            dateFinal: nextDate,
+            chairNo: nextChairNo,
+            assignedDoctorId: nextAssignedDoctorId || null,
             missingDate: !nextDate,
             autoAssignedDate,
             policy: missingDatePolicy,
@@ -12935,6 +13045,24 @@ app.put("/api/patient/:patientId/treatments/:procedureId", requirePatientTreatme
       console.log(
         `[TREATMENTS PUT] ✅ Treatments data updated in Supabase${result.usedFallback ? " (fallback:v1)" : ""}`
       );
+      // Sync to encounter_treatments table
+      if (schedulingAlertContext) {
+        try {
+          await upsertAdminProcedureIntoEncounterTreatments({
+            patientId,
+            clinicId: req.clinicId || "",
+            procedureIdFinal: schedulingAlertContext.procedureId,
+            toothId: schedulingAlertContext.toothId,
+            typeFinal: schedulingAlertContext.procedureType,
+            statusFinal: schedulingAlertContext.statusFinal,
+            dateFinal: schedulingAlertContext.dateFinal,
+            chairNo: schedulingAlertContext.chairNo,
+            assignedDoctorId: schedulingAlertContext.assignedDoctorId || null,
+          });
+        } catch (etErr) {
+          console.warn("[TREATMENTS PUT] encounter_treatments upsert exception:", etErr?.message || etErr);
+        }
+      }
     } catch (supabaseError) {
       console.error("[TREATMENTS] Supabase save failed", {
         message: supabaseError?.message,
