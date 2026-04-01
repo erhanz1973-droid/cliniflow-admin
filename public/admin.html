@@ -686,7 +686,9 @@
       weekday: 'short'
     };
     const dateFormatted = date.toLocaleDateString(locale, options);
-    const resolvedTime = timeStr || (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
+    // If dateStr already has a time component (ISO UTC), derive local time from it via toLocaleTimeString.
+    // Only use a raw timeStr when dateStr is date-only (no T), since server-side toTimeString() emits UTC.
+    const resolvedTime = (!hasTimePart && timeStr) ? timeStr : (hasTimePart ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : "");
     return resolvedTime ? `${dateFormatted} ${resolvedTime}` : dateFormatted;
   }
 
