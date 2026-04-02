@@ -522,67 +522,6 @@
       </div>
 
       <div class="card" style="margin-top:12px;">
-        <div class="row" style="justify-content:space-between; align-items:flex-start;">
-          <div>
-            <b data-i18n="treatment.treatmentEventsTitle">🦷 Treatment Events (Takvim)</b>
-            <div class="muted" style="margin-top:4px;" data-i18n="treatment.treatmentEventsHelp">Not: Event'ler treatment_events tablosunda saklanır.</div>
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:10px; flex-wrap:wrap;">
-          <div style="flex:1; min-width:160px;">
-            <label data-i18n="treatment.dateLabel">Tarih</label>
-            <input id="te_date" type="date" style="width:100%"/>
-          </div>
-          <div style="flex:1; min-width:140px;">
-            <label data-i18n="treatment.timeLabel">Saat</label>
-            <input id="te_time" type="time" style="width:100%"/>
-          </div>
-          <div style="flex:1; min-width:180px;">
-            <label data-i18n="treatment.thType">Tip</label>
-            <select id="te_type" style="width:100%">
-              <option value="TREATMENT">Treatment</option>
-              <option value="CONSULT">Consultation</option>
-              <option value="FOLLOWUP">Follow-up</option>
-              <option value="LAB">Lab / Scan</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="row" style="margin-top:10px; flex-wrap:wrap;">
-          <div style="flex:1; min-width:220px;">
-            <label data-i18n="treatment.thTitle">Başlık</label>
-            <input id="te_title" data-i18n-placeholder="treatment.eventTitlePlaceholder" placeholder="Implant Day 1" style="width:100%"/>
-          </div>
-          <div style="flex:1; min-width:220px;">
-            <label data-i18n="treatment.eventDescOptional">Açıklama (ops.)</label>
-            <input id="te_desc" data-i18n-placeholder="treatment.eventDescPlaceholder" placeholder="CT scan + implant placement" style="width:100%"/>
-          </div>
-          <div style="min-width:180px;">
-            <label>&nbsp;</label>
-            <button class="secondary" id="btnAddEvent" style="width:100%;" onclick="addTreatmentEvent()" data-i18n="treatment.addEvent">➕ Event Ekle</button>
-          </div>
-        </div>
-
-        <div class="hr"></div>
-
-        <b data-i18n="treatment.eventListTitle">Event listesi</b>
-        <div class="gridWrap" style="margin-top:10px;">
-          <table style="width:100%; border-collapse:collapse;">
-            <thead>
-              <tr>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thDateTime">Tarih/Saat</th>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thType">Tip</th>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b);" data-i18n="treatment.thTitle">Başlık</th>
-                <th style="text-align:left; font-size:12px; color:#374151; padding:8px; border-bottom:1px solid var(--b); width:120px;"></th>
-              </tr>
-            </thead>
-            <tbody id="teEvBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="card" style="margin-top:12px;">
         <div class="row" style="justify-content:space-between;">
           <b data-i18n="treatment.patientToothDiagnoses">Hastanın Diş Tanıları</b>
           <span class="pill" data-i18n="treatment.badgeToothDoctor">Diş No + Doktor Tanısı</span>
