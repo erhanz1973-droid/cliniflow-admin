@@ -20529,7 +20529,13 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
             created_at,
             updated_at,
             plan,
-            enabled_modules
+            enabled_modules,
+            contact_name,
+            city,
+            country,
+            notes,
+            last_contact_at,
+            crm_status
           `)
           .order("created_at", { ascending: false });
         
@@ -20580,6 +20586,13 @@ app.get("/api/super-admin/clinics", superAdminGuard, async (req, res) => {
               enabledModules: clinic.enabled_modules,
               createdAt: clinic.created_at,
               updatedAt: clinic.updated_at,
+              // CRM fields
+              contactName:   clinic.contact_name   || null,
+              city:          clinic.city           || null,
+              country:       clinic.country        || "TR",
+              notes:         clinic.notes          || null,
+              lastContactAt: clinic.last_contact_at || null,
+              crmStatus:     clinic.crm_status      || "active",
               stats: {
                 patientCount: clinicPatients.length,
                 messageCount: messageCount,
@@ -21294,6 +21307,77 @@ app.get("/api/super-admin/clinics/:clinicId/statistics", superAdminGuard, (req, 
   }
 });
 
+// ================== SUPER ADMIN CRM ==================
+
+// PATCH /api/super-admin/clinics/:clinicId/contact
+// Update CRM / contact fields for a clinic
+app.patch("/api/super-admin/clinics/:clinicId/contact", superAdminGuard, async (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    if (!clinicId) {
+      return res.status(400).json({ ok: false, error: "clinic_id_required" });
+    }
+
+    const allowed = ["contact_name","city","country","phone","email","notes","crm_status","last_contact_at"];
+    const body = req.body || {};
+    const patch = {};
+    for (const key of allowed) {
+      if (key in body) patch[key] = body[key] != null ? body[key] : null;
+    }
+
+    // Always stamp last_contact_at when saving notes or contact info
+    if (!patch.last_contact_at && (patch.notes !== undefined || patch.contact_name !== undefined)) {
+      patch.last_contact_at = new Date().toISOString();
+    }
+    patch.updated_at = new Date().toISOString();
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ ok: false, error: "no_fields_provided" });
+    }
+
+    const { data, error } = await supabase
+      .from("clinics")
+      .update(patch)
+      .eq("id", clinicId)
+      .select("id, name, clinic_code, contact_name, city, country, phone, email, notes, last_contact_at, crm_status")
+      .maybeSingle();
+
+    if (error) {
+      console.error("[SUPER_ADMIN CRM] Update error:", error.message);
+      return res.status(500).json({ ok: false, error: "update_failed", message: error.message });
+    }
+    if (!data) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+
+    console.log(`[SUPER_ADMIN CRM] Updated clinic ${clinicId}:`, Object.keys(patch).join(", "));
+    return res.json({ ok: true, clinic: data });
+  } catch (err) {
+    console.error("[SUPER_ADMIN CRM] Error:", err);
+    return res.status(500).json({ ok: false, error: "internal_error", message: err?.message });
+  }
+});
+
+// GET /api/super-admin/clinics/:clinicId/contact
+// Get CRM contact data for a specific clinic
+app.get("/api/super-admin/clinics/:clinicId/contact", superAdminGuard, async (req, res) => {
+  try {
+    const { clinicId } = req.params;
+    const { data, error } = await supabase
+      .from("clinics")
+      .select("id, name, clinic_code, contact_name, city, country, phone, email, notes, last_contact_at, crm_status, created_at")
+      .eq("id", clinicId)
+      .maybeSingle();
+
+    if (error || !data) {
+      return res.status(404).json({ ok: false, error: "clinic_not_found" });
+    }
+    return res.json({ ok: true, clinic: data });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: "internal_error", message: err?.message });
+  }
+});
+
 // ================== SUPER ADMIN ANALYTICS ==================
 
 // GET /api/super-admin/analytics
@@ -21315,7 +21399,7 @@ app.get("/api/super-admin/analytics", superAdminGuard, async (req, res) => {
       newPatientsRes,
       activePatientsRes,
     ] = await Promise.allSettled([
-      supabase.from("clinics").select("id, clinic_code, name, status, plan, created_at, email, phone").order("created_at", { ascending: false }),
+      supabase.from("clinics").select("id, clinic_code, name, status, plan, created_at, email, phone, contact_name, city, country, notes, last_contact_at, crm_status").order("created_at", { ascending: false }),
       supabase.from("patients").select("id, clinic_id, clinic_code, created_at, role").eq("role", "PATIENT"),
       supabase.from("patients").select("id, clinic_id, name, created_at").eq("role", "DOCTOR"),
       supabase.from("encounter_treatments").select("id, clinic_id, status, created_at, scheduled_at, doctor_id").order("created_at", { ascending: false }),
@@ -21444,6 +21528,12 @@ app.get("/api/super-admin/analytics", superAdminGuard, async (req, res) => {
         status:         clinic.status || "UNKNOWN",
         plan:           clinic.plan || "FREE",
         createdAt:      clinic.created_at || null,
+        contactName:    clinic.contact_name || null,
+        city:           clinic.city || null,
+        country:        clinic.country || "TR",
+        notes:          clinic.notes || null,
+        lastContactAt:  clinic.last_contact_at || null,
+        crmStatus:      clinic.crm_status || "active",
         totalPatients,
         activePatients30d,
         newPatients7d,
