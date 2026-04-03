@@ -279,6 +279,10 @@
         <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
         <div class="muted" data-i18n="settings.addressHelp">Pro plan için hasta ekranında görüntülenir</div>
 
+        <label>City <span style="color:#EF4444;font-size:12px;">*</span></label>
+        <input type="text" id="clinicCity" placeholder="Antalya, Istanbul, London..." required style="border-color:#D1D5DB;" />
+        <div class="muted">Klinik keşif (marketplace) filtresinde kullanılır. Hastalar şehre göre arama yapabilir.</div>
+
         <label>Chair Count</label>
         <input type="number" id="chairCount" min="1" max="50" step="1" placeholder="3" />
         <div class="muted">Randevu ekranında gösterilecek chair sayısı (örn: 1, 2, 3).</div>
@@ -507,6 +511,7 @@
       if ($("clinicName")) $("clinicName").value = branding.clinicName || clinic.name || "";
       if ($("clinicLogoUrl")) $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
       if ($("clinicAddress")) $("clinicAddress").value = branding.address || clinic.address || "";
+      if ($("clinicCity")) $("clinicCity").value = clinic.city || "";
       if ($("chairCount")) {
         const loadedChairCount =
           clinic.settings?.chairCount ??
@@ -594,9 +599,18 @@
         return;
       }
 
+      const cityVal = ($("clinicCity")?.value || "").trim();
+      if (!cityVal) {
+        alert("Şehir alanı zorunludur. Lütfen şehir girin.");
+        $("clinicCity")?.focus();
+        return;
+      }
+
       const payload = {
         plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
         referral_discount_percent: $("referralDiscountPercent").value.trim(),
+        city: cityVal,
+        address: $("clinicAddress")?.value.trim() || undefined,
         // 🎯 Eski referral sistemi için settings
         settings: {
           chairCount: Math.max(1, Math.min(50, parseInt($("chairCount")?.value || "3", 10) || 3)),
