@@ -1023,6 +1023,7 @@ if (Array.isArray(json)) {
             
             <div class="patient-meta">
               <div>📞 ${escapeHtml(p.phone || p.phone_number || '—')}</div>
+              ${(p.email || '').trim() ? `<div style="margin-top:2px;font-size:12px;color:#475569;">✉️ ${escapeHtml(p.email.trim())}</div>` : ''}
               <div style="margin-top:4px; font-size:11px; color:#64748b;">
                 <code style="font-size:11px;">${escapeHtml(patientId)}</code> • ${dateStr}
               </div>
