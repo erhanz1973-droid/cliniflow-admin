@@ -15429,6 +15429,8 @@ const DENTAL_AI_FALLBACK = {
 };
 
 // ── Vague / generic phrases to reject (Turkish + English, case-insensitive) ──
+// HARD RULES: any insight matching these is treated as invalid.
+// "Görüntü kalitesi sınırlı…" is still ALLOWED as a quality qualifier.
 const VAGUE_PATTERNS = [
   // Generic non-answers
   /\bsome issue\b/i,
@@ -15441,11 +15443,20 @@ const VAGUE_PATTERNS = [
   /\bgenel (bir )?sorun\b/i,
   /\biyi görünüyor\b/i,            // "looks fine" without specifics
   /^(ok|iyi|normal|tamam|güzel)\.?$/i,  // single-word non-answers
+
+  // ── Hard-rule refusal / cop-out phrases (trigger retry) ──
+  /analiz edilemedi/i,             // "görüntü analiz edilemedi"
+  /değerlendirilemedi/i,
+  /net değil/i,                    // "görüntü net değil"
+  /tekrar (deneyin|çekin)/i,       // "tekrar deneyin" as an insight = cop-out
+  /görüntü (çok )?(bulanık|karanlık|yetersiz|kullanılamaz)/i,
+  /yeterli (görüntü|bilgi|veri) (yok|bulunamadı)/i,
+  /bu (görüntüden|fotoğraftan) (analiz|değerlendirme) (yapılamaz|edilemez)/i,
+
   // Pure refusal phrases — no observation at all
-  // Note: "Görüntü kalitesi sınırlı" is ALLOWED as a quality disclaimer,
-  // so we only block zero-observation hard refusals here.
   /^(cannot|unable to) (analyze|analyse|assess|evaluate)\.?$/i,
   /^(analiz edilemez|değerlendirme yapılamaz)\.?$/i,
+  /^(I cannot|I am unable to|I'm unable to) (analyze|assess|evaluate)/i,
 ];
 
 /**
@@ -15507,12 +15518,16 @@ function validateDentalAIQuality(parsed) {
   if (insights.length === 0) {
     reasons.push('no_insights');
   } else {
-    // Require at least 1 insight that is NOT a pure refusal phrase.
-    // A single honest quality disclaimer ("Görüntü kalitesi sınırlı...") is
-    // acceptable only when accompanied by at least 1 real observation.
+    // Require at least 2 insights that are NOT refusal/vague phrases.
+    // A quality disclaimer ("Görüntü kalitesi sınırlı...") does NOT count
+    // toward the minimum — it must be accompanied by real observations.
     const nonRefusalInsights = insights.filter(t => t.length >= 10 && !isVague(t));
-    if (nonRefusalInsights.length === 0) {
-      reasons.push('all_insights_vague_or_refusal');
+    if (nonRefusalInsights.length < 2) {
+      reasons.push(
+        nonRefusalInsights.length === 0
+          ? 'all_insights_vague_or_refusal'
+          : 'insufficient_real_insights'  // only 1 real insight — need 2
+      );
     }
     insights.forEach((t, i) => {
       if (t.length < 10) reasons.push(`insight_${i}_too_short`);
@@ -15615,13 +15630,48 @@ RULES:
 }
 
 /**
- * Calls OpenAI Vision with a two-role prompt and returns validated dental analysis.
- * Never throws on parse/validation failure — returns DENTAL_AI_FALLBACK instead.
- * Still throws on HTTP / network errors so the caller can return 502/504.
+ * Stronger retry prompt used when the first call produces weak/refusal insights.
+ * Forces the model to commit to ≥ 2 concrete observations about visible teeth.
  */
-async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, timeoutMs = 30000 } = {}) {
-  const { system, user } = generateDentalAnalysisPrompt(photoType);
+function generateRetryPrompt(photoType = 'general') {
+  const ctx = PHOTO_TYPE_CONTEXT[photoType] || PHOTO_TYPE_CONTEXT.general;
+  return {
+    system: `You are a dental AI. You MUST analyze this dental image — no exceptions.
 
+CRITICAL RULES for this retry:
+1. Focus ONLY on visible teeth. Even partial visibility is enough to make observations.
+2. You MUST return at least 2 different observations. No excuses.
+3. If the image is blurry, describe what you CAN see: tooth shapes, approximate color, gum line, spacing.
+4. NEVER say "analiz edilemedi", "net değil", or "tekrar deneyin". Those are forbidden.
+5. Use cautious language: "görünüyor", "olabilir", "gibi görünüyor".
+6. Return ONLY valid JSON — no markdown, no extra text.`,
+
+    user: `Photo type: ${ctx.label}
+Focus area: ${ctx.focus}
+
+You are retrying because your previous response had insufficient observations.
+Even if image quality is limited, describe at least 2 things visible in this dental photo.
+
+Examples of valid observations even for blurry images:
+- "Dişlerde sarımsı renk tonu görünmektedir, bu diş taşı veya lekelenme olabilir."
+- "Diş etleri pembe renkte görünmekte olup genel sağlık durumu normal gibi görünmektedir."
+- "Ön dişlerde hafif çapraşıklık veya dizilim sorunu olabileceği görünüyor."
+
+Return ONLY this JSON with EXACTLY 2+ real dental observations:
+{
+  "insights": ["first observation in Turkish", "second observation in Turkish"],
+  "confidence": "low",
+  "summary": "1-sentence honest summary in Turkish",
+  "recommendation": "1-sentence next step directing patient to a dentist"
+}`,
+  };
+}
+
+/**
+ * Calls OpenAI Vision once and returns { parsed, usage, model }.
+ * Throws on HTTP / network errors. Never throws on parse failure.
+ */
+async function callOpenAIVision(system, user, imageDataUrl, { apiKey, timeoutMs = 30000 } = {}) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -15658,43 +15708,96 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   const data    = await res.json();
   const content = data.choices?.[0]?.message?.content || '{}';
 
-  // ── Parse ───────────────────────────────────────────────────────────
-  let parsed = {};
-  try { parsed = JSON.parse(content); } catch { /* fall through to fallback */ }
+  let raw = {};
+  try { raw = JSON.parse(content); } catch { /* fall through */ }
 
-  // Normalise arrays / strings before quality checks
-  parsed = {
-    insights:       Array.isArray(parsed.insights)
-                      ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
+  const parsed = {
+    insights:       Array.isArray(raw.insights)
+                      ? raw.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
                       : [],
-    confidence:     parsed.confidence,
-    summary:        String(parsed.summary        || '').trim(),
-    recommendation: String(parsed.recommendation || '').trim(),
+    confidence:     raw.confidence,
+    summary:        String(raw.summary        || '').trim(),
+    recommendation: String(raw.recommendation || '').trim(),
   };
 
-  // ── Content quality validation ───────────────────────────────────────
-  const quality = validateDentalAIQuality(parsed);
-  if (!quality.ok) {
+  return { parsed, usage: data.usage, model: data.model || 'gpt-4o' };
+}
+
+/**
+ * Calls OpenAI Vision with automatic retry on weak/refusal responses.
+ *
+ * Flow:
+ *   1. First call with normal prompt
+ *   2. If quality validation fails → retry ONCE with a stronger "must observe" prompt
+ *   3. If retry also fails → return DENTAL_AI_FALLBACK (never throws on content issues)
+ *
+ * Still throws on HTTP / network errors so the caller can return 502/504.
+ */
+async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, timeoutMs = 30000 } = {}) {
+  // ── First attempt ────────────────────────────────────────────────────
+  const { system: sys1, user: usr1 } = generateDentalAnalysisPrompt(photoType);
+  const attempt1 = await callOpenAIVision(sys1, usr1, imageDataUrl, { apiKey, timeoutMs });
+
+  const q1 = validateDentalAIQuality(attempt1.parsed);
+  if (q1.ok) {
     return {
-      ...DENTAL_AI_FALLBACK,
-      _usage:    data.usage,
-      _model:    data.model || 'gpt-4o',
-      _fallback: true,
-      _qualityScore:   quality.score,
-      _qualityReasons: quality.reasons,
+      insights:       attempt1.parsed.insights,
+      confidence:     attempt1.parsed.confidence,
+      summary:        attempt1.parsed.summary,
+      recommendation: attempt1.parsed.recommendation,
+      _usage:          attempt1.usage,
+      _model:          attempt1.model,
+      _fallback:       false,
+      _retried:        false,
+      _qualityScore:   q1.score,
+      _qualityReasons: [],
     };
   }
 
+  // ── Retry with stronger prompt ───────────────────────────────────────
+  console.warn('[AI] First attempt weak — retrying with stronger prompt.', {
+    photoType, score: q1.score, reasons: q1.reasons,
+    insights: attempt1.parsed.insights,
+  });
+
+  const { system: sys2, user: usr2 } = generateRetryPrompt(photoType);
+  const attempt2 = await callOpenAIVision(sys2, usr2, imageDataUrl, {
+    apiKey,
+    timeoutMs: Math.min(timeoutMs, 20_000), // shorter budget for retry
+  });
+
+  const q2 = validateDentalAIQuality(attempt2.parsed);
+  if (q2.ok) {
+    console.log('[AI] Retry succeeded.', { photoType, score: q2.score });
+    return {
+      insights:       attempt2.parsed.insights,
+      confidence:     attempt2.parsed.confidence,
+      summary:        attempt2.parsed.summary,
+      recommendation: attempt2.parsed.recommendation,
+      _usage:          attempt2.usage,
+      _model:          attempt2.model,
+      _fallback:       false,
+      _retried:        true,
+      _qualityScore:   q2.score,
+      _qualityReasons: [],
+    };
+  }
+
+  // ── Both calls failed validation ─────────────────────────────────────
+  console.error('[AI] Both attempts failed quality validation.', {
+    photoType,
+    attempt1: { score: q1.score, reasons: q1.reasons },
+    attempt2: { score: q2.score, reasons: q2.reasons },
+  });
+
   return {
-    insights:       parsed.insights,
-    confidence:     parsed.confidence,
-    summary:        parsed.summary,
-    recommendation: parsed.recommendation,
-    _usage:          data.usage,
-    _model:          data.model || 'gpt-4o',
-    _fallback:       false,
-    _qualityScore:   quality.score,
-    _qualityReasons: [],
+    ...DENTAL_AI_FALLBACK,
+    _usage:          attempt2.usage,
+    _model:          attempt2.model,
+    _fallback:       true,
+    _retried:        true,
+    _qualityScore:   q2.score,
+    _qualityReasons: q2.reasons,
   };
 }
 
