@@ -15606,6 +15606,66 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 }
 
 // ─── AI Photo Analysis ────────────────────────────────────────────────────────
+// POST /api/chat/ai-upload
+// Lightweight upload for AI analysis — no clinic_id required, no messages DB write.
+// Stores the photo in Supabase Storage and returns a long-lived signed URL that
+// the ai-analyze endpoint can fetch.
+app.post('/api/chat/ai-upload', requireToken, chatUpload.single('file'), async (req, res) => {
+  try {
+    const patientId = String(req.patientId || '').trim();
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ ok: false, error: 'no_file', message: 'No file received' });
+
+    const mime = String(file.mimetype || 'image/jpeg').toLowerCase();
+    const size = Number(file.size || 0);
+
+    const allowedMimes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'image/heif']);
+    if (!allowedMimes.has(mime)) {
+      return res.status(400).json({ ok: false, error: 'invalid_file_type', message: 'Only JPEG/PNG/HEIC accepted' });
+    }
+
+    const MAX_BYTES = 5 * 1024 * 1024;
+    if (size > MAX_BYTES) {
+      return res.status(400).json({ ok: false, error: 'image_too_large', message: 'Image must be under 5MB' });
+    }
+
+    if (!isSupabaseEnabled()) {
+      return res.status(503).json({ ok: false, error: 'supabase_required', message: 'AI upload requires Supabase storage' });
+    }
+
+    const fileName = `${Date.now()}-${crypto.randomBytes(5).toString('hex')}.jpg`;
+    const storagePath = `ai-photos/${patientId}/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('patient-files')
+      .upload(storagePath, file.buffer, { contentType: 'image/jpeg', upsert: false });
+
+    if (uploadError) {
+      console.error('[AI UPLOAD] Storage upload failed:', uploadError.message);
+      return res.status(500).json({ ok: false, error: 'upload_failed', message: uploadError.message });
+    }
+
+    // 1-year signed URL — the ai-analyze endpoint has retry logic for expiry
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('patient-files')
+      .createSignedUrl(storagePath, 365 * 24 * 3600);
+
+    if (signErr || !signed?.signedUrl) {
+      console.error('[AI UPLOAD] Signed URL creation failed:', signErr?.message);
+      return res.status(500).json({ ok: false, error: 'sign_failed', message: signErr?.message });
+    }
+
+    console.log('[AI UPLOAD] OK:', { patientId, storagePath, sizeKB: Math.round(size / 1024) });
+    return res.json({ ok: true, url: signed.signedUrl, path: storagePath });
+
+  } catch (err) {
+    console.error('[AI UPLOAD] Exception:', err?.message, err?.stack);
+    return res.status(500).json({ ok: false, error: 'upload_exception', message: err?.message });
+  }
+});
+
 // POST /api/chat/ai-analyze
 // Accepts: { patientId, imageUrl, photoType? }
 // Feature flags: ENABLE_AI_ANALYSIS, ENABLE_SMILE_SIMULATION
