@@ -15227,15 +15227,17 @@ function detectSpecialtyFromInsights(insights) {
 /**
  * Fetches up to 3 recommended active clinics from Supabase.
  *
- * When userLocation { latitude, longitude } is provided:
- *   - Calculates Haversine distance for each clinic with coordinates
- *   - Filters to MAX_CLINIC_DISTANCE_KM (50 km); falls back to unfiltered if none qualify
- *   - Sorts by distance ASC (primary), rating DESC (secondary)
+ * preferredCountry (ISO-2 or full name, e.g. "TR" / "Turkey"):
+ *   - Takes precedence over userLocation
+ *   - Filters clinics by country, sorts by rating DESC
  *
- * Without userLocation: sorts by rating DESC only.
+ * userLocation { latitude, longitude } (when no preferredCountry):
+ *   - Haversine distance filter (MAX_CLINIC_DISTANCE_KM = 50 km)
+ *   - Sorts by distance ASC → rating DESC
+ *
  * Excludes patient's own clinic. Returns [] on error (non-fatal).
  */
-async function getRecommendedClinics({ insights = [], patientId, userLocation } = {}) {
+async function getRecommendedClinics({ insights = [], patientId, userLocation, preferredCountry } = {}) {
   if (!isSupabaseEnabled()) return [];
   try {
     const specialty = detectSpecialtyFromInsights(insights);
@@ -15251,13 +15253,19 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation } 
       excludeClinicId = pt?.clinic_id || null;
     }
 
-    // Fetch active clinics — include lat/lng for distance calculation
+    // Fetch active clinics — include location fields
     let query = supabase
       .from('clinics')
-      .select('id, name, city, latitude, longitude')
+      .select('id, name, city, country, latitude, longitude')
       .eq('status', 'active')
-      .limit(20);   // wider pool when filtering by distance
+      .limit(20);
     if (excludeClinicId) query = query.neq('id', excludeClinicId);
+
+    // Country filter: when a destination is preferred, skip distance logic entirely
+    if (preferredCountry && preferredCountry !== 'nearby') {
+      // Accept both ISO-2 codes and full country names (case-insensitive)
+      query = query.or(`country.ilike.${preferredCountry},country.ilike.%${preferredCountry}%`);
+    }
 
     const { data: clinics } = await query;
     if (!clinics?.length) return [];
@@ -15283,8 +15291,10 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation } 
       }
     }
 
-    // Attach distance when user location and clinic coords are both available
-    const hasUserLocation = userLocation?.latitude != null && userLocation?.longitude != null;
+    const useCountryFilter = preferredCountry && preferredCountry !== 'nearby';
+    const hasUserLocation  = !useCountryFilter &&
+                             userLocation?.latitude != null && userLocation?.longitude != null;
+
     const withDistance = clinics.map(c => {
       let distanceKm = null;
       if (hasUserLocation && c.latitude != null && c.longitude != null) {
@@ -15295,8 +15305,9 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation } 
       }
       return {
         id:          c.id,
-        name:        c.name || 'Klinik',
-        city:        c.city || null,
+        name:        c.name    || 'Klinik',
+        city:        c.city    || null,
+        country:     c.country || null,
         specialty,
         rating:      ratingMap[c.id] ?? null,
         distanceKm,
@@ -15304,22 +15315,24 @@ async function getRecommendedClinics({ insights = [], patientId, userLocation } 
       };
     });
 
-    // Filter by distance when location is available; fall back to all if too few pass
     let candidates = withDistance;
+
     if (hasUserLocation) {
+      // Distance-based: filter to radius, fall back if no clinic qualifies
       const nearby = withDistance.filter(
         c => c.distanceKm != null && c.distanceKm <= MAX_CLINIC_DISTANCE_KM
       );
-      // Only apply the radius filter when at least one clinic qualifies
       if (nearby.length > 0) candidates = nearby;
     }
+    // Country mode: no radius filter — all results already filtered by DB query
 
-    // Sort: distance ASC (primary) → rating DESC (secondary)
+    // Sort: distance ASC (when available) → rating DESC
     candidates.sort((a, b) => {
-      if (a.distanceKm != null && b.distanceKm != null) {
-        if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
-      } else if (a.distanceKm != null) return -1;
-        else if (b.distanceKm != null) return 1;
+      if (a.distanceKm != null && b.distanceKm != null && a.distanceKm !== b.distanceKm) {
+        return a.distanceKm - b.distanceKm;
+      }
+      if (a.distanceKm != null && b.distanceKm == null) return -1;
+      if (b.distanceKm != null && a.distanceKm == null) return 1;
       return (b.rating ?? 0) - (a.rating ?? 0);
     });
 
@@ -15606,7 +15619,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(503).json({ ok: false, error: 'ai_disabled', message: 'AI analysis is disabled via ENABLE_AI_ANALYSIS=false' });
     }
 
-    const { patientId, imageUrl, photoType = 'general', userLocation = null } = req.body || {};
+    const { patientId, imageUrl, photoType = 'general', userLocation = null, preferredCountry = null } = req.body || {};
 
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
     if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
@@ -15620,16 +15633,97 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
 
     logAI('info', 'analyze_start', { patientId, imageUrl });
 
-    // ── Read image from disk ────────────────────────────────────────────
-    const relPath  = decodeURIComponent(imageUrl.split('?')[0]);
-    const diskPath = path.join(__dirname, 'public', ...relPath.replace(/^\//, '').split('/'));
+    // ── Load image — from remote URL (Supabase) or local disk ───────────
+    let imageBuffer;
+    let mimeType = 'image/jpeg';
 
-    if (!fs.existsSync(diskPath)) {
-      logAI('warn', 'image_not_found', { patientId, diskPath });
-      return res.status(404).json({ ok: false, error: 'image_not_found' });
+    const isRemoteUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+
+    if (isRemoteUrl) {
+      /**
+       * Attempt to fetch a Supabase signed URL.
+       * On 401/403 (expired token) re-sign the file using the service-role key
+       * and retry once — all within the 15 s budget.
+       *
+       * Supabase signed URL format:
+       *   https://<project>.supabase.co/storage/v1/object/sign/<bucket>/<path...>?token=...
+       */
+      async function fetchWithSignedUrlRetry(url, timeoutMs) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+        try {
+          let fetchUrl = url;
+
+          const tryFetch = async (u) => {
+            const r = await fetch(u, { signal: ctrl.signal });
+            return r;
+          };
+
+          let imgRes = await tryFetch(fetchUrl);
+
+          // Expired / forbidden → attempt re-sign once
+          if ((imgRes.status === 401 || imgRes.status === 403) && isSupabaseEnabled()) {
+            logAI('info', 'signed_url_expired_retry', { patientId, status: imgRes.status });
+
+            // Parse bucket + object path from the URL
+            // Pattern: .../object/sign/<bucket>/<object-path>
+            const withoutQuery = url.split('?')[0];
+            const signMatch = withoutQuery.match(/\/object\/sign\/([^/]+)\/(.+)$/);
+
+            if (signMatch) {
+              const bucket  = signMatch[1];
+              const objPath = signMatch[2];
+              const { data: signed, error: signErr } =
+                await supabase.storage.from(bucket).createSignedUrl(objPath, 120); // 2 min
+
+              if (!signErr && signed?.signedUrl) {
+                imgRes = await tryFetch(signed.signedUrl);
+                logAI('info', 'signed_url_refreshed', { patientId, newStatus: imgRes.status });
+              } else {
+                logAI('warn', 'signed_url_refresh_failed', { patientId, signErr: signErr?.message });
+              }
+            }
+          }
+
+          clearTimeout(timer);
+          return imgRes;
+        } catch (e) {
+          clearTimeout(timer);
+          throw e;
+        }
+      }
+
+      try {
+        const imgRes = await fetchWithSignedUrlRetry(imageUrl, 15_000);
+
+        if (!imgRes.ok) {
+          logAI('warn', 'remote_image_fetch_failed', { patientId, imageUrl, status: imgRes.status });
+          return res.status(502).json({ ok: false, error: 'image_fetch_failed', message: 'Görsel indirilemedi.' });
+        }
+
+        const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+        mimeType = contentType.split(';')[0].trim() || 'image/jpeg';
+        const arrayBuf = await imgRes.arrayBuffer();
+        imageBuffer = Buffer.from(arrayBuf);
+      } catch (e) {
+        logAI('warn', 'remote_image_timeout', { patientId, imageUrl });
+        return res.status(504).json({ ok: false, error: 'image_fetch_timeout', message: 'Görsel indirme zaman aşımına uğradı.' });
+      }
+    } else {
+      // Local disk path (legacy / same-server deployments)
+      const relPath  = decodeURIComponent(imageUrl.split('?')[0]);
+      const diskPath = path.join(__dirname, 'public', ...relPath.replace(/^\//, '').split('/'));
+
+      if (!fs.existsSync(diskPath)) {
+        logAI('warn', 'image_not_found', { patientId, diskPath });
+        return res.status(404).json({ ok: false, error: 'image_not_found' });
+      }
+
+      imageBuffer = fs.readFileSync(diskPath);
+      const ext = path.extname(diskPath).toLowerCase();
+      mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
     }
-
-    let imageBuffer = fs.readFileSync(diskPath);
 
     // ── Max size validation ─────────────────────────────────────────────
     if (imageBuffer.length > IMAGE_MAX_SIZE_BYTES) {
@@ -15648,9 +15742,6 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       imageBuffer = null;
       return res.status(400).json({ ok: false, error: 'invalid_image_format', message: 'Dosya geçerli bir görsel formatında değil.' });
     }
-
-    const ext      = path.extname(diskPath).toLowerCase();
-    const mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
 
     // ── Convert to base64 data URL, then immediately release the raw buffer ──
     // Holding both raw + base64 simultaneously doubles peak memory; null early.
@@ -15753,7 +15844,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
 
     // ── Clinic recommendations (non-blocking — runs concurrently with save) ──
-    const recommendedClinics = await getRecommendedClinics({ insights, patientId, userLocation });
+    const recommendedClinics = await getRecommendedClinics({ insights, patientId, userLocation, preferredCountry });
 
     // ── Save AI result as CLINIC message ──────────────────────────────
     await insertMessageToSupabase({
@@ -15799,13 +15890,21 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
         message: 'AI analysis timed out. Your photo was saved successfully.',
       });
     }
+    console.error('[AI BACKEND ERROR]', {
+      patientId: req.body?.patientId,
+      imageUrl:  req.body?.imageUrl,
+      photoType: req.body?.photoType,
+      error:     err?.message,
+      stack:     err?.stack,
+      elapsedMs: Date.now() - _t0,
+    });
     logAI('error', 'analyze_exception', {
       patientId: req.body?.patientId,
       message:   err?.message,
       stack:     process.env.NODE_ENV !== 'production' ? err?.stack : undefined,
       elapsedMs: Date.now() - _t0,
     });
-    return res.status(500).json({ ok: false, error: 'ai_analyze_exception', message: err?.message || 'Server error' });
+    return res.status(500).json({ ok: false, error: err?.message || 'ai_analyze_exception', message: err?.message || 'Server error' });
   }
 });
 
