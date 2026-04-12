@@ -15592,77 +15592,64 @@ function generateDentalAnalysisPrompt(photoType = 'general') {
   const ctx = PHOTO_TYPE_CONTEXT[photoType] || PHOTO_TYPE_CONTEXT.general;
 
   return {
-    system: `You are a dental AI assistant analyzing intraoral photos for a patient-facing app.
+    system: `You are a dental assistant AI. Analyze ONLY the teeth visible in the image. Ignore background, lips, and face.
 
-STRICT RULES — never break these:
-1. ALWAYS provide at least 1–2 observations. Never return an empty insights array.
-2. If image quality is poor, you MAY note it with: "Görüntü kalitesi sınırlı, bu nedenle değerlendirme kısıtlıdır" — but you MUST still include at least 1 cautious observation about what you can see.
-3. NEVER fabricate details you cannot see. Prefer honest uncertainty over hallucination.
-4. NEVER give a definitive diagnosis — always use cautious language: "may indicate", "appears to", "could be", "olabilir", "görünüyor".
-5. NEVER guarantee treatment outcomes.
-6. ONLY describe conditions that are visually observable.
-7. Write insights in natural, friendly Turkish — avoid clinical jargon.
+If teeth are not clearly visible, return:
+{ "insights": ["Image not suitable for dental analysis"], "confidence": "low", "summary": "Diş analizi için uygun görüntü bulunamadı.", "recommendation": "Lütfen dişlerinizi daha net gösteren bir fotoğraf çekin." }
 
-FORBIDDEN OUTPUT (will be rejected):
-• Completely empty insights array
-• Insights that are pure refusals with zero observations (e.g. "I cannot analyze this image" with nothing else)
-• Made-up specific details not visible in the image`,
+Otherwise describe exactly three things in Turkish — one per insight:
+1. Tooth color — stains, yellowing, discoloration
+2. Alignment — crowding, spacing, crooked teeth
+3. Visible issues — decay, chips, calculus buildup, gum recession
+
+STRICT RULES:
+- Analyze ONLY teeth. Never comment on face, skin, or background.
+- Be concise and medical-focused. One sentence per insight.
+- Use cautious language: "görünüyor", "olabilir", "gibi görünüyor".
+- NEVER diagnose. NEVER guarantee treatment outcomes.
+- Return ONLY valid JSON — no markdown, no extra text.`,
 
     user: `Photo type: ${ctx.label}
-Focus area: ${ctx.focus}
 
-Carefully examine this dental image and return ONLY valid JSON — no markdown, no extra text:
+Examine the teeth in this image and return ONLY this JSON:
 {
-  "insights": ["observation 1 in Turkish", "observation 2 in Turkish"],
+  "insights": ["tooth color observation in Turkish", "alignment observation in Turkish", "visible issue in Turkish"],
   "confidence": "low" | "medium" | "high",
-  "summary": "1-sentence overall assessment in Turkish",
+  "summary": "1-sentence overall dental assessment in Turkish",
   "recommendation": "1 concrete next step for the patient in Turkish"
 }
 
-RULES:
-- insights: 1–3 items. Each must be 1 sentence. Use cautious language ("görünüyor", "olabilir").
-- If image is blurry/dark: start with "Görüntü kalitesi sınırlı, bu nedenle değerlendirme kısıtlıdır", then add 1–2 observations about what IS visible (e.g. rough tooth outline, visible gum line, general color).
-- Inspect specifically: tooth alignment, color/staining (decay risk), gum condition, missing/broken teeth, calculus buildup.
-- confidence: "low" = blurry/dark image | "medium" = partially visible | "high" = clear and well-lit.
-- summary: neutral 1 sentence. If quality was poor, reflect that honestly.
-- recommendation: short, polite, directs patient to a dentist or to retake the photo if unusable.`,
+confidence guide: "low" = blurry or teeth barely visible | "medium" = partially visible | "high" = clear, well-lit photo`,
   };
 }
 
 /**
- * Stronger retry prompt used when the first call produces weak/refusal insights.
- * Forces the model to commit to ≥ 2 concrete observations about visible teeth.
+ * Stronger retry prompt — used when the first response is vague or refused.
  */
 function generateRetryPrompt(photoType = 'general') {
   const ctx = PHOTO_TYPE_CONTEXT[photoType] || PHOTO_TYPE_CONTEXT.general;
   return {
-    system: `You are a dental AI. You MUST analyze this dental image — no exceptions.
+    system: `You are a dental assistant AI. Your ONLY job is to describe what you see in the teeth.
 
-CRITICAL RULES for this retry:
-1. Focus ONLY on visible teeth. Even partial visibility is enough to make observations.
-2. You MUST return at least 2 different observations. No excuses.
-3. If the image is blurry, describe what you CAN see: tooth shapes, approximate color, gum line, spacing.
-4. NEVER say "analiz edilemedi", "net değil", or "tekrar deneyin". Those are forbidden.
-5. Use cautious language: "görünüyor", "olabilir", "gibi görünüyor".
-6. Return ONLY valid JSON — no markdown, no extra text.`,
+MANDATORY — you MUST return exactly 2–3 observations about:
+- Tooth color (yellowing, staining, whiteness)
+- Tooth alignment (straight, crowded, gaps)
+- Any visible problems (decay, chips, tartar, gum line)
+
+FORBIDDEN: "analiz edilemedi", "net değil", "tekrar deneyin", empty insights.
+Even a blurry photo has visible tooth shapes, approximate color, and a gum line — describe those.
+Return ONLY valid JSON — no markdown, no extra text.`,
 
     user: `Photo type: ${ctx.label}
-Focus area: ${ctx.focus}
 
-You are retrying because your previous response had insufficient observations.
-Even if image quality is limited, describe at least 2 things visible in this dental photo.
+Your previous response lacked sufficient observations. Look again at the teeth only.
 
-Examples of valid observations even for blurry images:
-- "Dişlerde sarımsı renk tonu görünmektedir, bu diş taşı veya lekelenme olabilir."
-- "Diş etleri pembe renkte görünmekte olup genel sağlık durumu normal gibi görünmektedir."
-- "Ön dişlerde hafif çapraşıklık veya dizilim sorunu olabileceği görünüyor."
-
-Return ONLY this JSON with EXACTLY 2+ real dental observations:
+Return ONLY this JSON with 2–3 real dental observations in Turkish:
 {
-  "insights": ["first observation in Turkish", "second observation in Turkish"],
+  "insights": ["renk gözlemi", "dizilim gözlemi", "görünür sorun (varsa)"],
   "confidence": "low",
   "summary": "1-sentence honest summary in Turkish",
-  "recommendation": "1-sentence next step directing patient to a dentist"
+  "recommendation": "1-sentence next step for the patient"
 }`,
   };
 }
