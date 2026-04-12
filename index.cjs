@@ -15950,123 +15950,160 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       elapsedMs: Date.now() - _t0,
     });
 
-    // ── Optional: Gemini — smile simulation (before → after) ──────────
-    // Model: gemini-2.0-flash-exp (NOT gemini-1.5-pro — that model cannot
-    // generate images, only accepts them as input).
-    // responseModalities: ['IMAGE','TEXT'] is required for image output.
+    // ── Optional: Smile simulation — Gemini first, Replicate fallback ──
+    //
+    // Strategy:
+    //   1. Try gemini-2.0-flash-exp (free tier, image-in → image-out)
+    //      NOTE: gemini-1.5-pro CANNOT generate images — only 2.0-flash-exp can.
+    //            responseModalities: ['IMAGE','TEXT'] is mandatory for image output.
+    //   2. If Gemini returns no image (text-only response is common) → Replicate GFPGAN
+    //      NOTE: stability-ai/sdxl is text-to-image only, not suitable here.
+    //            We use GFPGAN (face/tooth restoration, image-to-image).
+    //   3. Upload whichever result arrives to Supabase; return signed URL + provider.
+
     let simulatedImageUrl = null;
-    const GEMINI_KEY = process.env.GEMINI_API_KEY;
-    // Allow overriding via env (e.g. when Google releases a stable image-gen model)
+    let simulationProvider = null; // 'gemini' | 'replicate' | null
+    const GEMINI_KEY       = process.env.GEMINI_API_KEY;
+    const REPLICATE_TOKEN  = process.env.REPLICATE_API_TOKEN;
     const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
 
-    if (ENABLE_SMILE_SIMULATION && GEMINI_KEY && imageDataUrl) {
-      const geminiTimeoutMs = Math.min(AI_TIMEOUT_MS, 25_000);
+    // ── Helper: upload a buffer to Supabase Storage → signed URL ──────
+    async function uploadSimBuffer(buffer, mime, label) {
+      const ext  = mime.includes('png') ? 'png' : 'jpg';
+      const path = `ai-simulations/${patientId}/${Date.now()}-${label}.${ext}`;
+      if (!isSupabaseEnabled()) {
+        return { url: `data:${mime};base64,${buffer.toString('base64')}`, path };
+      }
+      const { error } = await supabase.storage
+        .from('patient-files')
+        .upload(path, buffer, { contentType: mime, upsert: false });
+      if (error) { logAI('warn', 'sim_upload_failed', { patientId, label, message: error.message }); return null; }
+      const { data: signed } = await supabase.storage
+        .from('patient-files')
+        .createSignedUrl(path, 365 * 24 * 3600);
+      return signed?.signedUrl ? { url: signed.signedUrl, path } : null;
+    }
 
-      try {
-        const insightHints = insights.length > 0
-          ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
-          : '';
+    if (ENABLE_SMILE_SIMULATION && imageDataUrl) {
+      const simTimeoutMs = Math.min(AI_TIMEOUT_MS, 25_000);
 
-        const smilePrompt =
-          `Enhance this dental photo to simulate a natural, healthy smile.\n\n` +
-          `Improve:\n` +
-          `- Tooth alignment (slightly straighter)\n` +
-          `- Tooth color (natural whitening, not artificial)\n` +
-          `- Remove visible stains or minor decay marks\n` +
-          `- Keep realistic proportions and lighting\n\n` +
-          `IMPORTANT:\n` +
-          `- Do NOT create a perfect Hollywood smile\n` +
-          `- Keep it subtle and believable\n` +
-          `- Preserve facial structure and identity\n` +
-          `- Make minimal, realistic improvements only` +
-          insightHints;
+      const insightHints = insights.length > 0
+        ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
+        : '';
+      const smilePrompt =
+        `Enhance this dental photo to simulate a natural, healthy smile.\n` +
+        `- Tooth alignment: slightly straighter\n` +
+        `- Tooth color: natural whitening, not artificial bright-white\n` +
+        `- Remove visible stains or minor decay marks\n` +
+        `- Keep realistic proportions and original lighting\n` +
+        `IMPORTANT: Do NOT create a Hollywood smile. Keep it subtle. Preserve face structure.` +
+        insightHints;
 
-        const [dataHeader, base64Raw] = imageDataUrl.split(',');
-        const inputMime = dataHeader.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+      // ── 1. Try Gemini ────────────────────────────────────────────────
+      if (GEMINI_KEY) {
+        try {
+          const [dataHeader, base64Raw] = imageDataUrl.split(',');
+          const inputMime = dataHeader.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
 
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GEMINI_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
+          const geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GEMINI_KEY}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [
                   { text: smilePrompt },
                   { inline_data: { mime_type: inputMime, data: base64Raw } },
-                ],
-              }],
-              // responseModalities is REQUIRED to get image output back.
-              // Without it, Gemini returns only text — simulatedImageUrl stays null.
-              generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
-            }),
-            signal: AbortSignal.timeout(geminiTimeoutMs),
-          }
-        );
+                ]}],
+                generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+              }),
+              signal: AbortSignal.timeout(simTimeoutMs),
+            }
+          );
 
-        console.log('[GEMINI STATUS]:', geminiRes.status, '| model:', GEMINI_IMAGE_MODEL);
+          console.log('[GEMINI STATUS]:', geminiRes.status, '| model:', GEMINI_IMAGE_MODEL);
 
-        if (!geminiRes.ok) {
-          const errBody = await geminiRes.json().catch(() => ({}));
-          console.error('[GEMINI ERROR]:', JSON.stringify(errBody).slice(0, 500));
-          logAI('warn', 'gemini_http_error', { patientId, status: geminiRes.status, message: errBody?.error?.message });
-        } else {
-          const geminiData = await geminiRes.json();
+          if (geminiRes.ok) {
+            const geminiData = await geminiRes.json();
+            console.log('[GEMINI RAW]:', JSON.stringify(geminiData).slice(0, 500));
 
-          // Log raw response summary — critical for diagnosing text-only returns
-          const rawSummary = JSON.stringify(geminiData).slice(0, 600);
-          console.log('[GEMINI RAW]:', rawSummary);
+            const parts   = geminiData?.candidates?.[0]?.content?.parts || [];
+            const imgPart = parts.find(p => p.inline_data?.data);
+            const txtPart = parts.find(p => p.text);
 
-          const parts = geminiData?.candidates?.[0]?.content?.parts || [];
-          const imgPart = parts.find(p => p.inline_data?.data);
-          const textPart = parts.find(p => p.text);
-
-          if (!imgPart) {
-            // Gemini sometimes returns only text even with IMAGE modality requested.
-            // Log the text response to understand why, then fall through gracefully.
-            console.warn('[GEMINI] No image in response. Text parts:', textPart?.text?.slice(0, 200) ?? '(none)');
-            logAI('warn', 'gemini_no_image_in_response', {
-              patientId,
-              model: GEMINI_IMAGE_MODEL,
-              partTypes: parts.map(p => Object.keys(p).join('+')),
-              textSnippet: textPart?.text?.slice(0, 100),
-            });
-          } else {
-            const simBuffer = Buffer.from(imgPart.inline_data.data, 'base64');
-            const simMime   = imgPart.inline_data.mime_type || 'image/jpeg';
-            const simExt    = simMime.includes('png') ? 'png' : 'jpg';
-            const simPath   = `ai-simulations/${patientId}/${Date.now()}-sim.${simExt}`;
-
-            console.log('[GEMINI] Image received:', Math.round(simBuffer.length / 1024), 'KB | mime:', simMime);
-
-            if (isSupabaseEnabled()) {
-              const { error: simUploadErr } = await supabase.storage
-                .from('patient-files')
-                .upload(simPath, simBuffer, { contentType: simMime, upsert: false });
-
-              if (!simUploadErr) {
-                const { data: simSigned } = await supabase.storage
-                  .from('patient-files')
-                  .createSignedUrl(simPath, 365 * 24 * 3600);
-                simulatedImageUrl = simSigned?.signedUrl || null;
-              } else {
-                logAI('warn', 'gemini_sim_upload_failed', { patientId, message: simUploadErr.message });
-              }
+            if (imgPart) {
+              const buf    = Buffer.from(imgPart.inline_data.data, 'base64');
+              const mime   = imgPart.inline_data.mime_type || 'image/jpeg';
+              console.log('[GEMINI] Image received:', Math.round(buf.length / 1024), 'KB');
+              const result = await uploadSimBuffer(buf, mime, 'gemini');
+              if (result) { simulatedImageUrl = result.url; simulationProvider = 'gemini'; }
             } else {
-              simulatedImageUrl = `data:${simMime};base64,${imgPart.inline_data.data}`;
+              console.warn('[GEMINI] No image returned. Text snippet:', txtPart?.text?.slice(0, 150) ?? '(none)');
+              logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_IMAGE_MODEL, parts: parts.map(p => Object.keys(p).join('+')) });
             }
+          } else {
+            const errBody = await geminiRes.json().catch(() => ({}));
+            console.error('[GEMINI ERROR]:', JSON.stringify(errBody).slice(0, 400));
+            logAI('warn', 'gemini_http_error', { patientId, status: geminiRes.status, message: errBody?.error?.message });
+          }
+        } catch (geminiErr) {
+          console.warn('[GEMINI FAILED]:', geminiErr?.message);
+          logAI('warn', 'gemini_exception', { patientId, message: geminiErr?.message });
+        }
+      }
 
-            if (simulatedImageUrl) {
-              logAI('info', 'gemini_simulation_success', {
-                patientId, simPath,
-                simSizeKB: Math.round(simBuffer.length / 1024),
-                elapsedMs: Date.now() - _t0,
-              });
+      // ── 2. Replicate GFPGAN fallback (image-to-image face restoration) ─
+      // Only runs if Gemini produced no image.
+      // Uses GFPGAN v1.4 — NOT SDXL (which is text-to-image and not suitable).
+      if (!simulatedImageUrl && REPLICATE_TOKEN) {
+        const repTimeout   = Math.min(simTimeoutMs, 12_000);
+        const pollDeadline = Date.now() + Math.min(simTimeoutMs, 28_000);
+        try {
+          const repRes = await fetch('https://api.replicate.com/v1/predictions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+            body: JSON.stringify({
+              version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
+              input: { img: imageDataUrl, scale: 2, version: 'v1.4' },
+            }),
+            signal: AbortSignal.timeout(repTimeout),
+          });
+
+          console.log('[REPLICATE STATUS]:', repRes.status);
+
+          if (repRes.ok) {
+            const repData = await repRes.json();
+            const predId  = repData.id;
+            if (predId) {
+              while (Date.now() < pollDeadline) {
+                await new Promise(r => setTimeout(r, 2500));
+                const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+                  headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (!poll.ok) break;
+                const pd = await poll.json();
+                if (pd.status === 'succeeded') {
+                  const outputUrl = Array.isArray(pd.output) ? pd.output[0] : pd.output;
+                  if (outputUrl) { simulatedImageUrl = outputUrl; simulationProvider = 'replicate'; }
+                  break;
+                }
+                if (pd.status === 'failed' || pd.status === 'canceled') break;
+              }
             }
           }
+          if (simulatedImageUrl) {
+            logAI('info', 'replicate_fallback_success', { patientId, elapsedMs: Date.now() - _t0 });
+          }
+        } catch (repErr) {
+          console.warn('[REPLICATE FAILED]:', repErr?.message);
+          logAI('warn', 'replicate_exception', { patientId, message: repErr?.message });
         }
-      } catch (geminiErr) {
-        logAI('warn', 'gemini_error', { patientId, message: geminiErr?.message });
+      }
+
+      console.log('[SIMULATION]:', simulationProvider ?? 'none', '| url:', simulatedImageUrl ? 'ok' : 'null');
+      if (simulatedImageUrl) {
+        logAI('info', 'simulation_complete', { patientId, provider: simulationProvider, elapsedMs: Date.now() - _t0 });
       }
     }
 
@@ -16110,7 +16147,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     // ── Record cost only after a successful AI response ─────────────────
     await aiCostRecord(patientId);
 
-    return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, disclaimer, clinics: recommendedClinics });
+    return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, simulationProvider, disclaimer, clinics: recommendedClinics });
 
   } catch (err) {
     const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
