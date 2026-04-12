@@ -15097,6 +15097,29 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 // ─── AI Clinic Recommendation Helpers ────────────────────────────────────────
 
 /**
+ * Haversine distance between two GPS coordinates (returns km).
+ */
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R    = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a    = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Format a km distance to a human-readable string: "2.3 km" or "900 m". */
+function formatDistance(km) {
+  if (km < 1) return `${Math.round(km * 1000)} m`;
+  return `${km.toFixed(1)} km`;
+}
+
+// Max radius when user location is available (keeps results local; falls back
+// to global top-3-by-rating when no clinics are within this range).
+const MAX_CLINIC_DISTANCE_KM = 50;
+
+/**
  * Maps insight keywords → dental specialty label.
  * Order matters: first match wins.
  */
@@ -15119,16 +15142,21 @@ function detectSpecialtyFromInsights(insights) {
 
 /**
  * Fetches up to 3 recommended active clinics from Supabase.
- * Excludes the patient's own clinic.
- * Attaches avg overall rating when available.
- * Returns [] on any error (non-fatal — AI result is still saved).
+ *
+ * When userLocation { latitude, longitude } is provided:
+ *   - Calculates Haversine distance for each clinic with coordinates
+ *   - Filters to MAX_CLINIC_DISTANCE_KM (50 km); falls back to unfiltered if none qualify
+ *   - Sorts by distance ASC (primary), rating DESC (secondary)
+ *
+ * Without userLocation: sorts by rating DESC only.
+ * Excludes patient's own clinic. Returns [] on error (non-fatal).
  */
-async function getRecommendedClinics({ insights = [], patientId } = {}) {
+async function getRecommendedClinics({ insights = [], patientId, userLocation } = {}) {
   if (!isSupabaseEnabled()) return [];
   try {
     const specialty = detectSpecialtyFromInsights(insights);
 
-    // Exclude patient's own clinic from suggestions
+    // Exclude patient's own clinic
     let excludeClinicId = null;
     if (patientId) {
       const { data: pt } = await supabase
@@ -15139,18 +15167,18 @@ async function getRecommendedClinics({ insights = [], patientId } = {}) {
       excludeClinicId = pt?.clinic_id || null;
     }
 
-    // Fetch active clinics (max 10 candidates, narrow down to 3 after rating sort)
+    // Fetch active clinics — include lat/lng for distance calculation
     let query = supabase
       .from('clinics')
-      .select('id, name, city')
+      .select('id, name, city, latitude, longitude')
       .eq('status', 'active')
-      .limit(10);
+      .limit(20);   // wider pool when filtering by distance
     if (excludeClinicId) query = query.neq('id', excludeClinicId);
 
     const { data: clinics } = await query;
     if (!clinics?.length) return [];
 
-    // Fetch avg ratings for these clinics in one shot
+    // Fetch avg ratings
     const ids = clinics.map(c => c.id);
     const { data: ratingRows } = await supabase
       .from('ratings')
@@ -15171,16 +15199,48 @@ async function getRecommendedClinics({ insights = [], patientId } = {}) {
       }
     }
 
-    return clinics
-      .map(c => ({
-        id:        c.id,
-        name:      c.name   || 'Klinik',
-        city:      c.city   || null,
+    // Attach distance when user location and clinic coords are both available
+    const hasUserLocation = userLocation?.latitude != null && userLocation?.longitude != null;
+    const withDistance = clinics.map(c => {
+      let distanceKm = null;
+      if (hasUserLocation && c.latitude != null && c.longitude != null) {
+        distanceKm = haversineKm(
+          userLocation.latitude, userLocation.longitude,
+          c.latitude, c.longitude
+        );
+      }
+      return {
+        id:          c.id,
+        name:        c.name || 'Klinik',
+        city:        c.city || null,
         specialty,
-        rating:    ratingMap[c.id] ?? null,
-      }))
-      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-      .slice(0, 3);
+        rating:      ratingMap[c.id] ?? null,
+        distanceKm,
+        distance:    distanceKm != null ? formatDistance(distanceKm) : null,
+      };
+    });
+
+    // Filter by distance when location is available; fall back to all if too few pass
+    let candidates = withDistance;
+    if (hasUserLocation) {
+      const nearby = withDistance.filter(
+        c => c.distanceKm != null && c.distanceKm <= MAX_CLINIC_DISTANCE_KM
+      );
+      // Only apply the radius filter when at least one clinic qualifies
+      if (nearby.length > 0) candidates = nearby;
+    }
+
+    // Sort: distance ASC (primary) → rating DESC (secondary)
+    candidates.sort((a, b) => {
+      if (a.distanceKm != null && b.distanceKm != null) {
+        if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
+      } else if (a.distanceKm != null) return -1;
+        else if (b.distanceKm != null) return 1;
+      return (b.rating ?? 0) - (a.rating ?? 0);
+    });
+
+    // Strip internal distanceKm before returning
+    return candidates.slice(0, 3).map(({ distanceKm: _d, ...rest }) => rest);
   } catch (err) {
     logAI('warn', 'clinic_recommendations_error', { patientId, message: err?.message });
     return [];
@@ -15462,7 +15522,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(503).json({ ok: false, error: 'ai_disabled', message: 'AI analysis is disabled via ENABLE_AI_ANALYSIS=false' });
     }
 
-    const { patientId, imageUrl, photoType = 'general' } = req.body || {};
+    const { patientId, imageUrl, photoType = 'general', userLocation = null } = req.body || {};
 
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
     if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
@@ -15609,7 +15669,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
 
     // ── Clinic recommendations (non-blocking — runs concurrently with save) ──
-    const recommendedClinics = await getRecommendedClinics({ insights, patientId });
+    const recommendedClinics = await getRecommendedClinics({ insights, patientId, userLocation });
 
     // ── Save AI result as CLINIC message ──────────────────────────────
     await insertMessageToSupabase({
