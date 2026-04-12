@@ -15094,9 +15094,94 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
   }
 });
 
+// ─── AI Dental Analysis Helpers ──────────────────────────────────────────────
+
+/**
+ * Returns the system prompt for dental photo analysis.
+ * photoType: 'general' | 'intraoral' — allows context-aware wording.
+ */
+function generateDentalAnalysisPrompt(photoType = 'general') {
+  const context = photoType === 'intraoral'
+    ? 'Bu bir ağız içi (intraoral) fotoğraftır. Diş ve dişeti durumuna odaklan.'
+    : 'Bu bir ağız/diş fotoğrafıdır.';
+
+  return `${context}
+Görünür durumları dikkatle analiz et. Yanıtı YALNIZCA aşağıdaki JSON formatında ver, başka metin ekleme:
+{
+  "insights": ["gözlem 1", "gözlem 2", "gözlem 3"],
+  "confidence": "low",
+  "summary": "Genel değerlendirme (1 cümle)",
+  "recommendation": "Hastanın yapması gereken bir sonraki adım"
+}
+Kurallar:
+- "olabilir", "görünüyor", "olası", "gibi görünüyor" gibi yumuşatıcı ifadeler kullan
+- KESİN tıbbi teşhis YAPMA, garantili ifade KULLANMA
+- insights: en fazla 3 madde, her biri en fazla 1 cümle
+- Şunlara odaklan: olası çürük, eksik diş, dizilim sorunu, dişeti durumu
+- confidence: görüntü belirsizse "low", sorunlar net görünüyorsa "high", diğerleri "medium"
+- recommendation: diş hekimine başvurmayı öner, kısa ve samimi
+- Basit, samimi, teknik olmayan Türkçe kullan`;
+}
+
+/**
+ * Calls OpenAI Vision and returns structured dental analysis.
+ * Throws on HTTP error (caller handles timeout via AbortSignal).
+ */
+async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, timeoutMs = 30000 } = {}) {
+  const prompt = generateDentalAnalysisPrompt(photoType);
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: imageDataUrl, detail: 'low' } },
+        ],
+      }],
+      max_tokens: 500,
+      response_format: { type: 'json_object' },
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const err = new Error(errBody?.error?.message || 'OpenAI request failed');
+    err.code   = 'openai_error';
+    err.status = res.status;
+    err.detail = errBody?.error;
+    throw err;
+  }
+
+  const data    = await res.json();
+  const content = data.choices?.[0]?.message?.content || '{}';
+  let parsed = {};
+  try { parsed = JSON.parse(content); } catch { /* malformed — use defaults */ }
+
+  const insights = Array.isArray(parsed.insights)
+    ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
+    : [];
+
+  return {
+    insights:       insights.length > 0 ? insights : ['Fotoğraf başarıyla analiz edildi.'],
+    confidence:     ['low', 'medium', 'high'].includes(parsed.confidence) ? parsed.confidence : 'medium',
+    summary:        String(parsed.summary        || '').trim(),
+    recommendation: String(parsed.recommendation || '').trim(),
+    _usage: data.usage,
+    _model: data.model || 'gpt-4o',
+  };
+}
+
 // ─── AI Photo Analysis ────────────────────────────────────────────────────────
 // POST /api/chat/ai-analyze
-// Accepts: { patientId, imageUrl }  (imageUrl = relative path from upload response)
+// Accepts: { patientId, imageUrl, photoType? }
 // Feature flags: ENABLE_AI_ANALYSIS, ENABLE_SMILE_SIMULATION
 // Timeouts:      AI_TIMEOUT_MS (default 30 000 ms)
 // Images are processed in-memory as base64 — no external storage required
@@ -15108,7 +15193,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(503).json({ ok: false, error: 'ai_disabled', message: 'AI analysis is disabled via ENABLE_AI_ANALYSIS=false' });
     }
 
-    const { patientId, imageUrl } = req.body || {};
+    const { patientId, imageUrl, photoType = 'general' } = req.body || {};
 
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
     if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
@@ -15159,79 +15244,35 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     const imageDataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
     imageBuffer = null; // allow GC to reclaim the raw bytes
 
-    // ── OpenAI Vision — dental photo analysis ─────────────────────────
-    const aiPrompt = `Bu bir ağız/diş fotoğrafı. Lütfen kısa ve net biçimde analiz et.
-Yanıtı SADECE aşağıdaki JSON formatında ver (başka hiçbir metin ekleme):
-{
-  "insights": ["gözlem 1", "gözlem 2", "gözlem 3"],
-  "overallNote": "genel değerlendirme (1 cümle)"
-}
-Kurallar:
-- Her "insights" maddesi en fazla 1 cümle olsun
-- Maksimum 3 madde
-- Tıbbi kesin teşhis verme; gözlem bazlı yaz
-- Türkçe yaz`;
-
-    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: aiPrompt },
-            {
-              type: 'image_url',
-              // OpenAI Vision: prefer base64 (works even without public URL)
-              image_url: { url: imageDataUrl, detail: 'low' },
-            },
-          ],
-        }],
-        max_tokens: 400,
-        response_format: { type: 'json_object' },
-      }),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
-    });
-
-    if (!openaiRes.ok) {
-      const errBody = await openaiRes.json().catch(() => ({}));
+    // ── OpenAI Vision — structured dental analysis ────────────────────
+    let aiAnalysis;
+    try {
+      aiAnalysis = await processDentalAI(imageDataUrl, photoType, {
+        apiKey:    OPENAI_KEY,
+        timeoutMs: AI_TIMEOUT_MS,
+      });
+    } catch (openaiErr) {
       logAI('error', 'openai_error', {
         patientId,
-        status: openaiRes.status,
-        message: errBody?.error?.message,
-        code:    errBody?.error?.code,
+        status:  openaiErr.status,
+        message: openaiErr.message,
+        code:    openaiErr.code,
         elapsedMs: Date.now() - _t0,
       });
-      return res.status(502).json({ ok: false, error: 'openai_error', message: errBody?.error?.message || 'OpenAI request failed' });
+      return res.status(502).json({ ok: false, error: 'openai_error', message: openaiErr.message || 'OpenAI request failed' });
     }
 
-    const openaiData = await openaiRes.json();
-    let insights    = [];
-    let overallNote = '';
-    try {
-      const content = openaiData.choices?.[0]?.message?.content || '{}';
-      const parsed  = JSON.parse(content);
-      insights    = Array.isArray(parsed.insights) && parsed.insights.length > 0
-        ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
-        : [];
-      overallNote = String(parsed.overallNote || '').trim();
-    } catch (_) { /* parse failed — fall through with empty insights */ }
-
-    if (insights.length === 0) {
-      insights = ['Fotoğraf başarıyla analiz edildi.'];
-    }
+    const { insights, confidence, summary, recommendation, _usage, _model } = aiAnalysis;
 
     logAI('info', 'openai_response', {
       patientId,
-      insightCount: insights.length,
-      hasOverallNote: !!overallNote,
-      model: openaiData.model || 'gpt-4o',
-      promptTokens:     openaiData.usage?.prompt_tokens,
-      completionTokens: openaiData.usage?.completion_tokens,
+      insightCount:    insights.length,
+      confidence,
+      hasSummary:      !!summary,
+      hasRecommendation: !!recommendation,
+      model:           _model,
+      promptTokens:    _usage?.prompt_tokens,
+      completionTokens: _usage?.completion_tokens,
       elapsedMs: Date.now() - _t0,
     });
 
@@ -15302,39 +15343,27 @@ Kurallar:
       attachments: {
         aiResult: {
           insights,
-          overallNote,
+          confidence,
+          summary,
+          recommendation,
           disclaimer,
           originalImageUrl: imageUrl,
           ...(simulatedImageUrl ? { simulatedImageUrl } : {}),
-          multiPhotoEnabled: ENABLE_MULTI_PHOTO_PROGRESS,
         },
       },
       type: 'ai_result',
     });
 
-    // ── Auto follow-up (only if multi-photo progress is enabled) ───────
-    if (ENABLE_MULTI_PHOTO_PROGRESS) {
-      setTimeout(async () => {
-        try {
-          await insertMessageToSupabase({
-            patientId,
-            sender: 'clinic',
-            message: 'Daha detaylı analiz için farklı açılardan fotoğraf ekleyebilirsiniz.',
-            type: 'text',
-          });
-        } catch (_) { /* non-fatal */ }
-      }, 1500);
-    }
-
     logAI('info', 'analyze_complete', {
       patientId,
-      insightCount:    insights.length,
-      hasSimulation:   !!simulatedImageUrl,
-      inMemory:        true,
-      totalElapsedMs:  Date.now() - _t0,
+      insightCount:  insights.length,
+      confidence,
+      hasSimulation: !!simulatedImageUrl,
+      inMemory:      true,
+      totalElapsedMs: Date.now() - _t0,
     });
 
-    return res.json({ ok: true, insights, overallNote, simulatedImageUrl, disclaimer });
+    return res.json({ ok: true, insights, confidence, summary, recommendation, simulatedImageUrl, disclaimer });
 
   } catch (err) {
     const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
