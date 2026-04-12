@@ -15131,30 +15131,33 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       return res.status(404).json({ ok: false, error: 'image_not_found' });
     }
 
-    const imageBuffer = fs.readFileSync(diskPath);
+    let imageBuffer = fs.readFileSync(diskPath);
 
     // ── Max size validation ─────────────────────────────────────────────
     if (imageBuffer.length > IMAGE_MAX_SIZE_BYTES) {
       logAI('warn', 'image_too_large', { patientId, sizeBytes: imageBuffer.length, limitBytes: IMAGE_MAX_SIZE_BYTES });
+      imageBuffer = null;
       return res.status(413).json({
         ok: false,
         error: 'image_too_large',
-        message: `Görsel ${IMAGE_MAX_SIZE_MB}MB sınırını aşıyor.`,
+        message: `Image too large. Max allowed size is ${IMAGE_MAX_SIZE_MB}MB. Please retake the photo.`,
       });
     }
 
     // ── Magic-bytes image validation ────────────────────────────────────
     if (!isValidImageBuffer(imageBuffer)) {
       logAI('warn', 'invalid_image_format', { patientId, imageUrl, firstBytes: imageBuffer.slice(0, 8).toString('hex') });
+      imageBuffer = null;
       return res.status(400).json({ ok: false, error: 'invalid_image_format', message: 'Dosya geçerli bir görsel formatında değil.' });
     }
 
     const ext      = path.extname(diskPath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
 
-    // ── Convert to base64 data URL (stateless — no external storage needed) ──
-    const base64Image  = imageBuffer.toString('base64');
-    const imageDataUrl = `data:${mimeType};base64,${base64Image}`;
+    // ── Convert to base64 data URL, then immediately release the raw buffer ──
+    // Holding both raw + base64 simultaneously doubles peak memory; null early.
+    const imageDataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+    imageBuffer = null; // allow GC to reclaim the raw bytes
 
     // ── OpenAI Vision — dental photo analysis ─────────────────────────
     const aiPrompt = `Bu bir ağız/diş fotoğrafı. Lütfen kısa ve net biçimde analiz et.
@@ -15286,6 +15289,9 @@ Kurallar:
       }
     }
 
+    // imageDataUrl no longer needed — release before writing to Supabase
+    // (GC hint; avoids keeping a large string alive through async I/O)
+
     const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
 
     // ── Save AI result as CLINIC message ──────────────────────────────
@@ -15331,6 +15337,18 @@ Kurallar:
     return res.json({ ok: true, insights, overallNote, simulatedImageUrl, disclaimer });
 
   } catch (err) {
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    if (isTimeout) {
+      logAI('warn', 'analyze_timeout', {
+        patientId: req.body?.patientId,
+        elapsedMs: Date.now() - _t0,
+      });
+      return res.status(504).json({
+        ok: false,
+        error: 'ai_timeout',
+        message: 'AI analysis timed out. Your photo was saved successfully.',
+      });
+    }
     logAI('error', 'analyze_exception', {
       patientId: req.body?.patientId,
       message:   err?.message,
