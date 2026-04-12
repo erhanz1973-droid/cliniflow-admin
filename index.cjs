@@ -15823,8 +15823,7 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   // ── Step 1: Create prediction ──────────────────────────────────────
   let createData;
   try {
-    // Use model endpoint (no version hash) — Replicate auto-picks latest version.
-    const createRes = await fetch('https://api.replicate.com/v1/models/stability-ai/sdxl/predictions', {
+    const createRes = await fetch('https://api.replicate.com/v1/models/lucataco/sdxl-controlnet/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Token ${token}`,
@@ -15832,18 +15831,9 @@ async function runSmileSimulation({ imageUrl, patientId }) {
       },
       body: JSON.stringify({
         input: {
-          image:    imageUrl,
-          prompt:   [
-            'A realistic improved dental smile.',
-            'slightly straighten teeth',
-            'natural whitening (NOT bright white)',
-            'remove visible stains',
-            'keep same face, same lighting',
-            'do NOT change identity',
-            'do NOT create perfect Hollywood smile',
-            'keep result subtle and believable',
-          ].join('\n'),
-          strength: 0.35,
+          image:               imageUrl,
+          prompt:              'A realistic improved dental smile, natural teeth whitening, slightly straighter teeth, same face, same lighting, not artificial',
+          num_inference_steps: 30,
         },
       }),
       signal: AbortSignal.timeout(10_000),
