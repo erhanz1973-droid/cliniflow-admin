@@ -15801,247 +15801,127 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   };
 }
 
-// ─── AI Photo Analysis ────────────────────────────────────────────────────────
-// ─── Smile Simulation Helper ─────────────────────────────────────────────────
-// Shared by /api/chat/smile-simulation (on-demand) and available as fallback
-// in /api/chat/ai-analyze (disabled by default — cost optimisation).
+// ─── Smile Simulation — Replicate GFPGAN only ────────────────────────────────
+// Uses GFPGAN v1.4 (image-to-image face/tooth restoration).
+// Gemini removed: unreliable image output, frequent 404s on model changes.
 //
-// Gemini → Replicate GFPGAN fallback chain:
-//  • gemini-2.0-flash-exp with responseModalities: IMAGE (NOT gemini-1.5-pro)
-//  • Replicate GFPGAN v1.4 if Gemini returns text-only (happens often)
-//
-// @param {string} imageDataUrl  base64 data URL of the original photo
-// @param {string} imageUrl      original remote URL (passed directly to Replicate)
-// @param {string} patientId     for logging and Supabase path
-// @param {string[]} insights    top-2 dental insights to guide the prompt
-// @param {number} timeoutMs     per-provider timeout
-// @returns {{ url: string|null, provider: string|null }}
-async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights = [], timeoutMs = 25_000 }) {
-  const GEMINI_KEY      = process.env.GEMINI_API_KEY;
+// @param {string} imageUrl   remote URL of the patient photo (Supabase signed URL)
+// @param {string} patientId  for logging
+// @param {number} timeoutMs  total budget (create + polling)
+// @returns {{ url: string|null, provider: string|null, error: string|null }}
+async function runSmileSimulation({ imageUrl, patientId, timeoutMs = 25_000 }) {
   const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
-  // Model priority (most capable → stable fallback).
-  // gemini-2.0-flash-exp is DEPRECATED (404) as of 2025.
-  // Override via GEMINI_IMAGE_MODEL env var on Render if needed.
-  const GEMINI_MODELS = process.env.GEMINI_IMAGE_MODEL
-    ? [process.env.GEMINI_IMAGE_MODEL]
-    : ['gemini-3.1-flash-image-preview', 'gemini-2.5-flash-image'];
 
-  // Surface provider availability early so callers can give clear errors.
-  const hasGemini    = !!GEMINI_KEY;
-  const hasReplicate = !!REPLICATE_TOKEN;
-  console.log('[SIM] Providers:', { gemini: hasGemini, replicate: hasReplicate, patientId });
-  if (!hasGemini && !hasReplicate) {
-    console.error('[SIM] No providers configured — set GEMINI_API_KEY and/or REPLICATE_API_TOKEN');
+  if (!REPLICATE_TOKEN) {
+    console.error('[SIM] REPLICATE_API_TOKEN not set');
     return { url: null, provider: null, error: 'no_providers_configured' };
   }
 
-  let url      = null;
-  let provider = null;
-  let lastError = null; // last provider-level error string
+  console.log('[SIM] Starting Replicate GFPGAN for patientId:', patientId);
 
-  // ── Helper: upload buffer → Supabase signed URL ──────────────────────
-  async function uploadSim(buffer, mime, label) {
-    const ext  = mime.includes('png') ? 'png' : 'jpg';
-    const path = `ai-simulations/${patientId}/${Date.now()}-${label}.${ext}`;
-    if (!isSupabaseEnabled()) return `data:${mime};base64,${buffer.toString('base64')}`;
-    const { error } = await supabase.storage
-      .from('patient-files')
-      .upload(path, buffer, { contentType: mime, upsert: false });
-    if (error) { logAI('warn', 'sim_upload_failed', { patientId, label, message: error.message }); return null; }
-    const { data: signed } = await supabase.storage
-      .from('patient-files').createSignedUrl(path, 365 * 24 * 3600);
-    return signed?.signedUrl || null;
-  }
+  let url       = null;
+  let lastError = null;
 
-  const insightHints = insights.length > 0
-    ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
-    : '';
-  const smilePrompt =
-    `Enhance this dental photo to simulate a natural, healthy smile.\n` +
-    `- Tooth alignment: slightly straighter\n` +
-    `- Tooth color: natural whitening, not artificial bright-white\n` +
-    `- Remove visible stains or minor decay marks\n` +
-    `- Keep realistic proportions and original lighting\n` +
-    `IMPORTANT: Do NOT create a Hollywood smile. Keep it subtle. Preserve face structure.` +
-    insightHints;
+  try {
+    // ── Step 1: Create prediction ────────────────────────────────────
+    const repRes = await fetch('https://api.replicate.com/v1/predictions', {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+      },
+      body: JSON.stringify({
+        version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
+        input: { img: imageUrl, scale: 2, version: 'v1.4' },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
 
-  // ── 1. Gemini (try each model in priority order, skip on 404) ────────
-  if (hasGemini && imageDataUrl) {
-    const [hdr, b64] = imageDataUrl.split(',');
-    const inputMime  = hdr.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+    console.log('[REPLICATE] Create status:', repRes.status);
 
-    for (const model of GEMINI_MODELS) {
-      if (url) break; // already have a result from a previous model
-
-      console.log('[GEMINI SIM] Trying model:', model);
-      try {
-        const gemRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [
-                { text: smilePrompt },
-                { inline_data: { mime_type: inputMime, data: b64 } },
-              ]}],
-              generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
-            }),
-            signal: AbortSignal.timeout(timeoutMs),
-          }
-        );
-
-        console.log('[GEMINI SIM] Model:', model, '| status:', gemRes.status);
-
-        if (gemRes.status === 404) {
-          // Model not found / deprecated — try next candidate
-          const body = await gemRes.json().catch(() => ({}));
-          console.warn('[GEMINI SIM] 404 — model may be deprecated:', model,
-            body?.error?.message ?? '');
-          lastError = `gemini_404_${model}`;
-          continue; // next model
-        }
-
-        if (!gemRes.ok) {
-          const errBody = await gemRes.json().catch(() => ({}));
-          lastError = `gemini_http_${gemRes.status}`;
-          console.error('[GEMINI SIM ERROR]:', gemRes.status, model,
-            JSON.stringify(errBody).slice(0, 300));
-          logAI('warn', 'gemini_http_error', {
-            patientId, model, status: gemRes.status, message: errBody?.error?.message,
-          });
-          break; // non-404 error — don't retry other models
-        }
-
-        const gd      = await gemRes.json();
-        const imgPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.inline_data?.data);
-        const txtPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.text);
-
-        if (imgPart) {
-          const buf     = Buffer.from(imgPart.inline_data.data, 'base64');
-          const outMime = imgPart.inline_data.mime_type || 'image/jpeg';
-          console.log('[GEMINI SIM] Image from', model, ':', Math.round(buf.length / 1024), 'KB');
-          url = await uploadSim(buf, outMime, 'gemini');
-          if (url) {
-            provider  = 'gemini';
-            lastError = null;
-          }
-        } else {
-          console.warn('[GEMINI SIM] No image in response from', model,
-            '| text:', txtPart?.text?.slice(0, 120) ?? '(none)');
-          lastError = `gemini_no_image_${model}`;
-          logAI('warn', 'gemini_no_image', { patientId, model });
-        }
-
-      } catch (e) {
-        lastError = `gemini_exception: ${e?.message}`;
-        console.warn('[GEMINI SIM FAILED] model:', model, '|', e?.message);
-        logAI('warn', 'gemini_exception', { patientId, model, message: e?.message });
-        // Network / timeout error — no point trying next model
-        break;
-      }
+    if (!repRes.ok) {
+      const body = await repRes.json().catch(() => ({}));
+      lastError  = `replicate_create_${repRes.status}: ${body?.detail ?? body?.error ?? ''}`;
+      console.error('[REPLICATE] Create failed:', lastError);
+      return { url: null, provider: null, error: lastError };
     }
-  }
 
-  // ── 2. Replicate GFPGAN fallback ─────────────────────────────────────
-  // Uses the original remote imageUrl — GFPGAN (image-to-image) accepts URLs directly.
-  // Polling: check status every 1 s, max 10 attempts (≈ 10 s budget).
-  if (!url && hasReplicate && imageUrl) {
-    try {
-      // Step 1: Create prediction
-      const repRes = await fetch('https://api.replicate.com/v1/predictions', {
-        method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${REPLICATE_TOKEN}`,
-        },
-        body: JSON.stringify({
-          version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
-          input: { img: imageUrl, scale: 2, version: 'v1.4' },
-        }),
-        signal: AbortSignal.timeout(10_000),
+    const created = await repRes.json();
+    const predId  = created?.id;
+    console.log('[REPLICATE] Prediction id:', predId, '| initial status:', created?.status);
+
+    if (!predId) {
+      lastError = 'replicate_no_prediction_id';
+      console.error('[REPLICATE] No id in response:', JSON.stringify(created).slice(0, 200));
+      return { url: null, provider: null, error: lastError };
+    }
+
+    // ── Step 2: Poll every 1 s, max 10 attempts ──────────────────────
+    const MAX_POLLS     = 10;
+    const POLL_INTERVAL = 1_000;
+
+    for (let i = 0; i < MAX_POLLS; i++) {
+      const poll = await fetch(
+        `https://api.replicate.com/v1/predictions/${predId}`,
+        {
+          headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+          signal:  AbortSignal.timeout(8_000),
+        }
+      ).catch(e => {
+        console.warn('[REPLICATE] Poll network error:', e?.message);
+        return null;
       });
 
-      console.log('[REPLICATE] Create status:', repRes.status);
-
-      if (!repRes.ok) {
-        const body = await repRes.json().catch(() => ({}));
-        lastError = `replicate_create_${repRes.status}: ${body?.detail ?? ''}`;
-        console.error('[REPLICATE] Create failed:', lastError);
-      } else {
-        const created = await repRes.json();
-        const predId  = created?.id;
-        console.log('[REPLICATE] Prediction id:', predId, '| initial status:', created?.status);
-
-        if (!predId) {
-          lastError = 'replicate_no_prediction_id';
-          console.error('[REPLICATE] No prediction id in response:', JSON.stringify(created).slice(0, 200));
-        } else {
-          // Step 2: Poll — check first, then sleep
-          const MAX_POLLS    = 10;
-          const POLL_INTERVAL = 1_000; // 1 s
-
-          for (let i = 0; i < MAX_POLLS; i++) {
-            const poll = await fetch(
-              `https://api.replicate.com/v1/predictions/${predId}`,
-              {
-                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-                signal: AbortSignal.timeout(8_000),
-              }
-            ).catch(e => { console.warn('[REPLICATE] Poll fetch error:', e?.message); return null; });
-
-            if (!poll?.ok) {
-              console.warn('[REPLICATE] Poll returned non-ok, attempt', i + 1);
-              break;
-            }
-
-            const pd = await poll.json();
-            console.log(`[REPLICATE] Poll ${i + 1}/${MAX_POLLS}: status=${pd.status}`);
-
-            if (pd.status === 'succeeded') {
-              url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
-              if (url) {
-                provider = 'replicate';
-                console.log('[REPLICATE] Succeeded:', url.slice(0, 80));
-                logAI('info', 'replicate_success', { patientId, polls: i + 1 });
-              } else {
-                lastError = 'replicate_succeeded_empty_output';
-                console.warn('[REPLICATE] Succeeded but output was empty:', pd.output);
-              }
-              break;
-            }
-
-            if (pd.status === 'failed' || pd.status === 'canceled') {
-              lastError = `replicate_${pd.status}: ${pd.error ?? ''}`;
-              console.error('[REPLICATE] Prediction', pd.status, ':', pd.error);
-              break;
-            }
-
-            // Still processing — wait before next poll
-            if (i < MAX_POLLS - 1) {
-              await new Promise(r => setTimeout(r, POLL_INTERVAL));
-            }
-          }
-
-          if (!url && !lastError) {
-            lastError = 'replicate_timeout_no_result';
-            console.warn('[REPLICATE] Max polls reached without result for predId:', predId);
-          }
-        }
+      if (!poll?.ok) {
+        lastError = `replicate_poll_non_ok_attempt_${i + 1}`;
+        console.warn('[REPLICATE] Poll non-ok, attempt', i + 1);
+        break;
       }
-    } catch (e) {
-      lastError = `replicate_exception: ${e?.message}`;
-      console.warn('[REPLICATE] Exception:', e?.message);
-      logAI('warn', 'replicate_exception', { patientId, message: e?.message });
+
+      const pd = await poll.json();
+      console.log(`[REPLICATE] Poll ${i + 1}/${MAX_POLLS}: status=${pd.status}`);
+
+      if (pd.status === 'succeeded') {
+        url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
+        if (url) {
+          console.log('[REPLICATE] Succeeded:', url.slice(0, 80));
+          logAI('info', 'replicate_success', { patientId, polls: i + 1 });
+        } else {
+          lastError = 'replicate_succeeded_empty_output';
+          console.warn('[REPLICATE] Succeeded but output empty:', pd.output);
+        }
+        break;
+      }
+
+      if (pd.status === 'failed' || pd.status === 'canceled') {
+        lastError = `replicate_${pd.status}: ${pd.error ?? ''}`;
+        console.error('[REPLICATE] Prediction', pd.status, ':', pd.error);
+        break;
+      }
+
+      // Still processing — wait before next poll (skip sleep on last attempt)
+      if (i < MAX_POLLS - 1) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      }
     }
+
+    if (!url && !lastError) {
+      lastError = 'replicate_timeout_no_result';
+      console.warn('[REPLICATE] Max polls reached without result, predId:', predId);
+    }
+
+  } catch (e) {
+    lastError = `replicate_exception: ${e?.message}`;
+    console.error('[REPLICATE] Exception:', e?.message);
+    logAI('warn', 'replicate_exception', { patientId, message: e?.message });
   }
 
   if (url) {
-    console.log('[SIMULATION RESULT]:', provider, '| url: ok');
+    console.log('[SIM] Done: replicate | url: ok');
   } else {
-    console.warn('[SIMULATION RESULT]: none | lastError:', lastError ?? 'unknown');
+    console.warn('[SIM] Failed:', lastError);
   }
-  return { url, provider, error: url ? null : (lastError ?? 'no_image_produced') };
+  return { url, provider: url ? 'replicate' : null, error: url ? null : lastError };
 }
 
 // POST /api/chat/smile-simulation
@@ -16058,24 +15938,9 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   }
 
   try {
-    // Fetch the remote image → base64 data URL (needed for Gemini inline_data)
-    let imageDataUrl = null;
-    try {
-      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
-      if (imgRes.ok) {
-        const mime    = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
-        const buf     = Buffer.from(await imgRes.arrayBuffer());
-        imageDataUrl  = `data:${mime};base64,${buf.toString('base64')}`;
-      }
-    } catch (fetchErr) {
-      console.warn('[SMILE SIM] Could not fetch image for Gemini, will rely on Replicate only:', fetchErr?.message);
-    }
-
     const { url, provider, error: simErr } = await runSmileSimulation({
-      imageDataUrl,
       imageUrl,
       patientId,
-      insights: Array.isArray(insights) ? insights.slice(0, 2) : [],
       timeoutMs: 28_000,
     });
 
@@ -16085,7 +15950,7 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
         ok: false,
         error: simErr ?? 'no_image_produced',
         message: simErr === 'no_providers_configured'
-          ? 'Smile simulation is not configured. Set GEMINI_API_KEY and/or REPLICATE_API_TOKEN.'
+          ? 'Smile simulation is not configured. Set REPLICATE_API_TOKEN on Render.'
           : 'Smile simulation did not produce an image. Check server logs.',
       });
     }
