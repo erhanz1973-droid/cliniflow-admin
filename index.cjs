@@ -15104,6 +15104,104 @@ const DENTAL_AI_FALLBACK = {
   recommendation: 'Farklı açılardan fotoğraf ekleyebilir veya diş hekiminize danışabilirsiniz.',
 };
 
+// ── Vague / generic phrases to reject (Turkish + English, case-insensitive) ──
+const VAGUE_PATTERNS = [
+  /\bsome issue\b/i,
+  /\bproblem detected\b/i,
+  /\bsomething wrong\b/i,
+  /\bthere is a problem\b/i,
+  /\bsomething may be wrong\b/i,
+  /\bsorun (var|tespit edildi|mevcut)\b/i,
+  /\bbir (sorun|problem|şey) (var|görünüyor)\b/i,
+  /\bgenel (bir )?sorun\b/i,
+  /\biyi görünüyor\b/i,            // "looks fine" without specifics
+  /^(ok|iyi|normal|tamam|güzel)\.?$/i,  // single-word non-answers
+];
+
+/**
+ * Count words in a string (handles Turkish multi-byte chars safely).
+ */
+function wordCount(str) {
+  return str.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Returns true if the string matches any vague/generic phrase.
+ */
+function isVague(str) {
+  return VAGUE_PATTERNS.some(p => p.test(str));
+}
+
+/**
+ * Score a single insight string: 0–100.
+ * Penalises short, vague, or non-specific text.
+ */
+function scoreInsight(text) {
+  if (!text || text.length < 10) return 0;
+  if (isVague(text))             return 10;
+  // Reward cautious language — these are required for safe output
+  const hasCautious = /olabilir|görünüyor|gibi görünüyor|olası|may indicate|possible|could be/i.test(text);
+  // Reward specificity (mentions a tooth area, condition, symptom)
+  const hasSpecific = /çürük|diş eti|dizilim|eksik|renk|leke|şişlik|kızarıklık|kırık|taş|kanal|dolgu|crown|cavity|align|gum|missing|color|stain|swelling|crack|calculus/i.test(text);
+  let score = 40;                         // base: non-empty, non-vague, min length
+  if (hasCautious) score += 30;
+  if (hasSpecific) score += 30;
+  return Math.min(score, 100);
+}
+
+/**
+ * Score a summary or recommendation string: 0–100.
+ */
+function scoreText(text) {
+  if (!text) return 0;
+  const wc = wordCount(text);
+  if (wc < 8)       return 0;            // too short
+  if (isVague(text)) return 10;          // generic — unhelpful
+  return Math.min(40 + Math.min(wc, 20) * 3, 100);  // reward length up to a point
+}
+
+/**
+ * Runs full quality validation on a parsed AI result.
+ * Returns { ok: boolean, score: number, reasons: string[] }
+ */
+function validateDentalAIQuality(parsed) {
+  const reasons = [];
+
+  // ── Insights ────────────────────────────────────────────────────────
+  const insights = parsed.insights || [];
+  const insightScores = insights.map(scoreInsight);
+  const avgInsight = insights.length > 0
+    ? insightScores.reduce((a, b) => a + b, 0) / insights.length
+    : 0;
+
+  if (insights.length === 0) {
+    reasons.push('no_insights');
+  } else {
+    insights.forEach((t, i) => {
+      if (t.length < 10)   reasons.push(`insight_${i}_too_short`);
+      if (isVague(t))      reasons.push(`insight_${i}_vague`);
+    });
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────
+  const summaryScore = scoreText(parsed.summary || '');
+  if (summaryScore === 0) reasons.push('summary_weak');
+
+  // ── Recommendation ──────────────────────────────────────────────────
+  const recScore = scoreText(parsed.recommendation || '');
+  if (recScore === 0) reasons.push('recommendation_weak');
+
+  // ── Confidence ──────────────────────────────────────────────────────
+  if (!['low', 'medium', 'high'].includes(parsed.confidence)) {
+    reasons.push('invalid_confidence');
+  }
+
+  // ── Overall score (0–100) ────────────────────────────────────────────
+  const score = Math.round((avgInsight * 0.5) + (summaryScore * 0.25) + (recScore * 0.25));
+
+  return { ok: reasons.length === 0 && score >= 40, score, reasons };
+}
+
 /**
  * Per-photoType analysis focus and context hints.
  * photoType: 'front' | 'left' | 'right' | 'upper' | 'lower' | 'general'
@@ -15217,31 +15315,43 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
   const data    = await res.json();
   const content = data.choices?.[0]?.message?.content || '{}';
 
-  // ── Parse + validate ────────────────────────────────────────────────
+  // ── Parse ───────────────────────────────────────────────────────────
   let parsed = {};
   try { parsed = JSON.parse(content); } catch { /* fall through to fallback */ }
 
-  const rawInsights = Array.isArray(parsed.insights)
-    ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
-    : [];
-  const validConf   = ['low', 'medium', 'high'].includes(parsed.confidence);
-  const rawSummary  = String(parsed.summary        || '').trim();
-  const rawRec      = String(parsed.recommendation || '').trim();
+  // Normalise arrays / strings before quality checks
+  parsed = {
+    insights:       Array.isArray(parsed.insights)
+                      ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
+                      : [],
+    confidence:     parsed.confidence,
+    summary:        String(parsed.summary        || '').trim(),
+    recommendation: String(parsed.recommendation || '').trim(),
+  };
 
-  // ── Safety validation: if critical fields missing, use fallback ─────
-  const isValid = rawInsights.length > 0 && validConf && rawSummary && rawRec;
-  if (!isValid) {
-    return { ...DENTAL_AI_FALLBACK, _usage: data.usage, _model: data.model || 'gpt-4o', _fallback: true };
+  // ── Content quality validation ───────────────────────────────────────
+  const quality = validateDentalAIQuality(parsed);
+  if (!quality.ok) {
+    return {
+      ...DENTAL_AI_FALLBACK,
+      _usage:    data.usage,
+      _model:    data.model || 'gpt-4o',
+      _fallback: true,
+      _qualityScore:   quality.score,
+      _qualityReasons: quality.reasons,
+    };
   }
 
   return {
-    insights:       rawInsights,
+    insights:       parsed.insights,
     confidence:     parsed.confidence,
-    summary:        rawSummary,
-    recommendation: rawRec,
-    _usage:    data.usage,
-    _model:    data.model || 'gpt-4o',
-    _fallback: false,
+    summary:        parsed.summary,
+    recommendation: parsed.recommendation,
+    _usage:          data.usage,
+    _model:          data.model || 'gpt-4o',
+    _fallback:       false,
+    _qualityScore:   quality.score,
+    _qualityReasons: [],
   };
 }
 
@@ -15338,6 +15448,8 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       hasSummary:        !!summary,
       hasRecommendation: !!recommendation,
       fallback:          aiAnalysis._fallback,
+      qualityScore:      aiAnalysis._qualityScore,
+      qualityReasons:    aiAnalysis._qualityReasons,
       model:             _model,
       promptTokens:      _usage?.prompt_tokens,
       completionTokens:  _usage?.completion_tokens,
