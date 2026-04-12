@@ -15892,7 +15892,22 @@ async function uploadImageToReplicate(imageUrl, token) {
  * Logs the full create response + every poll status for easy debugging.
  * Returns output URL or null.
  */
-async function replicatePrediction(imageUrl, { prompt, prompt_strength }, token) {
+async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, token) {
+  // ── Always convert to public URL inside this function ───────────────
+  // This is the ONLY place Replicate receives the image URL.
+  // We convert here regardless of what the caller passed, so a signed
+  // URL can never reach Replicate even if upstream conversion is skipped.
+  const imageUrl = rawImageUrl
+    .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
+    .split('?')[0];
+
+  console.log('[SIM] USING PUBLIC URL:', imageUrl);
+
+  if (imageUrl.includes('/sign/')) {
+    console.error('[SIM] Signed URL guard triggered! Aborting prediction. Raw:', rawImageUrl);
+    throw new Error('Simulation is still using signed URL!');
+  }
+
   // ── Create prediction ───────────────────────────────────────────────
   let predId;
   try {
@@ -16043,10 +16058,10 @@ async function runSmileSimulation({ imageUrl, patientId }) {
 }
 
 // POST /api/chat/smile-simulation
-// On-demand endpoint called lazily from the frontend for engaged users only.
-// Accepts a signed Supabase URL, runs Gemini→Replicate, returns simulatedImageUrl.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
+  console.log('=== SIM ENDPOINT v5 HIT ===');
   const { patientId, imageUrl, insights = [] } = req.body || {};
+  console.log('[SIM ENDPOINT] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
   if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
   if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
