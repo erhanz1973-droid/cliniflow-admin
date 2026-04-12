@@ -15892,60 +15892,54 @@ async function uploadImageToReplicate(imageUrl, token) {
  * Logs the full create response + every poll status for easy debugging.
  * Returns output URL or null.
  */
+// Returns { url: string|null, failReason: string|null }
 async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, token) {
-  // ── Always convert to public URL inside this function ───────────────
-  // This is the ONLY place Replicate receives the image URL.
-  // We convert here regardless of what the caller passed, so a signed
-  // URL can never reach Replicate even if upstream conversion is skipped.
+  // ── Always convert signed URL → public URL at the last possible moment ─
   const imageUrl = rawImageUrl
     .replace('/storage/v1/object/sign/', '/storage/v1/object/public/')
     .split('?')[0];
 
   console.log('[SIM] USING PUBLIC URL:', imageUrl);
+  console.log('FINAL IMAGE SENT TO REPLICATE:', imageUrl);
 
   if (imageUrl.includes('/sign/')) {
-    console.error('[SIM] Signed URL guard triggered! Aborting prediction. Raw:', rawImageUrl);
-    throw new Error('Simulation is still using signed URL!');
+    const msg = 'signed_url_guard: conversion had no effect';
+    console.error('[SIM]', msg, '| raw:', rawImageUrl);
+    return { url: null, failReason: msg };
   }
 
   // ── Create prediction ───────────────────────────────────────────────
   let predId;
   try {
-    const body = {
-      version: SIM_VERSION,
-      input: {
-        image:               imageUrl,
-        prompt,
-        negative_prompt:     SIM_NEGATIVE,
-        prompt_strength,
-        num_inference_steps: 30,
-      },
-    };
-    console.log('FINAL IMAGE SENT TO REPLICATE:', imageUrl);
-
     const createRes  = await fetch('https://api.replicate.com/v1/predictions', {
       method:  'POST',
       headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-      signal:  AbortSignal.timeout(15_000),
+      body:    JSON.stringify({
+        version: SIM_VERSION,
+        input: { image: imageUrl, prompt, negative_prompt: SIM_NEGATIVE, prompt_strength, num_inference_steps: 30 },
+      }),
+      signal: AbortSignal.timeout(15_000),
     });
     const createText = await createRes.text();
-    let   createData;
+    let createData;
     try { createData = JSON.parse(createText); } catch { createData = {}; }
 
     console.log(`[SIM] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
+
     if (!createRes.ok) {
-      console.error('[SIM] Create body:', createText.slice(0, 500));
-      return null;
+      const reason = `create_http_${createRes.status}: ${(createData?.detail ?? createData?.error ?? createText).slice(0, 200)}`;
+      console.error('[SIM] Create failed:', reason);
+      return { url: null, failReason: reason };
     }
     if (!createData?.id) {
-      console.error('[SIM] Create returned no id:', createText.slice(0, 300));
-      return null;
+      console.error('[SIM] Create returned no id:', createText.slice(0, 200));
+      return { url: null, failReason: 'create_no_id: ' + createText.slice(0, 100) };
     }
     predId = createData.id;
   } catch (e) {
-    console.error('[SIM] Create exception:', e?.message);
-    return null;
+    const reason = 'create_exception: ' + e?.message;
+    console.error('[SIM]', reason);
+    return { url: null, failReason: reason };
   }
 
   // ── Poll every 1 s, max 20 attempts ────────────────────────────────
@@ -15957,28 +15951,25 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
         signal:  AbortSignal.timeout(8_000),
       });
       const pd = await pollRes.json();
-
       const errStr = pd.error ? ` | error: ${pd.error}` : '';
       console.log(`[SIM POLL] ${predId.slice(0, 8)} ${i + 1}/20: ${pd.status}${errStr}`);
 
       if (pd.status === 'succeeded') {
         const url = Array.isArray(pd.output) ? pd.output[0] : (pd.output ?? null);
         console.log('[SIM] Succeeded | output:', url ? url.slice(0, 80) : 'null (empty output)');
-        return url ?? null;
+        return { url: url ?? null, failReason: url ? null : 'succeeded_empty_output' };
       }
       if (pd.status === 'failed' || pd.status === 'canceled') {
-        console.error('[SIM] Prediction', pd.status,
-          '\n  error:', pd.error,
-          '\n  logs (last 400):', String(pd.logs ?? '').slice(-400));
-        return null;
+        const reason = `prediction_${pd.status}: ${pd.error ?? '(no error message)'}`;
+        console.error('[SIM]', reason, '\n  logs:', String(pd.logs ?? '').slice(-400));
+        return { url: null, failReason: reason };
       }
-      // 'starting' | 'processing' → keep polling
     } catch (e) {
       console.warn(`[SIM] Poll ${i + 1} exception:`, e?.message);
     }
   }
   console.warn('[SIM] Timeout (20 polls) for predId:', predId);
-  return null;
+  return { url: null, failReason: 'timeout_20_polls' };
 }
 
 /**
@@ -16029,26 +16020,34 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   );
 
   const variations = SIM_VARIATIONS
-    .map((v, i) => ({
-      id:    v.id,
-      label: v.label,
-      url:   results[i].status === 'fulfilled' ? (results[i].value ?? null) : null,
-    }))
+    .map((v, i) => {
+      const r = results[i].status === 'fulfilled' ? results[i].value : { url: null, failReason: 'rejected' };
+      return { id: v.id, label: v.label, url: r?.url ?? null, failReason: r?.failReason ?? null };
+    })
     .filter(v => v.url);
+
+  const failReasons = SIM_VARIATIONS
+    .map((v, i) => {
+      const r = results[i].status === 'fulfilled' ? results[i].value : { failReason: 'rejected' };
+      return r?.failReason ? `${v.id}: ${r.failReason}` : null;
+    })
+    .filter(Boolean);
 
   const succeeded = variations.length;
   console.log(`[SIM] Done: ${succeeded}/3 variations succeeded`);
+  if (failReasons.length) console.warn('[SIM] Fail reasons:', failReasons.join(' | '));
 
   // ── Step 3: fallback to original image so the UI is never empty ────
   if (!succeeded) {
     console.warn('[SIM] All variations failed — returning original image as fallback');
     logAI('warn', 'sim_all_failed_fallback', { patientId });
     return {
-      variations: [{ id: 'original', label: 'Fotoğrafınız', url: imageUrl }],
-      url:        imageUrl,
-      provider:   'fallback',
-      error:      null,
-      fallback:   true,
+      variations:  [{ id: 'original', label: 'Fotoğrafınız', url: imageUrl }],
+      url:         imageUrl,
+      provider:    'fallback',
+      error:       null,
+      fallback:    true,
+      debugInfo:   failReasons,   // ← visible in frontend logs
     };
   }
 
@@ -16071,13 +16070,11 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
   }
 
   try {
-    const { variations, url, provider, error: simErr, fallback } = await runSmileSimulation({
+    const { variations, url, provider, error: simErr, fallback, debugInfo } = await runSmileSimulation({
       imageUrl,
       patientId,
     });
 
-    // runSmileSimulation always returns a URL (falls back to original image),
-    // so !url here means REPLICATE_API_TOKEN is not configured.
     if (!url) {
       return res.status(503).json({
         ok:      false,
@@ -16085,15 +16082,17 @@ app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
         message: simErr === 'no_providers_configured'
           ? 'Set REPLICATE_API_TOKEN on Render.'
           : 'Smile simulation produced no images. Check server logs.',
+        debugInfo,
       });
     }
 
     return res.json({
-      ok:               true,
-      simulatedImageUrl: url,
+      ok:                true,
+      simulatedImageUrl:  url,
       simulationProvider: provider,
       variations,
-      fallback: fallback ?? false,
+      fallback:           fallback ?? false,
+      debugInfo:          debugInfo ?? [],   // ← app logs show exact Replicate error
     });
   } catch (err) {
     console.error('[SMILE SIM ENDPOINT ERROR]:', err?.message, err?.stack);
