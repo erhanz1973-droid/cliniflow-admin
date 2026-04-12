@@ -15833,56 +15833,98 @@ const SIM_VARIATIONS = [
 ];
 
 /**
- * Fetch imageUrl server-side and return a base64 data URI.
- * This bypasses Supabase signed-URL expiry / auth restrictions that would
- * prevent Replicate (external) from downloading the image.
+ * Fetch the Supabase image server-side and upload it to Replicate's file API.
+ *
+ * WHY: stability-ai/stable-diffusion-img2img (ddd4eb44) uses Cog's URI-type
+ * input — it requires a real https:// URL and silently ignores base64 data
+ * URIs.  Supabase signed URLs expire / require auth headers that Replicate's
+ * workers cannot supply.
+ *
+ * Replicate's /v1/files endpoint hosts the image on their own CDN and returns
+ * an https://api.replicate.com/v1/files/... URL that the model can always read.
+ *
+ * @returns {string} Replicate-hosted image URL
  */
-async function imageUrlToBase64(imageUrl) {
-  console.log('[SIM] Fetching image for base64 conversion:', imageUrl.slice(0, 120));
-  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(15_000) });
+async function uploadImageToReplicate(imageUrl, token) {
+  console.log('[SIM] Fetching source image:', imageUrl.slice(0, 120));
+  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) });
   if (!imgRes.ok) {
-    throw new Error(`image_fetch_failed: HTTP ${imgRes.status} for ${imageUrl.slice(0, 80)}`);
+    throw new Error(`image_fetch_failed: HTTP ${imgRes.status}`);
   }
   const contentType = imgRes.headers.get('content-type') ?? 'image/jpeg';
-  const buffer      = await imgRes.arrayBuffer();
+  const buffer      = Buffer.from(await imgRes.arrayBuffer());
   const sizeKB      = Math.round(buffer.byteLength / 1024);
-  console.log(`[SIM] Image fetched: ${sizeKB} KB | type: ${contentType}`);
-  const b64 = Buffer.from(buffer).toString('base64');
-  return `data:${contentType};base64,${b64}`;
+  console.log(`[SIM] Fetched ${sizeKB} KB | ${contentType} — uploading to Replicate files…`);
+
+  // Upload to Replicate /v1/files — returns a hosted URL the model can read
+  const form = new FormData();
+  form.append('content', new Blob([buffer], { type: contentType }), 'input.jpg');
+
+  const uploadRes  = await fetch('https://api.replicate.com/v1/files', {
+    method:  'POST',
+    headers: { 'Authorization': `Token ${token}` },
+    body:    form,
+    signal:  AbortSignal.timeout(30_000),
+  });
+  const uploadText = await uploadRes.text();
+  let uploadData;
+  try { uploadData = JSON.parse(uploadText); } catch { uploadData = {}; }
+
+  if (!uploadRes.ok) {
+    // /v1/files not available (older Replicate accounts) — fall back to signed URL
+    console.warn(`[SIM] File upload HTTP ${uploadRes.status}:`, uploadText.slice(0, 200));
+    console.warn('[SIM] Falling back to direct signed URL (may fail if Replicate cannot access it)');
+    return imageUrl;
+  }
+
+  const hostedUrl = uploadData?.urls?.get ?? uploadData?.url ?? null;
+  if (!hostedUrl) {
+    console.warn('[SIM] File upload returned no URL, body:', uploadText.slice(0, 200));
+    return imageUrl;
+  }
+
+  console.log('[SIM] Replicate file URL:', hostedUrl.slice(0, 80));
+  return hostedUrl;
 }
 
 /**
- * Creates one Replicate prediction (using a base64 data URI image) and
- * polls until completion.  Returns output URL or null.
+ * Creates one Replicate prediction and polls until completion.
+ * Logs the full create response + every poll status for easy debugging.
+ * Returns output URL or null.
  */
-async function replicatePrediction(imageDataUri, { prompt, prompt_strength }, token) {
-  // ── Create ─────────────────────────────────────────────────────────
+async function replicatePrediction(imageUrl, { prompt, prompt_strength }, token) {
+  // ── Create prediction ───────────────────────────────────────────────
   let predId;
   try {
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+    const body = {
+      version: SIM_VERSION,
+      input: {
+        image:               imageUrl,
+        prompt,
+        negative_prompt:     SIM_NEGATIVE,
+        prompt_strength,
+        num_inference_steps: 30,
+      },
+    };
+    console.log(`[SIM] Creating prediction | strength=${prompt_strength} | image=${imageUrl.slice(0, 60)}`);
+
+    const createRes  = await fetch('https://api.replicate.com/v1/predictions', {
       method:  'POST',
       headers: { 'Authorization': `Token ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: SIM_VERSION,
-        input: {
-          image:               imageDataUri,
-          prompt,
-          negative_prompt:     SIM_NEGATIVE,
-          prompt_strength,
-          num_inference_steps: 30,
-        },
-      }),
-      signal: AbortSignal.timeout(15_000),
+      body:    JSON.stringify(body),
+      signal:  AbortSignal.timeout(15_000),
     });
-
     const createText = await createRes.text();
-    let createData;
+    let   createData;
     try { createData = JSON.parse(createText); } catch { createData = {}; }
 
-    console.log(`[SIM] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | error: ${createData?.detail ?? createData?.error ?? '-'}`);
-
-    if (!createRes.ok || !createData?.id) {
-      console.error('[SIM] Create failed body:', createText.slice(0, 400));
+    console.log(`[SIM] Create HTTP ${createRes.status} | id: ${createData?.id ?? 'none'} | err: ${createData?.detail ?? createData?.error ?? '-'}`);
+    if (!createRes.ok) {
+      console.error('[SIM] Create body:', createText.slice(0, 500));
+      return null;
+    }
+    if (!createData?.id) {
+      console.error('[SIM] Create returned no id:', createText.slice(0, 300));
       return null;
     }
     predId = createData.id;
@@ -15891,7 +15933,7 @@ async function replicatePrediction(imageDataUri, { prompt, prompt_strength }, to
     return null;
   }
 
-  // ── Poll every 1 s, max 20 attempts (~20 s) ────────────────────────
+  // ── Poll every 1 s, max 20 attempts ────────────────────────────────
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 1000));
     try {
@@ -15901,16 +15943,18 @@ async function replicatePrediction(imageDataUri, { prompt, prompt_strength }, to
       });
       const pd = await pollRes.json();
 
-      // Full status + error log on every poll so we can diagnose failures
-      console.log(`[SIM POLL] ${predId.slice(0, 8)} ${i + 1}/20: status=${pd.status}${pd.error ? ' error=' + pd.error : ''}`);
+      const errStr = pd.error ? ` | error: ${pd.error}` : '';
+      console.log(`[SIM POLL] ${predId.slice(0, 8)} ${i + 1}/20: ${pd.status}${errStr}`);
 
       if (pd.status === 'succeeded') {
         const url = Array.isArray(pd.output) ? pd.output[0] : (pd.output ?? null);
-        console.log('[SIM] Succeeded | output:', url?.slice(0, 80) ?? 'null');
+        console.log('[SIM] Succeeded | output:', url ? url.slice(0, 80) : 'null (empty output)');
         return url ?? null;
       }
       if (pd.status === 'failed' || pd.status === 'canceled') {
-        console.error('[SIM] Prediction', pd.status, '| error:', pd.error, '| logs:', String(pd.logs ?? '').slice(-300));
+        console.error('[SIM] Prediction', pd.status,
+          '\n  error:', pd.error,
+          '\n  logs (last 400):', String(pd.logs ?? '').slice(-400));
         return null;
       }
       // 'starting' | 'processing' → keep polling
@@ -15925,11 +15969,11 @@ async function replicatePrediction(imageDataUri, { prompt, prompt_strength }, to
 /**
  * Runs all 3 smile variations in parallel.
  *
- * Always succeeds at the API level — if every Replicate prediction fails,
- * the original image is returned as a fallback so the UI is never empty.
- *
- * Returns:
- *   { variations, url, provider, error, fallback }
+ * Flow:
+ *   1. Fetch image server-side (Supabase signed URL is accessible from backend)
+ *   2. Upload to Replicate /v1/files → get an https:// URL the model can read
+ *   3. Run Natural / Balanced / Hollywood predictions in parallel
+ *   4. If everything fails → return original image as fallback (UI never empty)
  */
 async function runSmileSimulation({ imageUrl, patientId }) {
   const token = process.env.REPLICATE_API_TOKEN;
@@ -15938,22 +15982,20 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     return { variations: [], url: null, provider: null, error: 'no_providers_configured' };
   }
 
-  console.log('[SIM] Starting 3-variation simulation for patientId:', patientId);
-  console.log('[SIM] Source imageUrl:', imageUrl.slice(0, 120));
+  console.log('[SIM] Starting 3-variation simulation | patientId:', patientId);
 
-  // ── Step 1: fetch image once → base64 (avoids Supabase signed-URL issues) ──
-  let imageDataUri;
+  // ── Step 1: make image accessible to Replicate ─────────────────────
+  let replicateImageUrl;
   try {
-    imageDataUri = await imageUrlToBase64(imageUrl);
+    replicateImageUrl = await uploadImageToReplicate(imageUrl, token);
   } catch (e) {
-    console.error('[SIM] Cannot fetch source image:', e?.message);
-    // Hard fallback: pass the URL directly and let Replicate try
-    imageDataUri = imageUrl;
+    console.error('[SIM] uploadImageToReplicate threw:', e?.message);
+    replicateImageUrl = imageUrl; // last-resort: pass signed URL directly
   }
 
-  // ── Step 2: run all 3 predictions in parallel ───────────────────────────
+  // ── Step 2: run all 3 predictions in parallel ───────────────────────
   const results = await Promise.allSettled(
-    SIM_VARIATIONS.map(v => replicatePrediction(imageDataUri, v, token))
+    SIM_VARIATIONS.map(v => replicatePrediction(replicateImageUrl, v, token))
   );
 
   const variations = SIM_VARIATIONS
@@ -15967,7 +16009,7 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   const succeeded = variations.length;
   console.log(`[SIM] Done: ${succeeded}/3 variations succeeded`);
 
-  // ── Step 3: fallback to original image if everything failed ─────────────
+  // ── Step 3: fallback to original image so the UI is never empty ────
   if (!succeeded) {
     console.warn('[SIM] All variations failed — returning original image as fallback');
     logAI('warn', 'sim_all_failed_fallback', { patientId });
