@@ -16022,49 +16022,73 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   };
 }
 
+// ── In-memory store for async smile-simulation jobs ─────────────────────────
+// Keyed by jobId (UUID). Cleaned up after 15 minutes so Render memory stays
+// small even without restarts.
+const _simJobs = new Map(); // jobId → { status, url, variations, failReason, createdAt }
+setInterval(() => {
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  for (const [id, job] of _simJobs) {
+    if (job.createdAt < cutoff) _simJobs.delete(id);
+  }
+}, 5 * 60 * 1000);
+
 // POST /api/chat/smile-simulation
+// Returns { ok, jobId, status:"pending" } immediately (no long-held connection).
+// Client polls GET /api/chat/sim-status/:jobId for the result.
 app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
-  console.log('=== SIM ENDPOINT v6 | MAX_POLLS=60 | POLL_INTERVAL=1500ms | single balanced ===');
-  const { patientId, imageUrl, insights = [] } = req.body || {};
-  console.log('[SIM ENDPOINT] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
+  console.log('=== SIM ENDPOINT v7 | ASYNC JOB | balanced only ===');
+  const { patientId, imageUrl } = req.body || {};
+  console.log('[SIM] patientId:', patientId, '| imageUrl:', imageUrl?.slice(0, 120));
   if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
   if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
   if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
+  if (!ENABLE_SMILE_SIMULATION) return res.status(503).json({ ok: false, error: 'simulation_disabled' });
 
-  if (!ENABLE_SMILE_SIMULATION) {
-    return res.status(503).json({ ok: false, error: 'simulation_disabled' });
-  }
+  const jobId = crypto.randomUUID();
+  _simJobs.set(jobId, { status: 'pending', url: null, variations: [], failReason: null, createdAt: Date.now() });
 
-  try {
-    const { variations, url, provider, error: simErr, fallback, debugInfo, billingRequired } = await runSmileSimulation({
-      imageUrl,
-      patientId,
+  // Fire-and-forget — do NOT await this
+  runSmileSimulation({ imageUrl, patientId }).then(result => {
+    const existing = _simJobs.get(jobId) ?? {};
+    _simJobs.set(jobId, {
+      ...existing,
+      status:     result.url ? 'succeeded' : 'failed',
+      url:        result.url ?? null,
+      variations: result.variations ?? [],
+      failReason: result.error ?? null,
     });
+    console.log(`[SIM JOB ${jobId.slice(0,8)}] ${result.url ? 'succeeded ✅' : 'failed ❌'} | failReason: ${result.error ?? '-'}`);
+  }).catch(err => {
+    const existing = _simJobs.get(jobId) ?? {};
+    _simJobs.set(jobId, { ...existing, status: 'failed', failReason: err?.message });
+    console.error(`[SIM JOB ${jobId.slice(0,8)}] exception:`, err?.message);
+  });
 
-    if (!url) {
-      return res.status(503).json({
-        ok:      false,
-        error:   simErr ?? 'no_image_produced',
-        message: simErr === 'no_providers_configured'
-          ? 'Set REPLICATE_API_TOKEN on Render.'
-          : 'Smile simulation produced no images. Check server logs.',
-        debugInfo,
-      });
-    }
+  // Respond immediately — client will poll /api/chat/sim-status/:jobId
+  return res.json({ ok: true, jobId, status: 'pending' });
+});
 
+// GET /api/chat/sim-status/:jobId
+// Returns { ok, status:"pending"|"succeeded"|"failed", simulatedImageUrl?, variations?, error? }
+app.get('/api/chat/sim-status/:jobId', requireToken, (req, res) => {
+  const job = _simJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
+
+  if (job.status === 'pending') {
+    return res.json({ ok: true, status: 'pending' });
+  }
+  if (job.status === 'succeeded') {
     return res.json({
       ok:                true,
-      simulatedImageUrl:  url,
-      simulationProvider: provider,
-      variations,
-      fallback:           fallback ?? false,
-      billingRequired:    billingRequired ?? false,
-      debugInfo:          debugInfo ?? [],
+      status:            'succeeded',
+      simulatedImageUrl: job.url,
+      simulationProvider:'replicate',
+      variations:        job.variations ?? [],
+      fallback:          false,
     });
-  } catch (err) {
-    console.error('[SMILE SIM ENDPOINT ERROR]:', err?.message, err?.stack);
-    return res.status(500).json({ ok: false, error: 'simulation_failed', message: err?.message });
   }
+  return res.json({ ok: false, status: 'failed', error: job.failReason ?? 'unknown' });
 });
 
 // POST /api/chat/ai-upload
