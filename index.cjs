@@ -9,6 +9,137 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const http = require("http");
+
+// ─── AI / Storage config (read once at startup) ──────────────────────────────
+const AI_TIMEOUT_MS        = Math.max(5000, parseInt(process.env.AI_TIMEOUT_MS  || "30000", 10));
+const IMAGE_MAX_SIZE_MB    = Math.max(1,    parseInt(process.env.IMAGE_MAX_SIZE_MB || "10",  10));
+const IMAGE_MAX_SIZE_BYTES = IMAGE_MAX_SIZE_MB * 1024 * 1024;
+
+const ENABLE_AI_ANALYSIS        = process.env.ENABLE_AI_ANALYSIS        !== "false";
+const ENABLE_SMILE_SIMULATION   = process.env.ENABLE_SMILE_SIMULATION   !== "false";
+const ENABLE_MULTI_PHOTO_PROGRESS = process.env.ENABLE_MULTI_PHOTO_PROGRESS !== "false";
+
+// S3 — used to give Replicate a public URL instead of raw base64
+const S3_ENABLED     = process.env.UPLOAD_PROVIDER === "s3" &&
+                       !!process.env.AWS_ACCESS_KEY_ID &&
+                       !!process.env.AWS_SECRET_ACCESS_KEY;
+const S3_BUCKET      = process.env.S3_BUCKET_NAME  || "";
+const S3_REGION      = process.env.AWS_REGION      || "eu-central-1";
+
+let s3Client = null;
+if (S3_ENABLED) {
+  try {
+    const { S3Client } = require("@aws-sdk/client-s3");
+    s3Client = new S3Client({
+      region: S3_REGION,
+      credentials: {
+        accessKeyId:     process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+      },
+    });
+    console.log(`[S3] Client initialised – bucket: ${S3_BUCKET}, region: ${S3_REGION}`);
+  } catch (e) {
+    console.warn("[S3] @aws-sdk/client-s3 not available – falling back to base64 for Replicate:", e.message);
+  }
+}
+
+/** Upload a Buffer to S3 and return the public object URL. */
+async function uploadBufferToS3(buffer, key, mimeType) {
+  if (!s3Client) throw new Error("S3 not configured");
+  const { PutObjectCommand } = require("@aws-sdk/client-s3");
+  await s3Client.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key:    key,
+    Body:   buffer,
+    ContentType: mimeType,
+    ACL: "public-read",
+  }));
+  return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${key}`;
+}
+
+// ─── AI Rate Limiter ─────────────────────────────────────────────────────────
+// Per-patient: max 10 AI requests / 60 s window (configurable via env)
+const AI_RATE_LIMIT_MAX    = parseInt(process.env.AI_RATE_LIMIT_MAX    || "10",    10);
+const AI_RATE_LIMIT_WINDOW = parseInt(process.env.AI_RATE_LIMIT_WINDOW || "60000", 10); // ms
+
+const _aiRateBuckets = new Map(); // patientId → [timestamp, …]
+
+function aiRateLimitMiddleware(req, res, next) {
+  const pid = String(req.patientId || req.body?.patientId || "").trim();
+  if (!pid) return next();
+
+  const now  = Date.now();
+  const hits = (_aiRateBuckets.get(pid) || []).filter(t => now - t < AI_RATE_LIMIT_WINDOW);
+
+  if (hits.length >= AI_RATE_LIMIT_MAX) {
+    const retryAfterSec = Math.ceil((hits[0] + AI_RATE_LIMIT_WINDOW - now) / 1000);
+    res.set("Retry-After", String(retryAfterSec));
+    return res.status(429).json({
+      ok: false,
+      error: "rate_limit_exceeded",
+      message: `Çok fazla istek. ${retryAfterSec} saniye sonra tekrar deneyin.`,
+      retryAfter: retryAfterSec,
+    });
+  }
+
+  hits.push(now);
+  _aiRateBuckets.set(pid, hits);
+
+  // Prune stale buckets every ~500 requests
+  if (_aiRateBuckets.size > 500) {
+    for (const [key, times] of _aiRateBuckets) {
+      if (times.every(t => now - t >= AI_RATE_LIMIT_WINDOW)) _aiRateBuckets.delete(key);
+    }
+  }
+  next();
+}
+
+// ─── Image Magic-Bytes Validator ─────────────────────────────────────────────
+/** Returns true only if the buffer starts with a known image signature. */
+function isValidImageBuffer(buf) {
+  if (!buf || buf.length < 4) return false;
+  const b = buf;
+  // JPEG: FF D8 FF
+  if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return true;
+  // PNG:  89 50 4E 47
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return true;
+  // GIF:  47 49 46 38
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true;
+  // WebP: 52 49 46 46 … 57 45 42 50
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+      b.length >= 12 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return true;
+  // HEIC/HEIF: ftyp box at offset 4 (4 bytes), value 'ftyp' = 66 74 79 70
+  if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return true;
+  return false;
+}
+
+// ─── Structured AI Logger ─────────────────────────────────────────────────────
+const AI_LOG_FILE = process.env.AI_LOG_FILE || null; // e.g. "/var/log/clinifly/ai.log"
+
+function logAI(level, event, data = {}) {
+  const entry = {
+    ts:    new Date().toISOString(),
+    level,
+    event,
+    ...data,
+  };
+  const line = JSON.stringify(entry);
+
+  if (level === "error") {
+    console.error(`[AI] ${line}`);
+  } else if (level === "warn") {
+    console.warn(`[AI] ${line}`);
+  } else {
+    console.log(`[AI] ${line}`);
+  }
+
+  if (AI_LOG_FILE) {
+    try {
+      fs.appendFileSync(AI_LOG_FILE, line + "\n");
+    } catch (_) { /* non-fatal – disk write failure shouldn't crash the server */ }
+  }
+}
+
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
@@ -14877,8 +15008,8 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
         return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz dosya formatı" });
       }
 
-      if (isImage && size > 10 * 1024 * 1024) {
-        return res.status(400).json({ ok: false, error: "file_too_large", message: "Resim 10MB'dan küçük olmalıdır." });
+      if (isImage && size > IMAGE_MAX_SIZE_BYTES) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: `Resim ${IMAGE_MAX_SIZE_MB}MB'dan küçük olmalıdır.` });
       }
       const isZip = mime === "application/zip" || mime === "application/x-zip-compressed";
       if (!isImage && isZip && size > 50 * 1024 * 1024) {
@@ -15004,11 +15135,17 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
 // ─── AI Photo Analysis ────────────────────────────────────────────────────────
 // POST /api/chat/ai-analyze
 // Accepts: { patientId, imageUrl }  (imageUrl = relative path from upload response)
-// Calls OpenAI Vision → generates dental insights
-// Optionally calls Replicate → enhanced image (if REPLICATE_API_TOKEN set)
-// Saves AI result as a CLINIC message and sends an auto follow-up
-app.post('/api/chat/ai-analyze', requireToken, async (req, res) => {
+// Feature flags: ENABLE_AI_ANALYSIS, ENABLE_SMILE_SIMULATION
+// Timeouts:      AI_TIMEOUT_MS (default 30 000 ms)
+// Storage:       UPLOAD_PROVIDER=s3 → uploads image to S3 for Replicate URL access
+app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req, res) => {
+  const _t0 = Date.now();
   try {
+    // ── Feature flag guard ──────────────────────────────────────────────
+    if (!ENABLE_AI_ANALYSIS) {
+      return res.status(503).json({ ok: false, error: 'ai_disabled', message: 'AI analysis is disabled via ENABLE_AI_ANALYSIS=false' });
+    }
+
     const { patientId, imageUrl } = req.body || {};
 
     if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
@@ -15017,21 +15154,59 @@ app.post('/api/chat/ai-analyze', requireToken, async (req, res) => {
 
     const OPENAI_KEY = process.env.OPENAI_API_KEY;
     if (!OPENAI_KEY) {
+      logAI('warn', 'ai_not_configured', { patientId });
       return res.status(501).json({ ok: false, error: 'ai_not_configured', message: 'OPENAI_API_KEY not set' });
     }
 
-    // ── Read image from disk and convert to base64 ─────────────────────
-    const relPath = decodeURIComponent(imageUrl.split('?')[0]);
+    logAI('info', 'analyze_start', { patientId, imageUrl });
+
+    // ── Read image from disk ────────────────────────────────────────────
+    const relPath  = decodeURIComponent(imageUrl.split('?')[0]);
     const diskPath = path.join(__dirname, 'public', ...relPath.replace(/^\//, '').split('/'));
 
     if (!fs.existsSync(diskPath)) {
+      logAI('warn', 'image_not_found', { patientId, diskPath });
       return res.status(404).json({ ok: false, error: 'image_not_found' });
     }
 
     const imageBuffer = fs.readFileSync(diskPath);
-    const base64Image  = imageBuffer.toString('base64');
-    const ext = path.extname(diskPath).toLowerCase();
+
+    // ── Max size validation ─────────────────────────────────────────────
+    if (imageBuffer.length > IMAGE_MAX_SIZE_BYTES) {
+      logAI('warn', 'image_too_large', { patientId, sizeBytes: imageBuffer.length, limitBytes: IMAGE_MAX_SIZE_BYTES });
+      return res.status(413).json({
+        ok: false,
+        error: 'image_too_large',
+        message: `Görsel ${IMAGE_MAX_SIZE_MB}MB sınırını aşıyor.`,
+      });
+    }
+
+    // ── Magic-bytes image validation ────────────────────────────────────
+    if (!isValidImageBuffer(imageBuffer)) {
+      logAI('warn', 'invalid_image_format', { patientId, imageUrl, firstBytes: imageBuffer.slice(0, 8).toString('hex') });
+      return res.status(400).json({ ok: false, error: 'invalid_image_format', message: 'Dosya geçerli bir görsel formatında değil.' });
+    }
+
+    const ext      = path.extname(diskPath).toLowerCase();
     const mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
+
+    // ── If S3 enabled, upload to S3 and get a public URL ───────────────
+    // (Replicate prefers URL over base64; also avoids large payload limits)
+    let s3PublicUrl = null;
+    if (S3_ENABLED && s3Client) {
+      try {
+        const s3Key = `ai-inputs/${patientId}/${Date.now()}_${path.basename(diskPath)}`;
+        s3PublicUrl = await uploadBufferToS3(imageBuffer, s3Key, mimeType);
+        console.log('[AI ANALYZE] Image uploaded to S3:', s3PublicUrl);
+      } catch (s3Err) {
+        console.warn('[AI ANALYZE] S3 upload failed (non-fatal), falling back to base64:', s3Err.message);
+      }
+    }
+
+    const base64Image  = imageBuffer.toString('base64');
+    const imageDataUrl = `data:${mimeType};base64,${base64Image}`;
+    // Prefer S3 URL for Replicate; fall back to base64 for OpenAI Vision
+    const replicateImageInput = s3PublicUrl || imageDataUrl;
 
     // ── OpenAI Vision — dental photo analysis ─────────────────────────
     const aiPrompt = `Bu bir ağız/diş fotoğrafı. Lütfen kısa ve net biçimde analiz et.
@@ -15060,24 +15235,31 @@ Kurallar:
             { type: 'text', text: aiPrompt },
             {
               type: 'image_url',
-              image_url: { url: `data:${mimeType};base64,${base64Image}`, detail: 'low' },
+              // OpenAI Vision: prefer base64 (works even without public URL)
+              image_url: { url: imageDataUrl, detail: 'low' },
             },
           ],
         }],
         max_tokens: 400,
         response_format: { type: 'json_object' },
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
 
     if (!openaiRes.ok) {
       const errBody = await openaiRes.json().catch(() => ({}));
-      console.error('[AI ANALYZE] OpenAI error:', openaiRes.status, errBody);
+      logAI('error', 'openai_error', {
+        patientId,
+        status: openaiRes.status,
+        message: errBody?.error?.message,
+        code:    errBody?.error?.code,
+        elapsedMs: Date.now() - _t0,
+      });
       return res.status(502).json({ ok: false, error: 'openai_error', message: errBody?.error?.message || 'OpenAI request failed' });
     }
 
     const openaiData = await openaiRes.json();
-    let insights  = [];
+    let insights    = [];
     let overallNote = '';
     try {
       const content = openaiData.choices?.[0]?.message?.content || '{}';
@@ -15086,17 +15268,30 @@ Kurallar:
         ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
         : [];
       overallNote = String(parsed.overallNote || '').trim();
-    } catch (_) {
-      // parse failed — fall through with empty insights
-    }
+    } catch (_) { /* parse failed — fall through with empty insights */ }
+
     if (insights.length === 0) {
       insights = ['Fotoğraf başarıyla analiz edildi.'];
     }
 
-    // ── Optional: Replicate — image enhancement (GFPGAN face restoration) ──
+    logAI('info', 'openai_response', {
+      patientId,
+      insightCount: insights.length,
+      hasOverallNote: !!overallNote,
+      model: openaiData.model || 'gpt-4o',
+      promptTokens:     openaiData.usage?.prompt_tokens,
+      completionTokens: openaiData.usage?.completion_tokens,
+      elapsedMs: Date.now() - _t0,
+    });
+
+    // ── Optional: Replicate GFPGAN — image enhancement ────────────────
     let simulatedImageUrl = null;
     const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
-    if (REPLICATE_TOKEN) {
+
+    if (ENABLE_SMILE_SIMULATION && REPLICATE_TOKEN) {
+      const repTimeout   = Math.min(AI_TIMEOUT_MS, 12000);   // create call capped at 12 s
+      const pollDeadline = Date.now() + Math.min(AI_TIMEOUT_MS, 28000);
+
       try {
         const repRes = await fetch('https://api.replicate.com/v1/predictions', {
           method: 'POST',
@@ -15106,15 +15301,19 @@ Kurallar:
           },
           body: JSON.stringify({
             version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
-            input: { img: `data:${mimeType};base64,${base64Image}`, scale: 2, version: 'v1.4' },
+            input: {
+              img:     replicateImageInput,   // S3 URL when available, else base64
+              scale:   2,
+              version: 'v1.4',
+            },
           }),
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(repTimeout),
         });
+
         if (repRes.ok) {
           const repData = await repRes.json();
           const predId  = repData.id;
           if (predId) {
-            const pollDeadline = Date.now() + 25000;
             while (Date.now() < pollDeadline) {
               await new Promise(r => setTimeout(r, 2500));
               const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
@@ -15132,47 +15331,64 @@ Kurallar:
           }
         }
       } catch (repErr) {
-        console.warn('[AI ANALYZE] Replicate failed (non-fatal):', repErr?.message);
+        logAI('warn', 'replicate_error', { patientId, message: repErr?.message });
+      }
+      if (simulatedImageUrl) {
+        logAI('info', 'replicate_success', { patientId, simulatedImageUrl, elapsedMs: Date.now() - _t0 });
       }
     }
 
     const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
 
     // ── Save AI result as CLINIC message ──────────────────────────────
-    const aiAttachment = {
-      aiResult: {
-        insights,
-        overallNote,
-        disclaimer,
-        originalImageUrl: imageUrl,
-        ...(simulatedImageUrl ? { simulatedImageUrl } : {}),
-      },
-    };
-
     await insertMessageToSupabase({
       patientId,
       sender: 'clinic',
       message: 'AI Önizleme',
-      attachments: aiAttachment,
+      attachments: {
+        aiResult: {
+          insights,
+          overallNote,
+          disclaimer,
+          originalImageUrl: imageUrl,
+          ...(simulatedImageUrl ? { simulatedImageUrl } : {}),
+          multiPhotoEnabled: ENABLE_MULTI_PHOTO_PROGRESS,
+        },
+      },
       type: 'ai_result',
     });
 
-    // ── Auto follow-up hint (slight delay so ordering is clear) ────────
-    setTimeout(async () => {
-      try {
-        await insertMessageToSupabase({
-          patientId,
-          sender: 'clinic',
-          message: 'Daha detaylı analiz için farklı açılardan fotoğraf ekleyebilirsiniz.',
-          type: 'text',
-        });
-      } catch (_) { /* non-fatal */ }
-    }, 1500);
+    // ── Auto follow-up (only if multi-photo progress is enabled) ───────
+    if (ENABLE_MULTI_PHOTO_PROGRESS) {
+      setTimeout(async () => {
+        try {
+          await insertMessageToSupabase({
+            patientId,
+            sender: 'clinic',
+            message: 'Daha detaylı analiz için farklı açılardan fotoğraf ekleyebilirsiniz.',
+            type: 'text',
+          });
+        } catch (_) { /* non-fatal */ }
+      }, 1500);
+    }
+
+    logAI('info', 'analyze_complete', {
+      patientId,
+      insightCount:    insights.length,
+      hasSimulation:   !!simulatedImageUrl,
+      s3Used:          !!s3PublicUrl,
+      totalElapsedMs:  Date.now() - _t0,
+    });
 
     return res.json({ ok: true, insights, overallNote, simulatedImageUrl, disclaimer });
 
   } catch (err) {
-    console.error('[AI ANALYZE] Exception:', err);
+    logAI('error', 'analyze_exception', {
+      patientId: req.body?.patientId,
+      message:   err?.message,
+      stack:     process.env.NODE_ENV !== 'production' ? err?.stack : undefined,
+      elapsedMs: Date.now() - _t0,
+    });
     return res.status(500).json({ ok: false, error: 'ai_analyze_exception', message: err?.message || 'Server error' });
   }
 });
@@ -15348,8 +15564,8 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
         return res.status(400).json({ ok: false, error: "invalid_file_type", message: "Geçersiz dosya formatı" });
       }
 
-      if (isImage && size > 10 * 1024 * 1024) {
-        return res.status(400).json({ ok: false, error: "file_too_large", message: "Resim 10MB'dan küçük olmalıdır." });
+      if (isImage && size > IMAGE_MAX_SIZE_BYTES) {
+        return res.status(400).json({ ok: false, error: "file_too_large", message: `Resim ${IMAGE_MAX_SIZE_MB}MB'dan küçük olmalıdır.` });
       }
       const isZip = mime === "application/zip" || mime === "application/x-zip-compressed";
       if (!isImage && isZip && size > 50 * 1024 * 1024) {
