@@ -15929,9 +15929,11 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
     return { url: null, failReason: reason };
   }
 
-  // ── Poll every 1 s, max 20 attempts ────────────────────────────────
-  for (let i = 0; i < 20; i++) {
-    await new Promise(r => setTimeout(r, 1000));
+  // ── Poll every 2 s, max 45 attempts (90 s total) ───────────────────
+  // stable-diffusion-img2img takes 30-60 s on a warm instance,
+  // up to 90 s on a cold start — 20 polls was too short.
+  for (let i = 0; i < 45; i++) {
+    await new Promise(r => setTimeout(r, 2000));
     try {
       const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
         headers: { 'Authorization': `Token ${token}` },
@@ -15955,7 +15957,7 @@ async function replicatePrediction(rawImageUrl, { prompt, prompt_strength }, tok
       console.warn(`[SIM] Poll ${i + 1} exception:`, e?.message);
     }
   }
-  console.warn('[SIM] Timeout (20 polls) for predId:', predId);
+  console.warn('[SIM] Timeout (45 polls × 2 s = 90 s) for predId:', predId);
   return { url: null, failReason: 'timeout_20_polls' };
 }
 
@@ -16001,29 +16003,28 @@ async function runSmileSimulation({ imageUrl, patientId }) {
     throw new Error('Still using signed URL!');
   }
 
-  // ── Step 2: run variations SEQUENTIALLY with 2 s gap ───────────────
-  // Parallel calls immediately hit the free-tier burst limit (1 req/min).
-  // Sequential with a small delay stays within limits even without billing.
+  // ── Step 2: run all 3 predictions in parallel ──────────────────────
+  // Billing is required for parallel calls (free tier burst = 1 req/min).
+  // With a payment method the rate limit is much higher.
+  const rawResults = await Promise.allSettled(
+    SIM_VARIATIONS.map(v => replicatePrediction(replicateImageUrl, v, token))
+  );
+
   const variations  = [];
   const failReasons = [];
 
-  for (const v of SIM_VARIATIONS) {
-    const r = await replicatePrediction(replicateImageUrl, v, token);
+  for (let i = 0; i < SIM_VARIATIONS.length; i++) {
+    const v = SIM_VARIATIONS[i];
+    const r = rawResults[i].status === 'fulfilled'
+      ? rawResults[i].value
+      : { url: null, failReason: 'promise_rejected' };
 
     if (r.url) {
       variations.push({ id: v.id, label: v.label, url: r.url });
     } else {
       failReasons.push(`${v.id}: ${r.failReason}`);
-      // Billing errors (402) → no point running more; surface immediately
       if (r.failReason?.includes('402')) {
-        console.error('[SIM] Replicate billing required (HTTP 402) — stopping early');
-        failReasons.push('...remaining variations skipped: add payment method at replicate.com/account/billing');
-        break;
-      }
-      // Rate-limited (429) → wait before next attempt
-      if (r.failReason?.includes('429')) {
-        console.warn('[SIM] Rate limited (429) — waiting 12 s before next variation');
-        await new Promise(r => setTimeout(r, 12_000));
+        failReasons.push('add payment method at replicate.com/account/billing');
       }
     }
   }
