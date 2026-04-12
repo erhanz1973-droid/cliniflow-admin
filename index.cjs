@@ -15001,6 +15001,182 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
   }
 });
 
+// ─── AI Photo Analysis ────────────────────────────────────────────────────────
+// POST /api/chat/ai-analyze
+// Accepts: { patientId, imageUrl }  (imageUrl = relative path from upload response)
+// Calls OpenAI Vision → generates dental insights
+// Optionally calls Replicate → enhanced image (if REPLICATE_API_TOKEN set)
+// Saves AI result as a CLINIC message and sends an auto follow-up
+app.post('/api/chat/ai-analyze', requireToken, async (req, res) => {
+  try {
+    const { patientId, imageUrl } = req.body || {};
+
+    if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+    if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
+    if (!imageUrl) return res.status(400).json({ ok: false, error: 'imageUrl_required' });
+
+    const OPENAI_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_KEY) {
+      return res.status(501).json({ ok: false, error: 'ai_not_configured', message: 'OPENAI_API_KEY not set' });
+    }
+
+    // ── Read image from disk and convert to base64 ─────────────────────
+    const relPath = decodeURIComponent(imageUrl.split('?')[0]);
+    const diskPath = path.join(__dirname, 'public', ...relPath.replace(/^\//, '').split('/'));
+
+    if (!fs.existsSync(diskPath)) {
+      return res.status(404).json({ ok: false, error: 'image_not_found' });
+    }
+
+    const imageBuffer = fs.readFileSync(diskPath);
+    const base64Image  = imageBuffer.toString('base64');
+    const ext = path.extname(diskPath).toLowerCase();
+    const mimeType = ext === '.png' ? 'image/png' : ext === '.heic' ? 'image/heic' : 'image/jpeg';
+
+    // ── OpenAI Vision — dental photo analysis ─────────────────────────
+    const aiPrompt = `Bu bir ağız/diş fotoğrafı. Lütfen kısa ve net biçimde analiz et.
+Yanıtı SADECE aşağıdaki JSON formatında ver (başka hiçbir metin ekleme):
+{
+  "insights": ["gözlem 1", "gözlem 2", "gözlem 3"],
+  "overallNote": "genel değerlendirme (1 cümle)"
+}
+Kurallar:
+- Her "insights" maddesi en fazla 1 cümle olsun
+- Maksimum 3 madde
+- Tıbbi kesin teşhis verme; gözlem bazlı yaz
+- Türkçe yaz`;
+
+    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: aiPrompt },
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${base64Image}`, detail: 'low' },
+            },
+          ],
+        }],
+        max_tokens: 400,
+        response_format: { type: 'json_object' },
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!openaiRes.ok) {
+      const errBody = await openaiRes.json().catch(() => ({}));
+      console.error('[AI ANALYZE] OpenAI error:', openaiRes.status, errBody);
+      return res.status(502).json({ ok: false, error: 'openai_error', message: errBody?.error?.message || 'OpenAI request failed' });
+    }
+
+    const openaiData = await openaiRes.json();
+    let insights  = [];
+    let overallNote = '';
+    try {
+      const content = openaiData.choices?.[0]?.message?.content || '{}';
+      const parsed  = JSON.parse(content);
+      insights    = Array.isArray(parsed.insights) && parsed.insights.length > 0
+        ? parsed.insights.map(s => String(s).trim()).filter(Boolean).slice(0, 3)
+        : [];
+      overallNote = String(parsed.overallNote || '').trim();
+    } catch (_) {
+      // parse failed — fall through with empty insights
+    }
+    if (insights.length === 0) {
+      insights = ['Fotoğraf başarıyla analiz edildi.'];
+    }
+
+    // ── Optional: Replicate — image enhancement (GFPGAN face restoration) ──
+    let simulatedImageUrl = null;
+    const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
+    if (REPLICATE_TOKEN) {
+      try {
+        const repRes = await fetch('https://api.replicate.com/v1/predictions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${REPLICATE_TOKEN}`,
+          },
+          body: JSON.stringify({
+            version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
+            input: { img: `data:${mimeType};base64,${base64Image}`, scale: 2, version: 'v1.4' },
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (repRes.ok) {
+          const repData = await repRes.json();
+          const predId  = repData.id;
+          if (predId) {
+            const pollDeadline = Date.now() + 25000;
+            while (Date.now() < pollDeadline) {
+              await new Promise(r => setTimeout(r, 2500));
+              const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+                headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+                signal: AbortSignal.timeout(5000),
+              });
+              if (!poll.ok) break;
+              const pd = await poll.json();
+              if (pd.status === 'succeeded') {
+                simulatedImageUrl = Array.isArray(pd.output) ? pd.output[0] : pd.output;
+                break;
+              }
+              if (pd.status === 'failed' || pd.status === 'canceled') break;
+            }
+          }
+        }
+      } catch (repErr) {
+        console.warn('[AI ANALYZE] Replicate failed (non-fatal):', repErr?.message);
+      }
+    }
+
+    const disclaimer = 'Bu sonuçlar AI tarafından oluşturulmuştur ve tıbbi teşhis değildir.';
+
+    // ── Save AI result as CLINIC message ──────────────────────────────
+    const aiAttachment = {
+      aiResult: {
+        insights,
+        overallNote,
+        disclaimer,
+        originalImageUrl: imageUrl,
+        ...(simulatedImageUrl ? { simulatedImageUrl } : {}),
+      },
+    };
+
+    await insertMessageToSupabase({
+      patientId,
+      sender: 'clinic',
+      message: 'AI Önizleme',
+      attachments: aiAttachment,
+      type: 'ai_result',
+    });
+
+    // ── Auto follow-up hint (slight delay so ordering is clear) ────────
+    setTimeout(async () => {
+      try {
+        await insertMessageToSupabase({
+          patientId,
+          sender: 'clinic',
+          message: 'Daha detaylı analiz için farklı açılardan fotoğraf ekleyebilirsiniz.',
+          type: 'text',
+        });
+      } catch (_) { /* non-fatal */ }
+    }, 1500);
+
+    return res.json({ ok: true, insights, overallNote, simulatedImageUrl, disclaimer });
+
+  } catch (err) {
+    console.error('[AI ANALYZE] Exception:', err);
+    return res.status(500).json({ ok: false, error: 'ai_analyze_exception', message: err?.message || 'Server error' });
+  }
+});
+
 // GET /api/admin/messages/unread-counts — unread counts for admin badge
 // ?totalOnly=1 — fast path: COUNT(*) only (no row transfer). Use for sidebar/badge polling.
 // (default) — per-patient counts; heavier; also cached briefly.
