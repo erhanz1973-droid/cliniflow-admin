@@ -15699,6 +15699,191 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 }
 
 // ─── AI Photo Analysis ────────────────────────────────────────────────────────
+// ─── Smile Simulation Helper ─────────────────────────────────────────────────
+// Shared by /api/chat/smile-simulation (on-demand) and available as fallback
+// in /api/chat/ai-analyze (disabled by default — cost optimisation).
+//
+// Gemini → Replicate GFPGAN fallback chain:
+//  • gemini-2.0-flash-exp with responseModalities: IMAGE (NOT gemini-1.5-pro)
+//  • Replicate GFPGAN v1.4 if Gemini returns text-only (happens often)
+//
+// @param {string} imageDataUrl  base64 data URL of the original photo
+// @param {string} imageUrl      original remote URL (passed directly to Replicate)
+// @param {string} patientId     for logging and Supabase path
+// @param {string[]} insights    top-2 dental insights to guide the prompt
+// @param {number} timeoutMs     per-provider timeout
+// @returns {{ url: string|null, provider: string|null }}
+async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights = [], timeoutMs = 25_000 }) {
+  const GEMINI_KEY      = process.env.GEMINI_API_KEY;
+  const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
+  const GEMINI_MODEL    = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
+
+  let url      = null;
+  let provider = null;
+
+  // ── Helper: upload buffer → Supabase signed URL ──────────────────────
+  async function uploadSim(buffer, mime, label) {
+    const ext  = mime.includes('png') ? 'png' : 'jpg';
+    const path = `ai-simulations/${patientId}/${Date.now()}-${label}.${ext}`;
+    if (!isSupabaseEnabled()) return `data:${mime};base64,${buffer.toString('base64')}`;
+    const { error } = await supabase.storage
+      .from('patient-files')
+      .upload(path, buffer, { contentType: mime, upsert: false });
+    if (error) { logAI('warn', 'sim_upload_failed', { patientId, label, message: error.message }); return null; }
+    const { data: signed } = await supabase.storage
+      .from('patient-files').createSignedUrl(path, 365 * 24 * 3600);
+    return signed?.signedUrl || null;
+  }
+
+  const insightHints = insights.length > 0
+    ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
+    : '';
+  const smilePrompt =
+    `Enhance this dental photo to simulate a natural, healthy smile.\n` +
+    `- Tooth alignment: slightly straighter\n` +
+    `- Tooth color: natural whitening, not artificial bright-white\n` +
+    `- Remove visible stains or minor decay marks\n` +
+    `- Keep realistic proportions and original lighting\n` +
+    `IMPORTANT: Do NOT create a Hollywood smile. Keep it subtle. Preserve face structure.` +
+    insightHints;
+
+  // ── 1. Gemini ────────────────────────────────────────────────────────
+  if (GEMINI_KEY && imageDataUrl) {
+    try {
+      const [hdr, b64] = imageDataUrl.split(',');
+      const mime = hdr.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+      const gemRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [
+              { text: smilePrompt },
+              { inline_data: { mime_type: mime, data: b64 } },
+            ]}],
+            generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }
+      );
+      console.log('[GEMINI SIM STATUS]:', gemRes.status);
+      if (gemRes.ok) {
+        const gd = await gemRes.json();
+        console.log('[GEMINI SIM RAW]:', JSON.stringify(gd).slice(0, 500));
+        const imgPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.inline_data?.data);
+        const txtPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.text);
+        if (imgPart) {
+          const buf  = Buffer.from(imgPart.inline_data.data, 'base64');
+          const outMime = imgPart.inline_data.mime_type || 'image/jpeg';
+          console.log('[GEMINI SIM] Image:', Math.round(buf.length / 1024), 'KB');
+          url = await uploadSim(buf, outMime, 'gemini');
+          if (url) provider = 'gemini';
+        } else {
+          console.warn('[GEMINI SIM] No image. Text:', txtPart?.text?.slice(0, 120) ?? '(none)');
+          logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_MODEL });
+        }
+      } else {
+        const errBody = await gemRes.json().catch(() => ({}));
+        console.error('[GEMINI SIM ERROR]:', gemRes.status, JSON.stringify(errBody).slice(0, 300));
+        logAI('warn', 'gemini_http_error', { patientId, status: gemRes.status, message: errBody?.error?.message });
+      }
+    } catch (e) {
+      console.warn('[GEMINI SIM FAILED]:', e?.message);
+      logAI('warn', 'gemini_exception', { patientId, message: e?.message });
+    }
+  }
+
+  // ── 2. Replicate GFPGAN fallback ─────────────────────────────────────
+  // Uses the original remote imageUrl (no re-fetch needed) — GFPGAN accepts URLs.
+  // NOT SDXL (text-to-image) — GFPGAN is image-to-image face/tooth restoration.
+  if (!url && REPLICATE_TOKEN && imageUrl) {
+    const repTimeout   = Math.min(timeoutMs, 12_000);
+    const pollDeadline = Date.now() + Math.min(timeoutMs, 28_000);
+    try {
+      const repRes = await fetch('https://api.replicate.com/v1/predictions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+        body: JSON.stringify({
+          version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
+          input: { img: imageUrl, scale: 2, version: 'v1.4' },
+        }),
+        signal: AbortSignal.timeout(repTimeout),
+      });
+      console.log('[REPLICATE SIM STATUS]:', repRes.status);
+      if (repRes.ok) {
+        const { id: predId } = await repRes.json();
+        if (predId) {
+          while (Date.now() < pollDeadline) {
+            await new Promise(r => setTimeout(r, 2500));
+            const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
+              headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
+              signal: AbortSignal.timeout(5000),
+            }).catch(() => null);
+            if (!poll?.ok) break;
+            const pd = await poll.json();
+            if (pd.status === 'succeeded') {
+              url = Array.isArray(pd.output) ? pd.output[0] : pd.output;
+              if (url) provider = 'replicate';
+              break;
+            }
+            if (pd.status === 'failed' || pd.status === 'canceled') break;
+          }
+        }
+      }
+      if (url) logAI('info', 'replicate_fallback_success', { patientId });
+    } catch (e) {
+      console.warn('[REPLICATE SIM FAILED]:', e?.message);
+      logAI('warn', 'replicate_exception', { patientId, message: e?.message });
+    }
+  }
+
+  console.log('[SIMULATION RESULT]:', provider ?? 'none', '| url:', url ? 'ok' : 'null');
+  return { url, provider };
+}
+
+// POST /api/chat/smile-simulation
+// On-demand endpoint called lazily from the frontend for engaged users only.
+// Accepts a signed Supabase URL, runs Gemini→Replicate, returns simulatedImageUrl.
+app.post('/api/chat/smile-simulation', requireToken, async (req, res) => {
+  const { patientId, imageUrl, insights = [] } = req.body || {};
+  if (!patientId) return res.status(400).json({ ok: false, error: 'patientId_required' });
+  if (req.patientId !== patientId) return res.status(403).json({ ok: false, error: 'unauthorized' });
+  if (!imageUrl)   return res.status(400).json({ ok: false, error: 'imageUrl_required' });
+
+  if (!ENABLE_SMILE_SIMULATION) {
+    return res.status(503).json({ ok: false, error: 'simulation_disabled' });
+  }
+
+  try {
+    // Fetch the remote image → base64 data URL (needed for Gemini inline_data)
+    let imageDataUrl = null;
+    try {
+      const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10_000) });
+      if (imgRes.ok) {
+        const mime    = (imgRes.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+        const buf     = Buffer.from(await imgRes.arrayBuffer());
+        imageDataUrl  = `data:${mime};base64,${buf.toString('base64')}`;
+      }
+    } catch (fetchErr) {
+      console.warn('[SMILE SIM] Could not fetch image for Gemini, will rely on Replicate only:', fetchErr?.message);
+    }
+
+    const { url, provider } = await runSmileSimulation({
+      imageDataUrl,
+      imageUrl,
+      patientId,
+      insights: Array.isArray(insights) ? insights.slice(0, 2) : [],
+      timeoutMs: 28_000,
+    });
+
+    return res.json({ ok: true, simulatedImageUrl: url, simulationProvider: provider });
+  } catch (err) {
+    console.error('[SMILE SIM ENDPOINT ERROR]:', err?.message, err?.stack);
+    return res.status(500).json({ ok: false, error: 'simulation_failed', message: err?.message });
+  }
+});
+
 // POST /api/chat/ai-upload
 // Lightweight upload for AI analysis — no clinic_id required, no messages DB write.
 // Stores the photo in Supabase Storage and returns a long-lived signed URL that
@@ -15950,162 +16135,10 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
       elapsedMs: Date.now() - _t0,
     });
 
-    // ── Optional: Smile simulation — Gemini first, Replicate fallback ──
-    //
-    // Strategy:
-    //   1. Try gemini-2.0-flash-exp (free tier, image-in → image-out)
-    //      NOTE: gemini-1.5-pro CANNOT generate images — only 2.0-flash-exp can.
-    //            responseModalities: ['IMAGE','TEXT'] is mandatory for image output.
-    //   2. If Gemini returns no image (text-only response is common) → Replicate GFPGAN
-    //      NOTE: stability-ai/sdxl is text-to-image only, not suitable here.
-    //            We use GFPGAN (face/tooth restoration, image-to-image).
-    //   3. Upload whichever result arrives to Supabase; return signed URL + provider.
-
-    let simulatedImageUrl = null;
-    let simulationProvider = null; // 'gemini' | 'replicate' | null
-    const GEMINI_KEY       = process.env.GEMINI_API_KEY;
-    const REPLICATE_TOKEN  = process.env.REPLICATE_API_TOKEN;
-    const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
-
-    // ── Helper: upload a buffer to Supabase Storage → signed URL ──────
-    async function uploadSimBuffer(buffer, mime, label) {
-      const ext  = mime.includes('png') ? 'png' : 'jpg';
-      const path = `ai-simulations/${patientId}/${Date.now()}-${label}.${ext}`;
-      if (!isSupabaseEnabled()) {
-        return { url: `data:${mime};base64,${buffer.toString('base64')}`, path };
-      }
-      const { error } = await supabase.storage
-        .from('patient-files')
-        .upload(path, buffer, { contentType: mime, upsert: false });
-      if (error) { logAI('warn', 'sim_upload_failed', { patientId, label, message: error.message }); return null; }
-      const { data: signed } = await supabase.storage
-        .from('patient-files')
-        .createSignedUrl(path, 365 * 24 * 3600);
-      return signed?.signedUrl ? { url: signed.signedUrl, path } : null;
-    }
-
-    if (ENABLE_SMILE_SIMULATION && imageDataUrl) {
-      const simTimeoutMs = Math.min(AI_TIMEOUT_MS, 25_000);
-
-      const insightHints = insights.length > 0
-        ? `\n\nContext from dental analysis: ${insights.slice(0, 2).join('; ')}`
-        : '';
-      const smilePrompt =
-        `Enhance this dental photo to simulate a natural, healthy smile.\n` +
-        `- Tooth alignment: slightly straighter\n` +
-        `- Tooth color: natural whitening, not artificial bright-white\n` +
-        `- Remove visible stains or minor decay marks\n` +
-        `- Keep realistic proportions and original lighting\n` +
-        `IMPORTANT: Do NOT create a Hollywood smile. Keep it subtle. Preserve face structure.` +
-        insightHints;
-
-      // ── 1. Try Gemini ────────────────────────────────────────────────
-      if (GEMINI_KEY) {
-        try {
-          const [dataHeader, base64Raw] = imageDataUrl.split(',');
-          const inputMime = dataHeader.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
-
-          const geminiRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${GEMINI_KEY}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [
-                  { text: smilePrompt },
-                  { inline_data: { mime_type: inputMime, data: base64Raw } },
-                ]}],
-                generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
-              }),
-              signal: AbortSignal.timeout(simTimeoutMs),
-            }
-          );
-
-          console.log('[GEMINI STATUS]:', geminiRes.status, '| model:', GEMINI_IMAGE_MODEL);
-
-          if (geminiRes.ok) {
-            const geminiData = await geminiRes.json();
-            console.log('[GEMINI RAW]:', JSON.stringify(geminiData).slice(0, 500));
-
-            const parts   = geminiData?.candidates?.[0]?.content?.parts || [];
-            const imgPart = parts.find(p => p.inline_data?.data);
-            const txtPart = parts.find(p => p.text);
-
-            if (imgPart) {
-              const buf    = Buffer.from(imgPart.inline_data.data, 'base64');
-              const mime   = imgPart.inline_data.mime_type || 'image/jpeg';
-              console.log('[GEMINI] Image received:', Math.round(buf.length / 1024), 'KB');
-              const result = await uploadSimBuffer(buf, mime, 'gemini');
-              if (result) { simulatedImageUrl = result.url; simulationProvider = 'gemini'; }
-            } else {
-              console.warn('[GEMINI] No image returned. Text snippet:', txtPart?.text?.slice(0, 150) ?? '(none)');
-              logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_IMAGE_MODEL, parts: parts.map(p => Object.keys(p).join('+')) });
-            }
-          } else {
-            const errBody = await geminiRes.json().catch(() => ({}));
-            console.error('[GEMINI ERROR]:', JSON.stringify(errBody).slice(0, 400));
-            logAI('warn', 'gemini_http_error', { patientId, status: geminiRes.status, message: errBody?.error?.message });
-          }
-        } catch (geminiErr) {
-          console.warn('[GEMINI FAILED]:', geminiErr?.message);
-          logAI('warn', 'gemini_exception', { patientId, message: geminiErr?.message });
-        }
-      }
-
-      // ── 2. Replicate GFPGAN fallback (image-to-image face restoration) ─
-      // Only runs if Gemini produced no image.
-      // Uses GFPGAN v1.4 — NOT SDXL (which is text-to-image and not suitable).
-      if (!simulatedImageUrl && REPLICATE_TOKEN) {
-        const repTimeout   = Math.min(simTimeoutMs, 12_000);
-        const pollDeadline = Date.now() + Math.min(simTimeoutMs, 28_000);
-        try {
-          const repRes = await fetch('https://api.replicate.com/v1/predictions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-            body: JSON.stringify({
-              version: '9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3',
-              input: { img: imageDataUrl, scale: 2, version: 'v1.4' },
-            }),
-            signal: AbortSignal.timeout(repTimeout),
-          });
-
-          console.log('[REPLICATE STATUS]:', repRes.status);
-
-          if (repRes.ok) {
-            const repData = await repRes.json();
-            const predId  = repData.id;
-            if (predId) {
-              while (Date.now() < pollDeadline) {
-                await new Promise(r => setTimeout(r, 2500));
-                const poll = await fetch(`https://api.replicate.com/v1/predictions/${predId}`, {
-                  headers: { 'Authorization': `Bearer ${REPLICATE_TOKEN}` },
-                  signal: AbortSignal.timeout(5000),
-                });
-                if (!poll.ok) break;
-                const pd = await poll.json();
-                if (pd.status === 'succeeded') {
-                  const outputUrl = Array.isArray(pd.output) ? pd.output[0] : pd.output;
-                  if (outputUrl) { simulatedImageUrl = outputUrl; simulationProvider = 'replicate'; }
-                  break;
-                }
-                if (pd.status === 'failed' || pd.status === 'canceled') break;
-              }
-            }
-          }
-          if (simulatedImageUrl) {
-            logAI('info', 'replicate_fallback_success', { patientId, elapsedMs: Date.now() - _t0 });
-          }
-        } catch (repErr) {
-          console.warn('[REPLICATE FAILED]:', repErr?.message);
-          logAI('warn', 'replicate_exception', { patientId, message: repErr?.message });
-        }
-      }
-
-      console.log('[SIMULATION]:', simulationProvider ?? 'none', '| url:', simulatedImageUrl ? 'ok' : 'null');
-      if (simulatedImageUrl) {
-        logAI('info', 'simulation_complete', { patientId, provider: simulationProvider, elapsedMs: Date.now() - _t0 });
-      }
-    }
+    // Smile simulation is now on-demand (POST /api/chat/smile-simulation).
+    // The frontend triggers it lazily only for engaged users — not auto-run here.
+    const simulatedImageUrl  = null;
+    const simulationProvider = null;
 
     // imageDataUrl no longer needed — release before writing to Supabase
     // (GC hint; avoids keeping a large string alive through async I/O)
