@@ -15906,7 +15906,7 @@ async function replicatePrediction(imageUrl, { prompt, prompt_strength }, token)
         num_inference_steps: 30,
       },
     };
-    console.log(`[SIM] Creating prediction | strength=${prompt_strength} | image=${imageUrl.slice(0, 60)}`);
+    console.log('FINAL IMAGE SENT TO REPLICATE:', imageUrl);
 
     const createRes  = await fetch('https://api.replicate.com/v1/predictions', {
       method:  'POST',
@@ -15999,13 +15999,13 @@ async function runSmileSimulation({ imageUrl, patientId }) {
   console.log('[SIM] Starting 3-variation simulation | patientId:', patientId);
 
   // ── Step 1: convert to public URL so Replicate can access it ───────
+  console.log('[SIM] Raw imageUrl received:', imageUrl);
   const replicateImageUrl = toPublicUrl(imageUrl);
   console.log('[SIM] USING PUBLIC URL:', replicateImageUrl);
 
   if (replicateImageUrl.includes('/sign/')) {
-    // This should never happen — guard catches conversion failures early
-    console.error('[SIM] STILL USING SIGNED URL — toPublicUrl conversion failed for:', imageUrl);
-    throw new Error('sim_still_signed_url');
+    console.error('[SIM] Still using signed URL! toPublicUrl had no effect. Raw:', imageUrl);
+    throw new Error('Still using signed URL!');
   }
 
   // ── Step 2: run all 3 predictions in parallel ───────────────────────
