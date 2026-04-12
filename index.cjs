@@ -15819,7 +15819,12 @@ async function processDentalAI(imageDataUrl, photoType = 'general', { apiKey, ti
 async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights = [], timeoutMs = 25_000 }) {
   const GEMINI_KEY      = process.env.GEMINI_API_KEY;
   const REPLICATE_TOKEN = process.env.REPLICATE_API_TOKEN;
-  const GEMINI_MODEL    = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-exp';
+  // Model priority (most capable → stable fallback).
+  // gemini-2.0-flash-exp is DEPRECATED (404) as of 2025.
+  // Override via GEMINI_IMAGE_MODEL env var on Render if needed.
+  const GEMINI_MODELS = process.env.GEMINI_IMAGE_MODEL
+    ? [process.env.GEMINI_IMAGE_MODEL]
+    : ['gemini-3.1-flash-image-preview', 'gemini-2.5-flash-image'];
 
   // Surface provider availability early so callers can give clear errors.
   const hasGemini    = !!GEMINI_KEY;
@@ -15860,54 +15865,82 @@ async function runSmileSimulation({ imageDataUrl, imageUrl, patientId, insights 
     `IMPORTANT: Do NOT create a Hollywood smile. Keep it subtle. Preserve face structure.` +
     insightHints;
 
-  // ── 1. Gemini ────────────────────────────────────────────────────────
-  if (GEMINI_KEY && imageDataUrl) {
-    try {
-      const [hdr, b64] = imageDataUrl.split(',');
-      const mime = hdr.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
-      const gemRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [
-              { text: smilePrompt },
-              { inline_data: { mime_type: mime, data: b64 } },
-            ]}],
-            generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
-          }),
-          signal: AbortSignal.timeout(timeoutMs),
+  // ── 1. Gemini (try each model in priority order, skip on 404) ────────
+  if (hasGemini && imageDataUrl) {
+    const [hdr, b64] = imageDataUrl.split(',');
+    const inputMime  = hdr.match(/data:([^;]+)/)?.[1] || 'image/jpeg';
+
+    for (const model of GEMINI_MODELS) {
+      if (url) break; // already have a result from a previous model
+
+      console.log('[GEMINI SIM] Trying model:', model);
+      try {
+        const gemRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { text: smilePrompt },
+                { inline_data: { mime_type: inputMime, data: b64 } },
+              ]}],
+              generationConfig: { responseModalities: ['IMAGE', 'TEXT'] },
+            }),
+            signal: AbortSignal.timeout(timeoutMs),
+          }
+        );
+
+        console.log('[GEMINI SIM] Model:', model, '| status:', gemRes.status);
+
+        if (gemRes.status === 404) {
+          // Model not found / deprecated — try next candidate
+          const body = await gemRes.json().catch(() => ({}));
+          console.warn('[GEMINI SIM] 404 — model may be deprecated:', model,
+            body?.error?.message ?? '');
+          lastError = `gemini_404_${model}`;
+          continue; // next model
         }
-      );
-      console.log('[GEMINI SIM STATUS]:', gemRes.status);
-      if (gemRes.ok) {
-        const gd = await gemRes.json();
-        console.log('[GEMINI SIM RAW]:', JSON.stringify(gd).slice(0, 500));
+
+        if (!gemRes.ok) {
+          const errBody = await gemRes.json().catch(() => ({}));
+          lastError = `gemini_http_${gemRes.status}`;
+          console.error('[GEMINI SIM ERROR]:', gemRes.status, model,
+            JSON.stringify(errBody).slice(0, 300));
+          logAI('warn', 'gemini_http_error', {
+            patientId, model, status: gemRes.status, message: errBody?.error?.message,
+          });
+          break; // non-404 error — don't retry other models
+        }
+
+        const gd      = await gemRes.json();
         const imgPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.inline_data?.data);
         const txtPart = gd?.candidates?.[0]?.content?.parts?.find(p => p.text);
+
         if (imgPart) {
-          const buf  = Buffer.from(imgPart.inline_data.data, 'base64');
+          const buf     = Buffer.from(imgPart.inline_data.data, 'base64');
           const outMime = imgPart.inline_data.mime_type || 'image/jpeg';
-          console.log('[GEMINI SIM] Image:', Math.round(buf.length / 1024), 'KB');
+          console.log('[GEMINI SIM] Image from', model, ':', Math.round(buf.length / 1024), 'KB');
           url = await uploadSim(buf, outMime, 'gemini');
-          if (url) provider = 'gemini';
+          if (url) {
+            provider  = 'gemini';
+            lastError = null;
+          }
         } else {
-      console.warn('[GEMINI SIM] No image. Text:', txtPart?.text?.slice(0, 120) ?? '(none)');
-        lastError = 'gemini_no_image';
-        logAI('warn', 'gemini_no_image', { patientId, model: GEMINI_MODEL });
+          console.warn('[GEMINI SIM] No image in response from', model,
+            '| text:', txtPart?.text?.slice(0, 120) ?? '(none)');
+          lastError = `gemini_no_image_${model}`;
+          logAI('warn', 'gemini_no_image', { patientId, model });
+        }
+
+      } catch (e) {
+        lastError = `gemini_exception: ${e?.message}`;
+        console.warn('[GEMINI SIM FAILED] model:', model, '|', e?.message);
+        logAI('warn', 'gemini_exception', { patientId, model, message: e?.message });
+        // Network / timeout error — no point trying next model
+        break;
       }
-    } else {
-      const errBody = await gemRes.json().catch(() => ({}));
-      lastError = `gemini_http_${gemRes.status}`;
-      console.error('[GEMINI SIM ERROR]:', gemRes.status, JSON.stringify(errBody).slice(0, 300));
-      logAI('warn', 'gemini_http_error', { patientId, status: gemRes.status, message: errBody?.error?.message });
     }
-  } catch (e) {
-    lastError = `gemini_exception: ${e?.message}`;
-    console.warn('[GEMINI SIM FAILED]:', e?.message);
-    logAI('warn', 'gemini_exception', { patientId, message: e?.message });
-  }
   }
 
   // ── 2. Replicate GFPGAN fallback ─────────────────────────────────────
