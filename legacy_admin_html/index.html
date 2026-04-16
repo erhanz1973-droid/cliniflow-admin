@@ -1,92 +1,603 @@
 <!DOCTYPE html>
-<html>
+<html lang="tr">
 <head>
-  <meta charset="utf-8" />
-  <title>Cliniflow Admin - Yeni Panel</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Cliniflow Admin V2 – Treatments</title>
   <style>
-    body {
-      font-family: system-ui, -apple-system, Arial;
-      margin: 0;
-      background: #0b0f16;
-      color: #e6eaf2;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      text-align: center;
-      padding: 20px;
+    :root { --bg:#f6f7f9; --card:#fff; --b:#e5e7eb; --p:#2563eb; --g:#16a34a; --r:#dc2626; }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111827; }
+    .wrap{ max-width:980px; margin:0 auto; padding:12px; }
+    h1{ font-size:18px; margin:8px 0 12px; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .card{ background:var(--card); border:1px solid var(--b); border-radius:10px; padding:12px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    label{ font-size:12px; color:#374151; display:block; margin-bottom:6px; }
+    input, select, button{
+      font-size:16px; padding:10px 12px; border-radius:10px; border:1px solid var(--b); background:#fff;
     }
-    .container {
-      max-width: 600px;
-      background: #0f1522;
-      border: 1px solid #1c2432;
-      border-radius: 16px;
-      padding: 40px;
+    button{ cursor:pointer; border:none; background:var(--p); color:#fff; font-weight:700; }
+    button.secondary{ background:#111827; }
+    button.ghost{ background:#fff; color:#111827; border:1px solid var(--b); }
+    button.danger{ background:var(--r); }
+    .pill{ display:inline-flex; padding:6px 10px; border-radius:999px; background:#eef2ff; color:#3730a3; font-weight:700; font-size:12px; }
+    .muted{ color:#6b7280; font-size:12px; }
+    .gridWrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:6px; }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(8, minmax(44px, 1fr));
+      gap:8px;
+      min-width: 420px;
     }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 16px;
-      color: #ffffff;
+    .tooth{
+      user-select:none;
+      text-align:center;
+      padding:12px 0;
+      border-radius:12px;
+      border:2px solid var(--b);
+      background:#fff;
+      font-weight:800;
+      cursor:pointer;
     }
-    p {
-      color: #a7b2c8;
-      margin-bottom: 20px;
-      line-height: 1.6;
-      font-size: 16px;
+    .tooth.active{ border-color:var(--p); background:#dbeafe; }
+    .tooth.has{ border-color:var(--g); background:#bbf7d0; }
+    .tooth.badge::after{
+      content: attr(data-count);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      margin-left:6px;
+      min-width:18px;
+      height:18px;
+      padding:0 6px;
+      border-radius:999px;
+      background:#111827;
+      color:#fff;
+      font-size:12px;
+      font-weight:800;
     }
-    .link-box {
-      background: #1a2640;
-      border: 2px solid #2b3a58;
-      border-radius: 12px;
-      padding: 20px;
-      margin: 24px 0;
-    }
-    .link-box a {
-      display: block;
-      color: #6aa6ff;
-      font-size: 18px;
-      font-weight: 600;
-      text-decoration: none;
-      margin-bottom: 8px;
-    }
-    .link-box a:hover {
-      color: #8bb5ff;
-      text-decoration: underline;
-    }
-    .muted {
-      font-size: 14px;
-      color: #6b7280;
-      margin-top: 8px;
-    }
-    .warning {
-      background: #3a1620;
-      border: 1px solid #5a2232;
-      border-radius: 8px;
-      padding: 12px;
-      margin-top: 20px;
-      color: #ffd7df;
-      font-size: 14px;
-  }
-</style>
+    .two{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    @media (max-width: 840px){ .two{ grid-template-columns: 1fr; } }
+    .list{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+    .item{ border:1px solid var(--b); border-radius:12px; padding:10px; display:flex; justify-content:space-between; gap:10px; align-items:center; background:#fff; }
+    .item b{ font-size:14px; }
+    .item small{ display:block; color:#6b7280; }
+    .status{ font-weight:800; font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--b); }
+    .ok{ background:#dcfce7; border-color:#86efac; }
+    .planned{ background:#dbeafe; border-color:#93c5fd; }
+    .warn{ background:#fee2e2; border-color:#fecaca; }
+    .hr{ height:1px; background:var(--b); margin:10px 0; }
+    .err{ color:var(--r); font-weight:700; }
+    .okmsg{ color:var(--g); font-weight:700; }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <h1>⚠️ Bu Sayfa Artık Kullanılmıyor</h1>
-    <p>
-      Eski admin panel sayfası kaldırıldı. Lütfen yeni Next.js admin panelini kullanın.
-    </p>
+  <div class="wrap">
+    <h1>🦷 Cliniflow Admin V2 – Treatments</h1>
 
-    <div class="link-box">
-      <strong style="color: #e6eaf2; display: block; margin-bottom: 12px;">Yeni Admin Panel:</strong>
-      <a href="http://localhost:3000" target="_blank">http://localhost:3000</a>
-      <a href="http://localhost:3000/patients" target="_blank">http://localhost:3000/patients (Hasta Listesi)</a>
-      <div class="muted">Yukarıdaki linklere tıklayarak yeni admin panele gidebilirsiniz.</div>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="row">
+        <div style="flex:1; min-width:300px;">
+          <label>Admin Token</label>
+          <input id="adminToken" type="text" placeholder="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="width:100%" />
+          <div class="muted">Admin token localStorage'dan otomatik yüklenir.</div>
+        </div>
+      </div>
     </div>
 
-    <div class="warning">
-      <strong>Not:</strong> Eğer yeni admin panel açılmıyorsa, terminal'de <code>npm run dev</code> komutunun çalıştığından emin olun.
+    <div class="card">
+      <div class="row">
+        <div style="flex:1; min-width:260px;">
+          <label>Hasta seç (server’dan tokens listesi)</label>
+          <select id="selPatient" style="width:100%"></select>
+          <div class="muted" id="patientMeta">—</div>
+        </div>
+
+        <div style="min-width:210px;">
+          <label>Hasta Token (otomatik dolar)</label>
+          <input id="patientToken" placeholder="t_xxx" style="width:100%" />
+          <div class="muted">Bu token header olarak gönderilir: <b>x-patient-token</b></div>
+        </div>
+
+        <div class="row" style="gap:8px;">
+          <button onclick="refreshTokens()">Listeyi Yenile</button>
+          <button class="secondary" onclick="loadTreatments()">Treatments Yükle</button>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+      <div class="muted">
+        Not: Kaydetme için server’da <b>POST /api/patient/:patientId/treatments</b> route’u olmalı. (Aşağıda patch’i verdim.)
+      </div>
+      <div id="msg" class="muted" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="two" style="margin-top:12px;">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <b>Üst Çene</b>
+          <span class="pill">FDI 11–18 / 21–28</span>
+        </div>
+        <div class="gridWrap" style="margin-top:10px;">
+          <div class="grid" id="upperRow1"></div>
+          <div style="height:8px;"></div>
+          <div class="grid" id="upperRow2"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <b>Alt Çene</b>
+          <span class="pill">FDI 31–38 / 41–48</span>
+        </div>
+        <div class="gridWrap" style="margin-top:10px;">
+          <div class="grid" id="lowerRow1"></div>
+          <div style="height:8px;"></div>
+          <div class="grid" id="lowerRow2"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <b>Seçili Diş: </b><span id="selTooth" class="pill">—</span>
+          <div class="muted" id="selToothHint">Dişe tıkla, işlem ekle.</div>
+        </div>
+        <button class="ghost" onclick="clearSelection()">Seçimi Temizle</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <div style="flex:1; min-width:220px;">
+          <label>İşlem Türü</label>
+          <select id="procType" style="width:100%">
+            <option value="IMPLANT">Implant</option>
+            <option value="CROWN">Crown</option>
+            <option value="FILLING">Filling</option>
+            <option value="ROOT_CANAL">Root Canal</option>
+            <option value="EXTRACTION">Extraction</option>
+          </select>
+        </div>
+
+        <div style="min-width:220px;">
+          <label>Status</label>
+          <select id="procStatus" style="width:100%">
+            <option value="PLANNED">PLANNED</option>
+            <option value="DONE">DONE</option>
+          </select>
+        </div>
+
+        <div style="min-width:220px;">
+          <label>Tarih</label>
+          <input id="procDate" type="date" style="width:100%"/>
+        </div>
+
+        <div style="min-width:160px;">
+          <label>&nbsp;</label>
+          <button style="width:100%" onclick="addProcedure()">+ Ekle & Kaydet</button>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <b>Bu dişteki işlemler</b>
+      <div class="muted">Şimdilik sadece listeleme + ekleme var.</div>
+      <div class="list" id="procList"></div>
     </div>
   </div>
+
+<script>
+  const API = location.origin;
+
+  const U1 = ["11","12","13","14","15","16","17","18"];
+  const U2 = ["21","22","23","24","25","26","27","28"];
+  const L1 = ["31","32","33","34","35","36","37","38"];
+  const L2 = ["41","42","43","44","45","46","47","48"];
+
+  let SELECTED_TOOTH = null;
+  let DATA = { patientId:"", teeth:[] };
+
+  const elMsg = document.getElementById("msg");
+  const elSelPatient = document.getElementById("selPatient");
+  const elToken = document.getElementById("patientToken");
+  const elPatientMeta = document.getElementById("patientMeta");
+  const elSelTooth = document.getElementById("selTooth");
+  const elProcList = document.getElementById("procList");
+
+  function setMsg(text, kind="muted"){
+    elMsg.className = kind === "ok" ? "okmsg" : (kind==="err" ? "err" : "muted");
+    elMsg.textContent = text || "";
+  }
+
+  function toothKey(id){ return String(id||"").trim(); }
+
+  function findTooth(toothId){
+    toothId = toothKey(toothId);
+    return (DATA.teeth || []).find(t => toothKey(t.toothId) === toothId);
+  }
+
+  function ensureTooth(toothId){
+    toothId = toothKey(toothId);
+    let t = findTooth(toothId);
+    if (!t){
+      // jaw bilgisi opsiyonel; server tarafında da zorunlu değil
+      DATA.teeth = DATA.teeth || [];
+      DATA.teeth.push({ toothId, procedures: [] });
+      t = findTooth(toothId);
+    }
+    t.procedures = t.procedures || [];
+    return t;
+  }
+
+  function renderRow(elId, arr){
+    const el = document.getElementById(elId);
+    el.innerHTML = "";
+    arr.forEach(id => {
+      const d = document.createElement("div");
+      d.className = "tooth";
+      d.textContent = id;
+      d.onclick = () => selectTooth(id);
+      el.appendChild(d);
+    });
+  }
+
+  function refreshBadgeAndColors(){
+    const all = document.querySelectorAll(".tooth");
+    all.forEach(el => {
+      const id = toothKey(el.textContent);
+      const t = findTooth(id);
+      const count = (t?.procedures || []).length;
+
+      el.classList.remove("has","badge","active");
+      el.removeAttribute("data-count");
+
+      if (count > 0){
+        el.classList.add("has","badge");
+        el.setAttribute("data-count", String(count));
+      }
+      if (SELECTED_TOOTH && id === SELECTED_TOOTH){
+        el.classList.add("active");
+      }
+    });
+  }
+
+  function selectTooth(id){
+    SELECTED_TOOTH = toothKey(id);
+    elSelTooth.textContent = SELECTED_TOOTH;
+    renderSelectedToothList();
+    refreshBadgeAndColors();
+  }
+
+  function clearSelection(){
+    SELECTED_TOOTH = null;
+    elSelTooth.textContent = "—";
+    elProcList.innerHTML = "";
+    refreshBadgeAndColors();
+  }
+
+  function fmtDate(ts){
+    if (!ts) return "—";
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return "—";
+    return d.toISOString().slice(0,10);
+  }
+
+  function renderSelectedToothList(){
+    elProcList.innerHTML = "";
+    if (!SELECTED_TOOTH) return;
+
+    const t = ensureTooth(SELECTED_TOOTH);
+    const procs = t.procedures || [];
+    if (procs.length === 0){
+      const div = document.createElement("div");
+      div.className = "muted";
+      div.textContent = "Bu dişte henüz işlem yok.";
+      elProcList.appendChild(div);
+      return;
+    }
+
+    procs
+      .slice()
+      .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0))
+      .forEach(p => {
+        const row = document.createElement("div");
+        row.className = "item";
+        const left = document.createElement("div");
+        const st = String(p.status||"PLANNED").toUpperCase();
+        const stClass = st === "DONE" ? "status ok" : "status planned";
+        left.innerHTML = `<b>${p.type || "PROC"}</b>
+          <small>Tarih: ${fmtDate(p.scheduledAt)} • Oluş: ${fmtDate(p.createdAt)}</small>`;
+
+        const right = document.createElement("div");
+        const badge = document.createElement("span");
+        badge.className = stClass;
+        badge.textContent = st;
+        right.appendChild(badge);
+
+        row.appendChild(left);
+        row.appendChild(right);
+        elProcList.appendChild(row);
+      });
+  }
+
+  function getAdminToken(){
+    // Önce input alanından al
+    const elAdminToken = document.getElementById('adminToken');
+    if (elAdminToken && elAdminToken.value && elAdminToken.value.trim()) {
+      return elAdminToken.value.trim();
+    }
+    // Input boşsa localStorage'dan al
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken && savedToken.trim()) {
+      // Eğer input varsa ama boşsa, localStorage'dan yükle
+      if (elAdminToken && !elAdminToken.value) {
+        elAdminToken.value = savedToken;
+      }
+      return savedToken.trim();
+    }
+    return '';
+  }
+
+  async function refreshTokens(){
+    const adminToken = getAdminToken();
+    if (!adminToken) {
+      setMsg("⚠️ Admin token bulunamadı. Lütfen yukarıdaki Admin Token alanına token'ı girin.", "err");
+      // Input alanına odaklan
+      const elAdminToken = document.getElementById('adminToken');
+      if (elAdminToken) {
+        elAdminToken.focus();
+      }
+      return;
+    }
+
+    try{
+      setMsg("Tokens listesi çekiliyor...");
+      const headers = {
+        "Content-Type": "application/json"
+      };
+      
+      if (adminToken.startsWith("Bearer ")) {
+        headers["Authorization"] = adminToken;
+      } else {
+        headers["Authorization"] = `Bearer ${adminToken}`;
+      }
+
+      const r = await fetch(`${API}/api/admin/tokens`, {
+        headers: headers
+      });
+      
+      if (r.status === 401) {
+        setMsg("❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.", "err");
+        return;
+      }
+
+      const j = await r.json();
+      if (!j?.ok) throw new Error("tokens_failed");
+
+      const items = (j.items || []).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      elSelPatient.innerHTML = "";
+
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = "— Hasta seç —";
+      elSelPatient.appendChild(opt0);
+
+      items.forEach(it=>{
+        const opt = document.createElement("option");
+        opt.value = it.patientId || "";
+        opt.dataset.token = it.token || "";
+        opt.dataset.name = it.name || "";
+        opt.dataset.phone = it.phone || "";
+        opt.textContent = `${it.patientId} • ${it.name || "—"} • ${it.phone || "—"} • ${it.role || "—"}`;
+        elSelPatient.appendChild(opt);
+      });
+
+      setMsg("Hazır. Hasta seçip 'Treatments Yükle' de.", "ok");
+    }catch(e){
+      setMsg("Tokens listesi alınamadı. /api/admin/tokens çalışıyor mu?", "err");
+    }
+  }
+
+  elSelPatient.addEventListener("change", ()=>{
+    const opt = elSelPatient.selectedOptions?.[0];
+    const pid = opt?.value || "";
+    const tok = opt?.dataset?.token || "";
+    const nm = opt?.dataset?.name || "";
+    const ph = opt?.dataset?.phone || "";
+
+    if (tok) elToken.value = tok;
+    elPatientMeta.textContent = pid ? `Seçili: ${pid} • ${nm} • ${ph}` : "—";
+    clearSelection();
+  });
+
+  function authHeaders(){
+    const tok = String(elToken.value || "").trim();
+    const h = { "Content-Type":"application/json" };
+    if (tok) h["x-patient-token"] = tok;
+    return h;
+  }
+
+  async function loadTreatments(){
+    const pid = String(elSelPatient.value || "").trim();
+    if (!pid) return setMsg("Önce hasta seç.", "err");
+
+    try{
+      setMsg("Treatments yükleniyor...");
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        headers: authHeaders()
+      });
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Yüklenemedi: ${err} (Token/Approve kontrol et)`, "err");
+        return;
+      }
+
+      DATA = j || { patientId: pid, teeth: [] };
+      if (!Array.isArray(DATA.teeth)) DATA.teeth = [];
+      setMsg("Yüklendi.", "ok");
+      clearSelection();
+      refreshBadgeAndColors();
+    }catch(e){
+      setMsg("Yükleme hatası. Server erişimi var mı?", "err");
+    }
+  }
+
+  async function addProcedure(){
+    const pid = String(elSelPatient.value || "").trim();
+    if (!pid) return setMsg("Önce hasta seç.", "err");
+    if (!SELECTED_TOOTH) return setMsg("Önce diş seç.", "err");
+
+    const type = document.getElementById("procType").value;
+    const status = document.getElementById("procStatus").value;
+    const date = document.getElementById("procDate").value;
+    if (!date) return setMsg("Tarih seç.", "err");
+
+    // UI optimistik: önce local’e ekle, sonra server’a yaz
+    const t = ensureTooth(SELECTED_TOOTH);
+    const createdAt = Date.now();
+    const scheduledAt = new Date(date + "T00:00:00").getTime();
+
+    const payload = {
+      toothId: SELECTED_TOOTH,
+      procedure: { type, status, createdAt, scheduledAt }
+    };
+
+    try{
+      setMsg("Kaydediliyor...");
+      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+      });
+
+      const j = await r.json().catch(()=>null);
+
+      if (!r.ok){
+        const err = j?.error || `${r.status}`;
+        setMsg(`Kaydetme başarısız: ${err} (POST route var mı?)`, "err");
+        return;
+      }
+
+      // Server son halini döndürürse onu al; döndürmezse yeniden yükle
+      if (j?.teeth) {
+        DATA = j;
+      } else {
+        await loadTreatments();
+      }
+
+      setMsg("Kaydedildi ✅", "ok");
+      renderSelectedToothList();
+      refreshBadgeAndColors();
+    }catch(e){
+      setMsg("Kaydetme hatası. Server POST route yoksa bu olur.", "err");
+    }
+  }
+
+  // Admin token yükleme ve kaydetme
+  function initAdminToken() {
+    const elAdminToken = document.getElementById('adminToken');
+    if (!elAdminToken) return false;
+    
+    // Event listener'ları ekle (sadece bir kez)
+    if (!elAdminToken.hasAttribute('data-listeners-added')) {
+      elAdminToken.setAttribute('data-listeners-added', 'true');
+      
+      // Token değiştiğinde localStorage'a kaydet
+      elAdminToken.addEventListener('change', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          refreshTokens();
+        } else {
+          localStorage.removeItem('admin_token');
+        }
+      });
+      
+      // Input alanına yazıldığında da kaydet
+      elAdminToken.addEventListener('blur', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          refreshTokens();
+        } else {
+          localStorage.removeItem('admin_token');
+        }
+      });
+      
+      // Input alanına her yazıldığında da kaydet (real-time kaydetme)
+      let inputTimeout;
+      elAdminToken.addEventListener('input', (e) => {
+        const token = e.target.value.trim();
+        if (token) {
+          localStorage.setItem('admin_token', token);
+          clearTimeout(inputTimeout);
+          inputTimeout = setTimeout(() => {
+            if (token) refreshTokens();
+          }, 500);
+        }
+      });
+    }
+    
+    // localStorage'dan token'ı yükle
+    const savedToken = localStorage.getItem('admin_token');
+    if (savedToken && savedToken.trim()) {
+      elAdminToken.value = savedToken;
+      return true;
+    }
+    return false;
+  }
+
+  // init - Diş gridlerini render et
+  renderRow("upperRow1", U1);
+  renderRow("upperRow2", U2);
+  renderRow("lowerRow1", L1);
+  renderRow("lowerRow2", L2);
+  
+  // Token'ı otomatik yükle - DOM hazır olana kadar bekle
+  function loadTokenWhenReady() {
+    const elAdminToken = document.getElementById('adminToken');
+    if (!elAdminToken) {
+      // DOM henüz hazır değilse tekrar dene
+      setTimeout(loadTokenWhenReady, 100);
+      return;
+    }
+    
+    // localStorage'dan token kontrolü
+    const savedToken = localStorage.getItem('admin_token');
+    console.log('[Admin Token] localStorage token:', savedToken ? 'Bulundu' : 'Bulunamadı');
+    
+    // Token'ı yükle
+    const tokenLoaded = initAdminToken();
+    console.log('[Admin Token] Token yüklendi:', tokenLoaded);
+    console.log('[Admin Token] Input değeri:', elAdminToken.value);
+    
+    // Token yüklendiyse listeyi otomatik yenile
+    if (tokenLoaded) {
+      console.log('[Admin Token] Liste yenileniyor...');
+      setTimeout(() => refreshTokens(), 300);
+    } else {
+      console.log('[Admin Token] Token yüklenmedi, liste yenilenmeyecek');
+    }
+  }
+  
+  // DOM hazır olduğunda token'ı yükle
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadTokenWhenReady);
+  } else {
+    // DOM zaten hazırsa hemen yükle
+    loadTokenWhenReady();
+  }
+  
+  // Sayfa tamamen yüklendiğinde de bir kez daha kontrol et (garanti)
+  window.addEventListener('load', function() {
+    const tokenLoaded = initAdminToken();
+    if (tokenLoaded) {
+      setTimeout(() => refreshTokens(), 100);
+    }
+  });
+</script>
 </body>
 </html>
