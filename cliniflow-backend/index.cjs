@@ -1158,14 +1158,7 @@ async function calculateClinicOralHealthAverage(clinicId) {
 }
 
 // ================== SUPER ADMIN GUARD ==================
-/** Prefer cliniflow-backend/public; fall back to repo-root public/ (cliniflow-admin layout). */
-const publicDir = (() => {
-  const inner = path.join(__dirname, "public");
-  if (fs.existsSync(inner)) return inner;
-  const parent = path.join(__dirname, "..", "public");
-  if (fs.existsSync(parent)) return parent;
-  return inner;
-})();
+const publicDir = path.join(__dirname, "public");
 
 // Canonical admin HTML routes (cliniflow-admin/public only — no repo-root public/)
 app.get("/admin-patients.html", (req, res) => {
@@ -2588,7 +2581,7 @@ const SUPER_ADMIN_URL = process.env.SUPER_ADMIN_URL || "https://superadmin.clini
 app.get("/admin.html", (req, res) => {
   // Always serve the normal clinic admin dashboard
   // The dashboard page itself will check for token and redirect to login if needed
-  const filePath = path.join(publicDir, "admin.html");
+  const filePath = path.join(__dirname, "public", "admin.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
   } else {
@@ -2610,7 +2603,7 @@ app.get("/", (req, res) => res.redirect("/admin-login.html"));
 app.get("/admin", (req, res) => res.redirect("/admin-login.html"));
 // /dashboard should serve normal admin dashboard, NOT redirect to Super Admin
 app.get("/dashboard", (req, res) => {
-  const filePath = path.join(publicDir, "admin.html");
+  const filePath = path.join(__dirname, "public", "admin.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
   } else {
@@ -2636,7 +2629,7 @@ app.get("/admin-v3.html", (req, res) => {
 
 // Admin Login & Register routes (explicit handlers for Render compatibility)
 app.get("/admin-login.html", (req, res) => {
-  const filePath = path.join(publicDir, "admin-login.html");
+  const filePath = path.join(__dirname, "public", "admin-login.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
     } else {
@@ -2659,7 +2652,7 @@ app.get("/admin-login.html", (req, res) => {
 });
 
 app.get("/admin-register.html", (req, res) => {
-  const filePath = path.join(publicDir, "admin-register.html");
+  const filePath = path.join(__dirname, "public", "admin-register.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
   } else {
@@ -2683,7 +2676,7 @@ app.get("/admin-register.html", (req, res) => {
 
 // Super Admin routes
 app.get("/super-admin-login.html", (req, res) => {
-  const filePath = path.join(publicDir, "super-admin-login.html");
+  const filePath = path.join(__dirname, "public", "super-admin-login.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
     } else {
@@ -2692,7 +2685,7 @@ app.get("/super-admin-login.html", (req, res) => {
 });
 
 app.get("/super-admin.html", (req, res) => {
-  const filePath = path.join(publicDir, "super-admin.html");
+  const filePath = path.join(__dirname, "public", "super-admin.html");
   if (fs.existsSync(filePath)) {
     res.sendFile(filePath);
   } else {
@@ -14070,7 +14063,7 @@ app.post('/api/patient/upload-intraoral-photos', chatUpload.array('photos', 5), 
     const maxFileSize = 10 * 1024 * 1024; // 10MB per image
 
     // Create upload directory
-    const INTRAORAL_DIR = path.join(publicDir, 'uploads', 'intraoral', patientId);
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
     if (!fs.existsSync(INTRAORAL_DIR)) {
       fs.mkdirSync(INTRAORAL_DIR, { recursive: true });
     }
@@ -14242,7 +14235,7 @@ async function collectPatientFiles(patientId) {
 
   // ── Source 3: local disk — intraoral photos ───────────────────────────────
   try {
-    const INTRAORAL_DIR = path.join(publicDir, 'uploads', 'intraoral', patientId);
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
     if (fs.existsSync(INTRAORAL_DIR)) {
       const diskFiles = fs.readdirSync(INTRAORAL_DIR).filter((f) => /\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f));
       for (const fname of diskFiles) {
@@ -14267,7 +14260,7 @@ async function collectPatientFiles(patientId) {
 
   // ── Source 4: local disk — chat uploads ───────────────────────────────────
   try {
-    const CHAT_UPLOAD_DIR = path.join(publicDir, 'uploads', 'chat', patientId);
+    const CHAT_UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'chat', patientId);
     if (fs.existsSync(CHAT_UPLOAD_DIR)) {
       const diskFiles = fs.readdirSync(CHAT_UPLOAD_DIR).filter((f) => /\.(jpg|jpeg|png|heic|heif|webp|pdf)$/i.test(f));
       for (const fname of diskFiles) {
@@ -14379,7 +14372,7 @@ app.post(
         else ext = ".jpg";
       }
       const safeName = `profile_${Date.now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
-      const UPLOAD_DIR = path.join(publicDir, "uploads", "patient", tokenPid);
+      const UPLOAD_DIR = path.join(__dirname, "public", "uploads", "patient", tokenPid);
       if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
       const diskPath = path.join(UPLOAD_DIR, safeName);
       fs.writeFileSync(diskPath, f.buffer);
@@ -14461,7 +14454,7 @@ app.post('/api/patient/:patientId/upload', requireToken, chatUpload.single('file
     }
 
     const safeName = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
-    const UPLOAD_DIR = path.join(publicDir, 'uploads', 'patient', patientId);
+    const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
     if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     const diskPath = path.join(UPLOAD_DIR, safeName);
     fs.writeFileSync(diskPath, file.buffer);
@@ -14558,11 +14551,11 @@ app.get('/api/admin/patient/:patientId/files', requireAdminAuth, async (req, res
         debugInfo.sample_attachments = (msgRaw || []).slice(0, 3).map(r => r.attachment);
       }
 
-      const intraoralDir = path.join(publicDir, 'uploads', 'intraoral', patientId);
+      const intraoralDir = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
       debugInfo.intraoral_disk_exists = fs.existsSync(intraoralDir);
       debugInfo.intraoral_files = fs.existsSync(intraoralDir) ? fs.readdirSync(intraoralDir) : [];
 
-      const patientDir = path.join(publicDir, 'uploads', 'patient', patientId);
+      const patientDir = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
       debugInfo.patient_disk_exists = fs.existsSync(patientDir);
       debugInfo.patient_disk_files = fs.existsSync(patientDir) ? fs.readdirSync(patientDir) : [];
     }
@@ -14597,7 +14590,7 @@ app.post('/api/admin/patient/:patientId/upload', requireAdminAuth, chatUpload.si
     const resolvedType = fileType === 'xray' ? 'xray' : isImg ? 'image' : isPdf ? 'pdf' : 'file';
 
     const safeName = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
-    const UPLOAD_DIR = path.join(publicDir, 'uploads', 'patient', patientId);
+    const UPLOAD_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
     if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     const diskPath = path.join(UPLOAD_DIR, safeName);
     fs.writeFileSync(diskPath, file.buffer);
@@ -14783,7 +14776,7 @@ app.get('/api/patient/:patientId/intraoral-photos', requireToken, async (req, re
     }
 
     // ── Source 2: local disk uploads/patient/:patientId/ ──────────────────
-    const LOCAL_DIR = path.join(publicDir, 'uploads', 'patient', patientId);
+    const LOCAL_DIR = path.join(__dirname, 'public', 'uploads', 'patient', patientId);
     if (fs.existsSync(LOCAL_DIR)) {
       const files = fs.readdirSync(LOCAL_DIR).sort().reverse();
       for (const fname of files) {
@@ -14809,7 +14802,7 @@ app.get('/api/patient/:patientId/intraoral-photos', requireToken, async (req, re
     }
 
     // ── Source 3: local intraoral dir ─────────────────────────────────────
-    const INTRAORAL_DIR = path.join(publicDir, 'uploads', 'intraoral', patientId);
+    const INTRAORAL_DIR = path.join(__dirname, 'public', 'uploads', 'intraoral', patientId);
     if (fs.existsSync(INTRAORAL_DIR)) {
       const files = fs.readdirSync(INTRAORAL_DIR).sort().reverse();
       for (const fname of files) {
@@ -14890,7 +14883,7 @@ app.get('/api/doctor/patient/:patientId/intraoral-photos', requireDoctorAuth, as
 
     // Fallback: local dirs
     for (const dir of ['patient', 'intraoral']) {
-      const D = path.join(publicDir, 'uploads', dir, patientId);
+      const D = path.join(__dirname, 'public', 'uploads', dir, patientId);
       if (!fs.existsSync(D)) continue;
       for (const fname of fs.readdirSync(D).sort().reverse()) {
         if (!fname.match(/\.(jpg|jpeg|png)$/i)) continue;
@@ -15023,7 +15016,7 @@ app.post("/api/chat/upload", requireToken, chatUpload.array("files", 5), async (
       "application/x-zip-compressed",
     ]);
 
-    const CHAT_UPLOAD_DIR = path.join(publicDir, "uploads", "chat", patientId);
+    const CHAT_UPLOAD_DIR = path.join(__dirname, "public", "uploads", "chat", patientId);
     if (!fs.existsSync(CHAT_UPLOAD_DIR)) fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
 
     const useFileStore = !isSupabaseEnabled() && canUseFileFallback();
@@ -16278,7 +16271,7 @@ app.post('/api/chat/ai-analyze', requireToken, aiRateLimitMiddleware, async (req
     } else {
       // Local disk path (legacy / same-server deployments)
       const relPath  = decodeURIComponent(imageUrl.split('?')[0]);
-      const diskPath = path.join(publicDir, ...relPath.replace(/^\//, '').split('/'));
+      const diskPath = path.join(__dirname, 'public', ...relPath.replace(/^\//, '').split('/'));
 
       if (!fs.existsSync(diskPath)) {
         logAI('warn', 'image_not_found', { patientId, diskPath });
@@ -16570,7 +16563,7 @@ app.post("/api/admin/chat/upload", requireAdminAuth, chatUpload.array("files", 5
       "application/x-zip-compressed",
     ]);
 
-    const CHAT_UPLOAD_DIR = path.join(publicDir, "uploads", "chat", patientId);
+    const CHAT_UPLOAD_DIR = path.join(__dirname, "public", "uploads", "chat", patientId);
     if (!fs.existsSync(CHAT_UPLOAD_DIR)) fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
 
     const useFileStore = !isSupabaseEnabled() && canUseFileFallback();
