@@ -1,0 +1,14 @@
+{
+  "builds": [
+    {
+      "src": "legacy_admin_html/index.html",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "legacy_admin_html/index.html"
+    }
+  ]
+}
