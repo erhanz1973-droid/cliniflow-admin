@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <script src="/api-base.js?v=202603301"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Messages / Leads / Unassigned — Clinifly Admin</title>
+  <link rel="stylesheet" href="/admin-layout.css"/>
+  <script>
+    (function() {
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      const userStr = localStorage.getItem("user") || localStorage.getItem("adminUser");
+      if (!token || !userStr) {
+        window.location.href = "/admin-login.html";
+        return;
+      }
+      try {
+        const user = JSON.parse(userStr);
+        if (!user || user.role !== "ADMIN") {
+          window.location.href = "/admin-login.html";
+        }
+      } catch (e) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      --bg:#111827; --card:#1f2937; --b:#374151; --muted:#9ca3af; --accent:#2563eb;
+    }
+    body { font-family: system-ui, sans-serif; margin:0; background:var(--bg); color:#e5e7eb; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.35rem; margin: 0 0 8px; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 24px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 20px; }
+    label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 4px; }
+    select, button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--b); background: var(--card); color: #e5e7eb; }
+    button.primary { background: var(--accent); border-color: #1d4ed8; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--b); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .preview { max-width: 320px; color: #cbd5e1; white-space: pre-wrap; word-break: break-word; }
+    .err { color: #f87171; margin-top: 12px; }
+    .ok { color: #4ade80; margin-top: 12px; }
+    a.nav { color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <p><a class="nav" href="/admin.html">← Dashboard</a></p>
+    <h1>Messages / Leads / Unassigned Requests</h1>
+    <p class="sub">Assign each lead to exactly one doctor. Only that doctor will see the conversation in the doctor app.</p>
+
+    <div class="row">
+      <button type="button" class="primary" id="refresh">Refresh list</button>
+      <span id="status"></span>
+    </div>
+    <div id="error" class="err"></div>
+    <div id="success" class="ok"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Patient</th>
+          <th>Contact</th>
+          <th>Preview</th>
+          <th>Assign doctor</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    function apiBase() {
+      return (typeof window.CLINIFLOW_API_BASE_URL === "string" && window.CLINIFLOW_API_BASE_URL.trim())
+        ? window.CLINIFLOW_API_BASE_URL.replace(/\/+$/, "")
+        : "";
+    }
+    function authHeaders() {
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      return {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + (token || ""),
+      };
+    }
+
+    let doctors = [];
+
+    async function loadDoctors() {
+      const res = await fetch(apiBase() + "/api/admin/doctors", { headers: authHeaders() });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.ok) throw new Error(j.error || "doctors_failed");
+      doctors = j.doctors || j.data || j.items || [];
+    }
+
+    async function loadUnassigned() {
+      const res = await fetch(apiBase() + "/api/admin/unassigned-messages", { headers: authHeaders() });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !j.ok) throw new Error(j.error || "unassigned_failed");
+      return j.messages || [];
+    }
+
+    function render(messages) {
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      if (!messages.length) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 4;
+        td.textContent = "No unassigned lead messages.";
+        td.style.color = "#9ca3af";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      for (const m of messages) {
+        const tr = document.createElement("tr");
+        const name = (m.patientName || "—") + (m.patientIdPublic ? " (" + m.patientIdPublic + ")" : "");
+        const contact = [m.email || "", m.phone || ""].filter(Boolean).join(" · ") || "—";
+        const preview = m.previewText || "—";
+        const pid = m.patientId;
+        const msgId = m.previewMessageId || pid;
+
+        tr.innerHTML = `
+          <td>${escapeHtml(name)}<br/><span style="font-size:0.75rem;color:#6b7280">${escapeHtml(pid)}</span></td>
+          <td>${escapeHtml(contact)}</td>
+          <td class="preview">${escapeHtml(preview)}</td>
+          <td></td>
+        `;
+        const tdAssign = tr.querySelector("td:last-child");
+        const sel = document.createElement("select");
+        sel.innerHTML = '<option value="">Select doctor…</option>' +
+          doctors.map((d) => '<option value="' + escapeAttr(d.id) + '">' + escapeHtml(d.name || d.email || d.id) + "</option>").join("");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "primary";
+        btn.textContent = "Assign";
+        btn.addEventListener("click", async () => {
+          document.getElementById("error").textContent = "";
+          document.getElementById("success").textContent = "";
+          const doctorId = sel.value;
+          if (!doctorId) {
+            document.getElementById("error").textContent = "Choose a doctor first.";
+            return;
+          }
+          btn.disabled = true;
+          try {
+            const res = await fetch(apiBase() + "/api/admin/assign-doctor", {
+              method: "POST",
+              headers: authHeaders(),
+              body: JSON.stringify({ messageId: msgId, doctorId: doctorId }),
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok || !j.ok) throw new Error(j.error || j.message || "assign_failed");
+            document.getElementById("success").textContent = "Assigned successfully.";
+            await refresh();
+          } catch (e) {
+            document.getElementById("error").textContent = String(e.message || e);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+        tdAssign.appendChild(sel);
+        tdAssign.appendChild(document.createElement("br"));
+        tdAssign.appendChild(btn);
+        tbody.appendChild(tr);
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+    function escapeAttr(s) {
+      return String(s || "").replace(/"/g, "&quot;");
+    }
+
+    async function refresh() {
+      const el = document.getElementById("status");
+      el.textContent = "Loading…";
+      document.getElementById("error").textContent = "";
+      try {
+        await loadDoctors();
+        const messages = await loadUnassigned();
+        render(messages);
+        el.textContent = messages.length + " unassigned";
+      } catch (e) {
+        el.textContent = "";
+        document.getElementById("error").textContent = String(e.message || e);
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", refresh);
+    refresh();
+  </script>
+</body>
+</html>
