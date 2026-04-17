@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "type": "commonjs",
   "main": "index.cjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
+    "build": "node --check index.cjs && node --check cliniflow-backend/index.cjs",
     "start": "node index.cjs",
     "dev": "node index.cjs",
     "pm2:start": "pm2 start ecosystem.config.js",
