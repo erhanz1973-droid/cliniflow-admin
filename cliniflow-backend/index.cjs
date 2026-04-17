@@ -181,10 +181,10 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const nodemailer = require("nodemailer");
 const { randomUUID } = require("crypto");
-const procedures = require("./shared/procedures");
-const { procedureIdForEncounterTreatmentColumn } = require("./lib/procedureIdForEncounterTreatment");
-const { fillIcdRowFromStatic } = require("./lib/icd10StaticLabels.cjs");
-const { SPECIALITY_SEED_NAMES, LANGUAGE_SEED_NAMES } = require("./lib/profileReferenceSeeds");
+const procedures = require("../shared/procedures");
+const { procedureIdForEncounterTreatmentColumn } = require("../lib/procedureIdForEncounterTreatment");
+const { fillIcdRowFromStatic } = require("../lib/icd10StaticLabels.cjs");
+const { SPECIALITY_SEED_NAMES, LANGUAGE_SEED_NAMES } = require("../lib/profileReferenceSeeds");
 
 const {
   supabase,
@@ -220,7 +220,7 @@ const {
   getReferralsByClinic: getReferralsByClinicFromDB,
   savePushSubscription,
   getPushSubscriptionsByPatient,
-} = require("./lib/supabase");
+} = require("../lib/supabase");
 
 const app = express();
 const server = http.createServer(app);
