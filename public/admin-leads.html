@@ -74,9 +74,14 @@
 
   <script>
     function apiBase() {
-      return (typeof window.CLINIFLOW_API_BASE_URL === "string" && window.CLINIFLOW_API_BASE_URL.trim())
-        ? window.CLINIFLOW_API_BASE_URL.replace(/\/+$/, "")
-        : "";
+      if (typeof window.CLINIFLOW_API_BASE_URL === "string" && window.CLINIFLOW_API_BASE_URL.trim()) {
+        return window.CLINIFLOW_API_BASE_URL.replace(/\/+$/, "");
+      }
+      if (typeof cliniflowApiBase === "function") {
+        const b = cliniflowApiBase();
+        if (b) return String(b).replace(/\/+$/, "");
+      }
+      return "";
     }
     function authHeaders() {
       const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");

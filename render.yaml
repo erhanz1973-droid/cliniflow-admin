@@ -1,15 +1,9 @@
-# Render Blueprint (optional): connect repo → New Blueprint → this file
-# If you already created the Web Service manually, set Dashboard values to match below instead of duplicating the service.
+# Render Blueprint (optional): Static Site — HTML/CSS/JS in ./public
+# Dashboard: create a Static Site, set Publish directory to `public` (or use this Blueprint).
 services:
   - type: web
     name: cliniflow-admin
-    runtime: node
+    runtime: static
     region: oregon
-    plan: free
-    rootDir: .
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
+    buildCommand: "echo static"
+    staticPublishPath: ./public

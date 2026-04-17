@@ -8,7 +8,7 @@
   <meta http-equiv="Pragma" content="no-cache"/>
   <meta http-equiv="Expires" content="0"/>
   <title id="pageTitle">Clinifly Admin – Login</title>
-  <script src="/admin-i18n.js?v=202502011445"></script>
+  <script src="/admin-i18n.js?v=202604103"></script>
   <style>
     :root { 
       --bg:#0f172a; 
@@ -267,14 +267,25 @@
     }, type === "error" ? 6000 : 3000);
   }
 
+  /** Avoid redundant navigation to /admin.html (prevents reload / double redirect). */
+  function goToAdminDashboard() {
+    if ((location.pathname || "").includes("admin.html")) return;
+    window.location.href = window.location.origin + "/admin.html";
+  }
+
   // Show session-expired message if redirected from another page
   (function checkSessionExpired() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("reason") === "session_expired") {
       // Remove param from URL without reload
       history.replaceState(null, "", window.location.pathname);
-      // Show after slight delay so DOM is ready
-      setTimeout(() => showAlert("⏰ Oturum süreniz doldu veya token geçersiz. Lütfen tekrar giriş yapın.", "error"), 200);
+      // Show after slight delay so DOM is ready (use i18n if available)
+      setTimeout(() => {
+        const msg = (window.i18n && window.i18n.t)
+          ? window.i18n.t("login.sessionExpired")
+          : "⏰ Oturum süreniz doldu veya token geçersiz. Lütfen tekrar giriş yapın.";
+        showAlert(msg, "error");
+      }, 400);
     }
   })();
 
@@ -324,60 +335,48 @@
       const json = await res.json();
 
       if (!res.ok || !json.ok) {
-        const errorCode = json.error || "";
-        let friendlyMsg;
-        if (errorCode === "invalid_admin_credentials") {
-          friendlyMsg = "E-posta, klinik kodu veya şifre hatalı. Lütfen kontrol edip tekrar deneyin.";
-        } else if (errorCode === "email_required") {
-          friendlyMsg = "E-posta adresi gereklidir.";
-        } else if (errorCode === "password_required") {
-          friendlyMsg = "Şifre gereklidir.";
-        } else if (errorCode === "clinic_code_required") {
-          friendlyMsg = "Klinik kodu gereklidir.";
-        } else if (errorCode === "clinic_suspended") {
-          friendlyMsg = "Bu klinik hesabı askıya alınmıştır. Destek için iletişime geçin.";
-        } else if (errorCode === "admin_service_unavailable") {
-          friendlyMsg = "Sunucu şu anda kullanılamıyor. Lütfen biraz bekleyin.";
-        } else {
-          const detail = json.message || errorCode || `HTTP ${res.status}`;
-          friendlyMsg = `Giriş başarısız: ${detail}`;
-        }
-        showAlert(friendlyMsg, "error");
+        const detail =
+          json.message ||
+          json.error ||
+          (typeof json === "string" ? json : null) ||
+          `HTTP ${res.status}`;
+        showAlert(`Login failed: ${detail}`, "error");
         return;
       }
 
-      // ✅ TOKEN SAVE — token lives inside json.user.token (backward compat: also check json.token)
-      const savedToken = json.user?.token || json.token;
-      if (!savedToken) {
-        showAlert("Login failed: no token in response", "error");
-        return;
-      }
-      localStorage.setItem("admin_token", savedToken);
-      localStorage.setItem("adminToken", savedToken);
-      const savedClinicCode = json.user?.clinicCode || json.clinicCode || json.admin?.clinicCode || clinicCode;
-      const savedClinicName = json.user?.name || json.clinicName || json.admin?.clinicName || "";
+      // ✅ TOKEN SAVE (token can be at top level or inside user object)
+      const _savedToken = json.token || json.user?.token;
+      localStorage.setItem("admin_token", _savedToken);
+      localStorage.setItem("adminToken", _savedToken);
+      const savedClinicCode = json.clinicCode || json.admin?.clinicCode || clinicCode;
+      const savedClinicName = json.clinicName || json.admin?.clinicName || "";
       localStorage.setItem("clinic_code", savedClinicCode);
       localStorage.setItem("clinic_name", savedClinicName);
       // Clear session-specific data from previous clinic sessions
       localStorage.removeItem("selected_patient_id");
       
-      // ✅ USER DATA SAVE
-      const userToSave = json.user || {
-        id: json.clinicId || 'admin',
-        token: savedToken,
-        email: json.email || "",
-        role: "ADMIN",
-        clinicCode: savedClinicCode,
-        clinicName: savedClinicName
-      };
-      localStorage.setItem("user", JSON.stringify(userToSave));
-      console.log("[LOGIN] User data saved:", { ...userToSave, token: "***" });
+      // ✅ USER DATA SAVE - Use real user data from API response
+      if (json.user) {
+        localStorage.setItem("user", JSON.stringify(json.user));
+        console.log("[LOGIN] User data saved:", json.user);
+      } else {
+        // Fallback for backward compatibility
+        const userData = {
+          id: json.clinicId || 'admin',
+          email: json.email || "",
+          role: "ADMIN",
+          clinicCode: savedClinicCode,
+          clinicName: savedClinicName
+        };
+        localStorage.setItem("user", JSON.stringify(userData));
+        console.log("[LOGIN] Fallback user data saved:", userData);
+      }
 
       showAlert("Login successful", "success");
 
       // ✅ REDIRECT
       setTimeout(() => {
-        window.location.href = window.location.origin + "/admin.html";
+        goToAdminDashboard();
       }, 800);
 
     } catch (err) {
@@ -560,7 +559,7 @@
             
             // Redirect to dashboard
             setTimeout(() => {
-              window.location.href = window.location.origin + "/admin.html";
+              goToAdminDashboard();
             }, 1000);
           } else {
             setOTPMsg(i18n.t("login.errors.otpFailed"), "err");

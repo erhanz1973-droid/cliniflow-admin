@@ -5,9 +5,13 @@
  *   <script>window.CLINIFLOW_API_BASE_URL="https://your-api.example.com"</script> before this file
  *   or <meta name="cliniflow-api-base" content="https://your-api.example.com" />
  *
+ * Railway backend (admin on Render, API on Railway):
+ *   <script>window.__CLINIFLOW_RAILWAY_BACKEND__="https://YOUR-APP.up.railway.app"</script> before this file
+ *   or <meta name="cliniflow-api-base" content="https://YOUR-APP.up.railway.app" />
+ *
  * Defaults:
  *   localhost / 127.0.0.1 → http://<host>:10000
- *   cliniflow-admin.onrender.com → https://cliniflow-backend-dg8a.onrender.com (static admin → API on backend)
+ *   cliniflow-admin.onrender.com → https://cliniflow-backend-dg8a.onrender.com (legacy: admin static → API on old Render backend)
  *   cliniflow-backend-*.onrender.com → https://cliniflow-admin.onrender.com (static HTML on backend → full admin API on admin service)
  */
 (function () {
@@ -37,6 +41,10 @@
     var fromMeta = meta && meta.getAttribute('content');
     if (fromMeta && String(fromMeta).trim()) {
       return stripTrailingSlash(fromMeta);
+    }
+    /** Set once when API is on Railway (public URL) and admin is on Render or another host. */
+    if (typeof w.__CLINIFLOW_RAILWAY_BACKEND__ === 'string' && w.__CLINIFLOW_RAILWAY_BACKEND__.trim()) {
+      return stripTrailingSlash(w.__CLINIFLOW_RAILWAY_BACKEND__);
     }
     var h = typeof w.location !== 'undefined' ? w.location.hostname : '';
     if (h === 'localhost' || h === '127.0.0.1') {

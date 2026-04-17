@@ -324,30 +324,6 @@
   </style>
 </head>
 <body>
-<script>
-  function getStoredAdminToken() {
-    try {
-      return localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "";
-    } catch {
-      return "";
-    }
-  }
-
-  // ensure admin token present on every page load
-  (function() {
-    const token = getStoredAdminToken();
-    if (!token) {
-      console.log("[AUTH] Admin token missing, redirecting to login");
-      window.location.href = "/admin-login.html";
-      return;
-    }
-
-    try {
-      if (!localStorage.getItem("adminToken")) localStorage.setItem("adminToken", token);
-      if (!localStorage.getItem("admin_token")) localStorage.setItem("admin_token", token);
-    } catch {}
-  })();
-</script>
   <div class="wrap">
     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
       <!-- Inline SVG Logo - No External File -->
@@ -528,6 +504,69 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <script>
+  function getStoredAdminToken() {
+    try {
+      return localStorage.getItem("adminToken") || localStorage.getItem("admin_token") || "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** Avoid redirect loops: only navigate to login when not already there. */
+  function redirectToAdminLogin() {
+    const p = location.pathname || "";
+    if (p.includes("admin-login.html")) return;
+    window.location.href = "/admin-login.html";
+  }
+
+  function applyTokenFromUrl() {
+    try {
+      const url = new URL(location.href);
+      const token = (url.searchParams.get("token") || "").trim();
+      if (!token) return;
+      localStorage.setItem("adminToken", token);
+      localStorage.setItem("admin_token", token);
+      url.searchParams.delete("token");
+      history.replaceState({}, "", url.toString());
+    } catch {}
+  }
+
+  /** Single auth gate for this page: token + ADMIN role. */
+  function checkAuth() {
+    console.log("[AUTH] checkAuth called", location.pathname);
+    applyTokenFromUrl();
+    const token = getStoredAdminToken();
+    if (!token) {
+      redirectToAdminLogin();
+      return false;
+    }
+    let user;
+    try {
+      const userStr = localStorage.getItem("user");
+      if (!userStr) {
+        redirectToAdminLogin();
+        return false;
+      }
+      user = JSON.parse(userStr);
+    } catch (e) {
+      console.error("[AUTH] Invalid user JSON", e);
+      redirectToAdminLogin();
+      return false;
+    }
+    const role = String(user && user.role != null ? user.role : "")
+      .trim()
+      .toUpperCase();
+    if (role !== "ADMIN") {
+      redirectToAdminLogin();
+      return false;
+    }
+    return true;
+  }
+
+  if (!checkAuth()) {
+    throw new Error("Unauthorized");
+  }
+
   // If a patient is selected, make top-nav Travel link carry patientId.
   (function bindNavTravelLink() {
     try {
@@ -550,7 +589,7 @@
     } catch (e) {
       console.error("[LOGOUT] Error clearing data:", e);
     }
-    window.location.href = window.location.origin + "/admin-login.html";
+    redirectToAdminLogin();
   }
 
   const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
@@ -625,52 +664,10 @@
   }
   // ────────────────────────────────────────────────────────────────────────────
 
-  function applyTokenFromUrl() {
-    try {
-      const url = new URL(location.href);
-      const token = (url.searchParams.get("token") || "").trim();
-      if (!token) return;
-      localStorage.setItem("adminToken", token);
-      localStorage.setItem("admin_token", token);
-      url.searchParams.delete("token");
-      history.replaceState({}, "", url.toString());
-    } catch {}
-  }
   function getAdminToken() {
     return getStoredAdminToken();
   }
-  // Check token and role on page load - redirect to login if missing or invalid
-  function checkAuth() {
-    const token = getStoredAdminToken();
-    const userStr = localStorage.getItem("user");
-    
-    if (!token) {
-      console.log("[AUTH] No token found, redirecting to login");
-      window.location.href = window.location.origin + "/admin-login.html";
-      return false;
-    }
-    
-    if (!userStr) {
-      console.log("[AUTH] No user data found, redirecting to login");
-      window.location.href = window.location.origin + "/admin-login.html";
-      return false;
-    }
-    
-    try {
-      const user = JSON.parse(userStr);
-      if (!user || user.role !== "ADMIN") {
-        console.log("[AUTH] Invalid role, redirecting to login:", user?.role);
-        window.location.href = window.location.origin + "/admin-login.html";
-        return false;
-      }
-      console.log("[AUTH] Admin access confirmed for user:", user.email);
-      return true;
-    } catch (error) {
-      console.error("[AUTH] Error parsing user data:", error);
-      window.location.href = window.location.origin + "/admin-login.html";
-      return false;
-    }
-  }
+
   function adminHeaders(extra = {}) {
     const token = getAdminToken();
     return {
@@ -682,7 +679,6 @@
   // Safari-compatible fetch wrapper
   async function safariFetch(url, options = {}) {
     const token = getAdminToken();
-    console.log("TOKEN BEING SENT:", token);
 
     return fetch(url, {
       ...options,
@@ -1315,17 +1311,7 @@
     }, 200);
   };
 
-  // Apply token from URL if provided (helps switching clinics)
-  applyTokenFromUrl();
-  
-  // Check authentication after page loads (wait for DOM and localStorage to be ready)
-  // Use DOMContentLoaded to ensure localStorage is accessible
   function initializeDashboard() {
-    if (!checkAuth()) {
-      // Redirect will happen in checkAuth
-      return;
-    }
-    
     loadClinicInfo();
     loadEvents();
 
@@ -1932,6 +1918,6 @@ function updateActivePatientsUI(data) {
   // Refresh badges every 30 seconds (independent of events)
   setInterval(loadAllBadges, 30000);
 </script>
-<script src="/admin-layout.js?v=202603301"></script>
+<script src="/admin-layout.js?v=202604171"></script>
 </body>
 </html>
