@@ -68,3 +68,4 @@ data/
 
 # Patient uploads — do not commit
 public/uploads/
+.vercel

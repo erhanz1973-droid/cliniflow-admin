@@ -1,3 +1,5 @@
+import { API_URL } from "@/lib/config";
+
 export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-24">
@@ -5,7 +7,7 @@ export default function Home() {
         <h1 className="text-4xl font-bold mb-4">Cliniflow SuperAdmin Dashboard</h1>
         <p className="text-lg">SuperAdmin panel coming soon...</p>
         <p className="text-sm mt-4 text-gray-500">
-          API URL: {process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5050'}
+          API URL: {API_URL}
         </p>
         <div className="mt-8 p-4 bg-yellow-100 border border-yellow-400 rounded">
           <p className="text-sm text-yellow-800">
