@@ -94,7 +94,7 @@
           <h2>Patients</h2>
           <button id="btnReload">Reload</button>
         </div>
-        <div class="muted">/api/patients</div>
+        <div class="muted">/api/admin/patients</div>
         <div class="patients" id="patients"></div>
       </div>
 
@@ -179,6 +179,32 @@
   </div>
 
 <script>
+  const API = "https://cliniflow-backend-dg8a.onrender.com";
+
+  async function api(path, options = {}) {
+    const token = (localStorage.getItem("admin_token") || "").trim().replace(/^Bearer\s+/i, "");
+    const res = await fetch(API + path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: "Bearer " + token } : {}),
+        ...(options.headers || {}),
+      },
+    });
+
+    const text = await res.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch (e) {}
+
+    console.log("[API]", path, res.status, json || text);
+
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status + " → " + text.slice(0, 120));
+    }
+
+    return json;
+  }
+
   let SELECTED_PATIENT_ID = null;
   const elPatients = document.getElementById("patients");
   const elStatus = document.getElementById("status");
@@ -199,12 +225,6 @@
 
   function setStatus(t){ elStatus.textContent=t; }
 
-  async function apiGet(url){
-    const res = await fetch(url, { headers: { "Accept":"application/json" } });
-    if(!res.ok) throw new Error("HTTP " + res.status + " " + url);
-    return res.json();
-  }
-
   function fmtTime(ts){
     if(!ts) return "-";
     try { return new Date(ts).toLocaleString(); } catch(e) { return String(ts); }
@@ -218,21 +238,22 @@
   }
 
 
+  function treatmentsDoc(j){
+    if (!j) return j;
+    if (Array.isArray(j.teeth)) return j;
+    if (j.treatments && Array.isArray(j.treatments.teeth)) return j.treatments;
+    return j;
+  }
+
   async function updateProcedure(procId, patch){
     if (!SELECTED_PATIENT_ID) return;
     try{
-      const url = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/procedure/" + encodeURIComponent(procId);
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify(patch || {})
+      const path = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/" + encodeURIComponent(procId);
+      const json = await api(path, {
+        method: "PUT",
+        body: JSON.stringify(patch || {}),
       });
-      const txt = await res.text();
-      let json=null;
-      try{ json=JSON.parse(txt);}catch(e){}
-      if(!res.ok) throw new Error("HTTP "+res.status+" -> "+txt.slice(0,120));
-      if(!json || !json.ok) throw new Error((json&&json.error)?json.error:("Non-JSON: "+txt.slice(0,120)));
-      renderTreatments(json.data);
+      renderTreatments(treatmentsDoc(json));
       setStatus("Updated");
     } catch(e){
       alert("Update failed: "+e.message);
@@ -245,20 +266,9 @@
     if (!ok) return;
 
     try{
-      const url = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/procedure/" + encodeURIComponent(procId);
-      const res = await fetch(url, { method: "DELETE", headers: { "Accept":"application/json" } });
-      const txt = await res.text();
-      let json = null;
-      try { json = JSON.parse(txt); } catch(e) {}
-
-      if (!res.ok) {
-        throw new Error("HTTP " + res.status + " -> " + txt.slice(0,120));
-      }
-      if (!json || !json.ok) {
-        throw new Error((json && json.error) ? json.error : ("Non-JSON: " + txt.slice(0,120)));
-      }
-
-      renderTreatments(json.data);
+      const path = "/api/patient/" + encodeURIComponent(SELECTED_PATIENT_ID) + "/treatments/" + encodeURIComponent(procId);
+      const json = await api(path, { method: "DELETE" });
+      renderTreatments(treatmentsDoc(json));
       setStatus("Deleted");
     } catch(e){
       alert("Delete failed: " + e.message);
@@ -393,7 +403,7 @@
     elTravelEndpoint.textContent = trUrl;
 
     try{
-      const results = await Promise.all([apiGet(tUrl), apiGet(trUrl)]);
+      const results = await Promise.all([api(tUrl), api(trUrl)]);
       renderTreatments(results[0]);
       renderTravel(results[1]);
       setStatus("Loaded " + patient.id);
@@ -408,7 +418,7 @@
     setStatus("Loading patients...");
     elPatients.innerHTML = "";
     try{
-      const json = await apiGet("/api/patients");
+      const json = await api("/api/admin/patients");
       const patients = Array.isArray(json.patients) ? json.patients : [];
       if(!patients.length){
         elPatients.innerHTML = '<div class="muted">No patients</div>';
@@ -563,16 +573,21 @@ function renderFDIGrid(json){
 
     elAddProcMsg.textContent = "Saving...";
     try {
-      const url = "/api/patient/" + encodeURIComponent(pid) + "/treatments/procedure";
-      const res = await fetch(url, {
+      const createdAt = Date.now();
+      const path = "/api/patient/" + encodeURIComponent(pid) + "/treatments";
+      const json = await api(path, {
         method: "POST",
-        headers: { "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({ toothId, type, status, scheduledAt })
+        body: JSON.stringify({
+          toothId,
+          procedure: {
+            type,
+            status,
+            createdAt,
+            scheduledAt: scheduledAt != null ? scheduledAt : createdAt,
+          },
+        }),
       });
-      const json = await res.json();
-      if (!res.ok || !json.ok) throw new Error(json.error || ("HTTP " + res.status));
-      // re-render
-      renderTreatments(json.data);
+      renderTreatments(treatmentsDoc(json));
       elAddProcMsg.textContent = "Saved: " + pid + " tooth " + toothId;
       setStatus("Loaded " + pid);
     } catch(e) {

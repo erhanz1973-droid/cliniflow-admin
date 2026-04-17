@@ -68,19 +68,33 @@
     .hr{ height:1px; background:var(--b); margin:10px 0; }
     .err{ color:var(--r); font-weight:700; }
     .okmsg{ color:var(--g); font-weight:700; }
+    .hidden{ display:none !important; }
   </style>
 </head>
 <body>
-  <div class="wrap">
+
+  <div id="loginScreen" class="wrap">
+    <div class="card">
+      <h1 style="margin:0 0 12px;">🦷 Cliniflow Admin — Giriş</h1>
+      <div class="muted" style="margin-bottom:12px;">Geçici admin aracı. Kimlik bilgilerinizi güvenli tutun.</div>
+      <label>E-posta</label>
+      <input id="loginEmail" type="email" autocomplete="username" style="width:100%; margin-bottom:8px;" />
+      <label>Klinik kodu</label>
+      <input id="loginClinicCode" type="text" autocomplete="organization" style="width:100%; margin-bottom:8px;" placeholder="örn. DEMO" />
+      <label>Şifre</label>
+      <input id="loginPassword" type="password" autocomplete="current-password" style="width:100%; margin-bottom:12px;" />
+      <button type="button" onclick="submitLogin()" style="width:100%;">Giriş</button>
+      <div id="loginMsg" class="muted" style="margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <div id="mainApp" class="wrap hidden">
     <h1>🦷 Cliniflow Admin V2 – Treatments</h1>
 
     <div class="card" style="margin-bottom:12px;">
-      <div class="row">
-        <div style="flex:1; min-width:300px;">
-          <label>Admin Token</label>
-          <input id="adminToken" type="text" placeholder="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." style="width:100%" />
-          <div class="muted">Admin token localStorage'dan otomatik yüklenir.</div>
-        </div>
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div class="muted" id="adminSessionInfo">—</div>
+        <button type="button" class="ghost" onclick="logoutAdmin()">Çıkış</button>
       </div>
     </div>
 
@@ -188,7 +202,147 @@
   </div>
 
 <script>
-  const API = location.origin;
+  const API = "https://cliniflow-backend-dg8a.onrender.com";
+  console.log("[API BASE]", API);
+
+  function normalizeAdminToken(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    return s.replace(/^Bearer\s+/i, "");
+  }
+
+  function getAdminToken() {
+    return normalizeAdminToken(localStorage.getItem("admin_token"));
+  }
+
+  /** All API calls: fixed base URL, JSON defaults, JWT from localStorage. Patient headers (x-patient-token) merge on top. */
+  async function apiFetch(path, options = {}) {
+    const token = getAdminToken();
+    const url = String(path).startsWith("http") ? path : API + path;
+    const { headers: optHeaders = {}, ...rest } = options;
+    const mergedHeaders = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: "Bearer " + token } : {}),
+      ...optHeaders,
+    };
+    const r = await fetch(url, { ...rest, headers: mergedHeaders });
+    if (r.status === 401) {
+      const p = String(path);
+      if (p.indexOf("/api/admin/") === 0 && p.indexOf("/api/admin/login") < 0) {
+        try {
+          localStorage.removeItem("admin_token");
+          sessionStorage.removeItem("admin_session_email");
+          sessionStorage.removeItem("admin_session_clinic");
+          showLoginScreen();
+          setLoginMsg("Oturum süresi doldu veya yetkisiz. Tekrar giriş yapın.", "err");
+        } catch (_) {}
+      }
+    }
+    return r;
+  }
+
+  function showLoginScreen() {
+    const lg = document.getElementById("loginScreen");
+    const ma = document.getElementById("mainApp");
+    if (lg) lg.classList.remove("hidden");
+    if (ma) ma.classList.add("hidden");
+  }
+
+  function showAppScreen() {
+    const lg = document.getElementById("loginScreen");
+    const ma = document.getElementById("mainApp");
+    if (lg) lg.classList.add("hidden");
+    if (ma) ma.classList.remove("hidden");
+  }
+
+  function setLoginMsg(text, kind) {
+    const el = document.getElementById("loginMsg");
+    if (!el) return;
+    el.className = kind === "ok" ? "okmsg" : (kind === "err" ? "err" : "muted");
+    el.textContent = text || "";
+  }
+
+  function updateSessionBar() {
+    const el = document.getElementById("adminSessionInfo");
+    if (!el) return;
+    const em = sessionStorage.getItem("admin_session_email") || "";
+    const cl = sessionStorage.getItem("admin_session_clinic") || "";
+    el.textContent = em || cl ? (em + (em && cl ? " · " : "") + cl) : "Oturum açık";
+  }
+
+  function logoutAdmin() {
+    localStorage.removeItem("admin_token");
+    sessionStorage.removeItem("admin_session_email");
+    sessionStorage.removeItem("admin_session_clinic");
+    showLoginScreen();
+    setMsg("");
+    setLoginMsg("");
+  }
+
+  async function submitLogin() {
+    const email = String(document.getElementById("loginEmail").value || "").trim();
+    const clinicCode = String(document.getElementById("loginClinicCode").value || "").trim();
+    const password = String(document.getElementById("loginPassword").value || "");
+    if (!email || !clinicCode || !password) {
+      setLoginMsg("E-posta, klinik kodu ve şifre gerekli.", "err");
+      return;
+    }
+    setLoginMsg("Giriş yapılıyor...");
+    try {
+      const r = await fetch(API + "/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, clinicCode, password }),
+      });
+      const text = await r.text();
+      let j = null;
+      try {
+        j = text ? JSON.parse(text) : null;
+      } catch (_) {
+        setLoginMsg("Sunucu yanıtı okunamadı.", "err");
+        return;
+      }
+      if (!r.ok || !j || !j.ok || !j.token) {
+        const err = (j && j.error) ? j.error : "HTTP " + r.status;
+        setLoginMsg("Giriş başarısız: " + err, "err");
+        return;
+      }
+      localStorage.setItem("admin_token", j.token);
+      sessionStorage.setItem("admin_session_email", (j.admin && j.admin.email) ? j.admin.email : email);
+      sessionStorage.setItem("admin_session_clinic", j.clinicName || clinicCode);
+      document.getElementById("loginPassword").value = "";
+      setLoginMsg("");
+      showAppScreen();
+      updateSessionBar();
+      setMsg("Liste yükleniyor...");
+      await refreshTokens();
+    } catch (e) {
+      console.error("[login]", e);
+      setLoginMsg("Ağ hatası. Bağlantıyı kontrol edin.", "err");
+    }
+  }
+
+  /** Fetch + JSON + status/body logging (debug); path is e.g. /api/admin/tokens */
+  async function fetchJsonLogged(tag, path, options) {
+    const method = (options && options.method) || "GET";
+    const url = String(path).startsWith("http") ? path : API + path;
+    console.log("[fetch]", tag, method, url);
+    const r = await apiFetch(path, options);
+    console.log("[fetch]", tag, "STATUS:", r.status);
+    const text = await r.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch (e) {
+      console.log("[fetch]", tag, "RESPONSE (non-JSON):", text ? text.slice(0, 1200) : "");
+      return { r, j: null, text, parseError: true };
+    }
+    console.log("[fetch]", tag, "RESPONSE:", j);
+    if (!r.ok) {
+      console.warn("[fetch]", tag, "HTTP error:", r.status, j);
+    }
+    return { r, j, text };
+  }
 
   const U1 = ["11","12","13","14","15","16","17","18"];
   const U2 = ["21","22","23","24","25","26","27","28"];
@@ -321,59 +475,22 @@
       });
   }
 
-  function getAdminToken(){
-    // Önce input alanından al
-    const elAdminToken = document.getElementById('adminToken');
-    if (elAdminToken && elAdminToken.value && elAdminToken.value.trim()) {
-      return elAdminToken.value.trim();
-    }
-    // Input boşsa localStorage'dan al
-    const savedToken = localStorage.getItem('admin_token');
-    if (savedToken && savedToken.trim()) {
-      // Eğer input varsa ama boşsa, localStorage'dan yükle
-      if (elAdminToken && !elAdminToken.value) {
-        elAdminToken.value = savedToken;
-      }
-      return savedToken.trim();
-    }
-    return '';
-  }
-
   async function refreshTokens(){
-    const adminToken = getAdminToken();
-    if (!adminToken) {
-      setMsg("⚠️ Admin token bulunamadı. Lütfen yukarıdaki Admin Token alanına token'ı girin.", "err");
-      // Input alanına odaklan
-      const elAdminToken = document.getElementById('adminToken');
-      if (elAdminToken) {
-        elAdminToken.focus();
-      }
+    if (!getAdminToken()) {
+      showLoginScreen();
+      setLoginMsg("Giriş yapın.", "muted");
       return;
     }
 
     try{
       setMsg("Tokens listesi çekiliyor...");
-      const headers = {
-        "Content-Type": "application/json"
-      };
-      
-      if (adminToken.startsWith("Bearer ")) {
-        headers["Authorization"] = adminToken;
-      } else {
-        headers["Authorization"] = `Bearer ${adminToken}`;
-      }
+      const { r, j, parseError } = await fetchJsonLogged("admin/tokens", "/api/admin/tokens", {});
 
-      const r = await fetch(`${API}/api/admin/tokens`, {
-        headers: headers
-      });
-      
       if (r.status === 401) {
-        setMsg("❌ Admin token geçersiz veya süresi dolmuş. Lütfen admin token girin.", "err");
         return;
       }
 
-      const j = await r.json();
-      if (!j?.ok) throw new Error("tokens_failed");
+      if (parseError || !j?.ok) throw new Error("tokens_failed");
 
       const items = (j.items || []).slice().sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
       elSelPatient.innerHTML = "";
@@ -395,7 +512,8 @@
 
       setMsg("Hazır. Hasta seçip 'Treatments Yükle' de.", "ok");
     }catch(e){
-      setMsg("Tokens listesi alınamadı. /api/admin/tokens çalışıyor mu?", "err");
+      console.error("[admin/tokens]", e);
+      setMsg("Tokens listesi alınamadı. /api/admin/tokens çalışıyor mu? (konsola bakın)", "err");
     }
   }
 
@@ -424,13 +542,12 @@
 
     try{
       setMsg("Treatments yükleniyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const { r, j } = await fetchJsonLogged("treatments GET", "/api/patient/" + encodeURIComponent(pid) + "/treatments", {
         headers: authHeaders()
       });
-      const j = await r.json().catch(()=>null);
 
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = (j && j.error) ? j.error : `${r.status}`;
         setMsg(`Yüklenemedi: ${err} (Token/Approve kontrol et)`, "err");
         return;
       }
@@ -441,7 +558,8 @@
       clearSelection();
       refreshBadgeAndColors();
     }catch(e){
-      setMsg("Yükleme hatası. Server erişimi var mı?", "err");
+      console.error("[treatments GET]", e);
+      setMsg("Yükleme hatası. Server erişimi var mı? (konsola bakın)", "err");
     }
   }
 
@@ -467,16 +585,14 @@
 
     try{
       setMsg("Kaydediliyor...");
-      const r = await fetch(`${API}/api/patient/${encodeURIComponent(pid)}/treatments`, {
+      const { r, j } = await fetchJsonLogged("treatments POST", "/api/patient/" + encodeURIComponent(pid) + "/treatments", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify(payload)
       });
 
-      const j = await r.json().catch(()=>null);
-
       if (!r.ok){
-        const err = j?.error || `${r.status}`;
+        const err = (j && j.error) ? j.error : `${r.status}`;
         setMsg(`Kaydetme başarısız: ${err} (POST route var mı?)`, "err");
         return;
       }
@@ -492,62 +608,9 @@
       renderSelectedToothList();
       refreshBadgeAndColors();
     }catch(e){
-      setMsg("Kaydetme hatası. Server POST route yoksa bu olur.", "err");
+      console.error("[treatments POST]", e);
+      setMsg("Kaydetme hatası. Server POST route yoksa bu olur. (konsola bakın)", "err");
     }
-  }
-
-  // Admin token yükleme ve kaydetme
-  function initAdminToken() {
-    const elAdminToken = document.getElementById('adminToken');
-    if (!elAdminToken) return false;
-    
-    // Event listener'ları ekle (sadece bir kez)
-    if (!elAdminToken.hasAttribute('data-listeners-added')) {
-      elAdminToken.setAttribute('data-listeners-added', 'true');
-      
-      // Token değiştiğinde localStorage'a kaydet
-      elAdminToken.addEventListener('change', (e) => {
-        const token = e.target.value.trim();
-        if (token) {
-          localStorage.setItem('admin_token', token);
-          refreshTokens();
-        } else {
-          localStorage.removeItem('admin_token');
-        }
-      });
-      
-      // Input alanına yazıldığında da kaydet
-      elAdminToken.addEventListener('blur', (e) => {
-        const token = e.target.value.trim();
-        if (token) {
-          localStorage.setItem('admin_token', token);
-          refreshTokens();
-        } else {
-          localStorage.removeItem('admin_token');
-        }
-      });
-      
-      // Input alanına her yazıldığında da kaydet (real-time kaydetme)
-      let inputTimeout;
-      elAdminToken.addEventListener('input', (e) => {
-        const token = e.target.value.trim();
-        if (token) {
-          localStorage.setItem('admin_token', token);
-          clearTimeout(inputTimeout);
-          inputTimeout = setTimeout(() => {
-            if (token) refreshTokens();
-          }, 500);
-        }
-      });
-    }
-    
-    // localStorage'dan token'ı yükle
-    const savedToken = localStorage.getItem('admin_token');
-    if (savedToken && savedToken.trim()) {
-      elAdminToken.value = savedToken;
-      return true;
-    }
-    return false;
   }
 
   // init - Diş gridlerini render et
@@ -555,49 +618,22 @@
   renderRow("upperRow2", U2);
   renderRow("lowerRow1", L1);
   renderRow("lowerRow2", L2);
-  
-  // Token'ı otomatik yükle - DOM hazır olana kadar bekle
-  function loadTokenWhenReady() {
-    const elAdminToken = document.getElementById('adminToken');
-    if (!elAdminToken) {
-      // DOM henüz hazır değilse tekrar dene
-      setTimeout(loadTokenWhenReady, 100);
-      return;
-    }
-    
-    // localStorage'dan token kontrolü
-    const savedToken = localStorage.getItem('admin_token');
-    console.log('[Admin Token] localStorage token:', savedToken ? 'Bulundu' : 'Bulunamadı');
-    
-    // Token'ı yükle
-    const tokenLoaded = initAdminToken();
-    console.log('[Admin Token] Token yüklendi:', tokenLoaded);
-    console.log('[Admin Token] Input değeri:', elAdminToken.value);
-    
-    // Token yüklendiyse listeyi otomatik yenile
-    if (tokenLoaded) {
-      console.log('[Admin Token] Liste yenileniyor...');
-      setTimeout(() => refreshTokens(), 300);
+
+  function boot() {
+    if (getAdminToken()) {
+      showAppScreen();
+      updateSessionBar();
+      refreshTokens();
     } else {
-      console.log('[Admin Token] Token yüklenmedi, liste yenilenmeyecek');
+      showLoginScreen();
     }
   }
-  
-  // DOM hazır olduğunda token'ı yükle
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', loadTokenWhenReady);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
   } else {
-    // DOM zaten hazırsa hemen yükle
-    loadTokenWhenReady();
+    boot();
   }
-  
-  // Sayfa tamamen yüklendiğinde de bir kez daha kontrol et (garanti)
-  window.addEventListener('load', function() {
-    const tokenLoaded = initAdminToken();
-    if (tokenLoaded) {
-      setTimeout(() => refreshTokens(), 100);
-    }
-  });
 </script>
 </body>
 </html>
