@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Clinifly Admin – Clinic Settings</title>
+  <style>
+    :root { 
+      --bg:#111827; 
+      --card:#1f2937; 
+      --b:#1f2937; 
+      --p:#2563eb; 
+      --g:#16a34a; 
+      --r:#dc2626;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2;
+      user-select: text;
+      -webkit-user-select: text;
+      -moz-user-select: text;
+      -ms-user-select: text;
+    }
+    * {
+      user-select: text;
+      -webkit-user-select: text;
+      -moz-user-select: text;
+      -ms-user-select: text;
+    }
+    button, input, select, textarea {
+      user-select: text;
+      -webkit-user-select: text;
+      -moz-user-select: text;
+      -ms-user-select: text;
+    }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
+    .card{ 
+      background:var(--card); 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:16px; 
+      padding:24px; 
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
+      margin-bottom:16px;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--p);
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    label{ 
+      display:block; 
+      font-size:14px; 
+      font-weight:600; 
+      margin-bottom:6px; 
+      color:#e6eaf2;
+    }
+    input, textarea, button, select{
+      width:100%;
+      padding:10px 12px;
+      border:1px solid var(--b);
+      border-radius:8px;
+      font-size:14px;
+      margin-bottom:12px;
+    }
+    input, textarea, select{
+      background:#1f2937;
+      color:#e6eaf2;
+    }
+    textarea{
+      min-height:80px;
+      resize:vertical;
+    }
+    button{ 
+      cursor:pointer; 
+      border:none; 
+      background:var(--p); 
+      color:#fff; 
+      font-weight:600; 
+      transition:background 0.2s;
+    }
+    button:hover{ background:#1d4ed8; }
+    .muted{ color:var(--muted); font-size:13px; margin-top:4px; }
+    .status{ 
+      padding:8px 12px;
+      border-radius:8px;
+      margin-top:12px;
+      font-size:14px;
+    }
+    .status.success{
+      background:#064e3b;
+      color:#6ee7b7;
+      border:1px solid #059669;
+    }
+    .status.error{
+      background:#7f1d1d;
+      color:#fca5a5;
+      border:1px solid #dc2626;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 data-i18n="settings.pageTitle">⚙️ Clinifly Admin – Settings</h1>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link" data-i18n="dashboard.nav.dashboard">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link" data-i18n="dashboard.nav.patients">Patients</a>
+        <a href="/admin-treatment.html" class="nav-link" data-i18n="dashboard.nav.treatment">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link" data-i18n="dashboard.nav.chat">Chat</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary active" data-i18n="dashboard.nav.settings">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span id="lang-tr" onclick="if(window.i18n) window.i18n.setLang('tr')" class="active">TR</span>
+          <span>|</span>
+          <span id="lang-en" onclick="if(window.i18n) window.i18n.setLang('en')">EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary" data-i18n="dashboard.nav.login">Logout</a>
+    </div>
+    </nav>
+
+    <div class="card">
+      <h2 data-i18n="settings.clinicInformation">Clinic Information</h2>
+      <div id="brandingNotice" class="muted" style="margin-bottom:10px; display:none;" data-i18n="settings.brandingNotice">
+        Branding ayarları yalnızca PRO plan için kullanılabilir.
+      </div>
+      <form id="clinicForm">
+        <label data-i18n="settings.subscriptionPlan">Abonelik Paketi</label>
+        <select id="plan">
+          <option value="FREE">FREE</option>
+          <option value="BASIC">BASIC</option>
+          <option value="PRO">PRO</option>
+        </select>
+        <div class="muted" data-i18n="settings.subscriptionPlanHelp">FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.</div>
+
+
+        <label data-i18n="settings.clinicName">Clinic Name</label>
+        <input type="text" id="clinicName" placeholder="My Clinic" />
+        
+        <label data-i18n="settings.clinicLogoUrl">Clinic Logo URL</label>
+        <input type="url" id="clinicLogoUrl" placeholder="https://example.com/logo.png" />
+        <div class="muted" data-i18n="settings.clinicLogoUrlHelp">Pro plan için logo görüntülenir</div>
+        
+        <label data-i18n="settings.address">Clinic Address</label>
+        <input type="text" id="clinicAddress" placeholder="Güzeloba, Havaalanı Cd. No:104 A, 07230 Muratpaşa/Antalya" />
+        <div class="muted" data-i18n="settings.addressHelp">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label data-i18n="settings.googleMapLink">Google Maps Link</label>
+        <input type="url" id="googleMapLink" placeholder="https://maps.google.com/?q=..." />
+        <div class="muted" data-i18n="settings.googleMapLinkHelp">Pro plan için hasta ekranında görüntülenir</div>
+        
+        <label data-i18n="settings.primaryColor">Primary Color (Hex)</label>
+        <input type="text" id="primaryColor" placeholder="#2563EB" pattern="#[0-9A-Fa-f]{6}" />
+        
+        <label data-i18n="settings.secondaryColor">Secondary Color (Hex)</label>
+        <input type="text" id="secondaryColor" placeholder="#10B981" pattern="#[0-9A-Fa-f]{6}" />
+        
+        <label data-i18n="settings.welcomeMessage">Welcome Message</label>
+        <textarea id="welcomeMessage" placeholder="Welcome to our clinic..."></textarea>
+
+        <h2 style="margin-top: 24px;" data-i18n="settings.referralDiscounts">🎁 Referral Discounts</h2>
+        <div class="muted" style="margin-bottom: 12px;" data-i18n="settings.referralDiscountsHelp">Referral sisteminde kullanılacak varsayılan indirim oranları</div>
+        <label data-i18n="settings.inviterDiscount">Davet Eden İndirim (%)</label>
+        <input type="number" id="defaultInviterDiscountPercent" placeholder="örn: 10" min="0" max="99" />
+        <div class="muted" data-i18n="settings.inviterDiscountHelp">Davet eden hasta için indirim yüzdesi (0-99)</div>
+        
+        <label data-i18n="settings.invitedDiscount">Davet Edilen İndirim (%)</label>
+        <input type="number" id="defaultInvitedDiscountPercent" placeholder="örn: 5" min="0" max="99" />
+        <div class="muted" data-i18n="settings.invitedDiscountHelp">Davet edilen hasta için indirim yüzdesi (0-99)</div>
+        
+        <button type="submit" style="margin-top: 16px;" data-i18n="settings.save">💾 Save Settings</button>
+      </form>
+      <div id="status"></div>
+    </div>
+
+    <!-- Treatment Price List -->
+    <div class="card">
+      <h2 data-i18n="settings.treatmentPriceList">💰 Treatment Price List</h2>
+      <div class="muted" style="margin-bottom: 16px;" data-i18n="settings.treatmentPriceListHelp">
+        Define your clinic's treatment prices. These prices will be used when creating patient treatment plans.
+      </div>
+      
+      <label style="margin-bottom: 8px;" data-i18n="settings.currency">Currency</label>
+      <select id="defaultCurrency" style="width: 200px; margin-bottom: 16px;">
+        <option value="EUR">EUR (€)</option>
+        <option value="USD">USD ($)</option>
+        <option value="TRY">TRY (₺)</option>
+      </select>
+
+      <div id="priceListContainer" style="margin-top: 20px;">
+        <div class="loading" data-i18n="settings.loadingPrices">Loading prices...</div>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <button id="saveAllPricesBtn" style="background: var(--g); width: auto; padding: 12px 24px;" data-i18n="settings.saveAllPrices">💾 Save All Prices</button>
+      </div>
+    </div>
+  </div>
+
+<script src="/admin-i18n.js"></script>
+<script>
+  // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
+
+  const API = location.origin;
+  const $ = (id) => document.getElementById(id);
+
+  let clinicPlan = "";
+  function applyBrandingLock(plan) {
+    clinicPlan = String(plan || "").toUpperCase();
+    const brandingLocked = clinicPlan !== "PRO";
+    const brandingNotice = $("brandingNotice");
+    if (brandingNotice) brandingNotice.style.display = brandingLocked ? "block" : "none";
+    const brandingInputs = ["clinicName", "clinicLogoUrl", "clinicAddress", "googleMapLink", "primaryColor", "secondaryColor", "welcomeMessage"];
+    brandingInputs.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.disabled = brandingLocked;
+      el.style.opacity = brandingLocked ? "0.6" : "1";
+      el.style.cursor = brandingLocked ? "not-allowed" : "text";
+    });
+  }
+  async function loadClinicSettings() {
+    try {
+      // Get admin token from localStorage
+      const token = localStorage.getItem('admin_token') || '';
+      
+      if (!token) {
+        const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
+        $("status").innerHTML = `<div class="status error">${msg}</div>`;
+        return;
+      }
+
+      // Load clinic settings from API (uses token to identify clinic)
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errorText}`);
+      }
+      
+      const clinic = await res.json();
+      
+      // Backend returns clinic object directly, not wrapped in { ok: true, clinic: {...} }
+      const branding = clinic.branding || {};
+      clinicPlan = String(clinic.plan || clinic.subscriptionPlan || clinic.subscriptionStatus || "FREE").toUpperCase();
+      if ($("plan")) $("plan").value = clinicPlan;
+      applyBrandingLock(clinicPlan);
+
+      // Populate form
+      $("clinicName").value = branding.clinicName || clinic.name || "";
+      $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
+      $("clinicAddress").value = branding.address || clinic.address || "";
+      $("googleMapLink").value = branding.googleMapLink || clinic.googleMapsUrl || "";
+      $("primaryColor").value = branding.primaryColor || "#2563EB";
+      $("secondaryColor").value = branding.secondaryColor || "#10B981";
+      $("welcomeMessage").value = branding.welcomeMessage || "";
+      
+      // Set referral discount values (handle null/undefined)
+      const inviterDiscount = clinic.defaultInviterDiscountPercent;
+      const invitedDiscount = clinic.defaultInvitedDiscountPercent;
+      $("defaultInviterDiscountPercent").value = (inviterDiscount != null && inviterDiscount !== "") ? String(inviterDiscount) : "";
+      $("defaultInvitedDiscountPercent").value = (invitedDiscount != null && invitedDiscount !== "") ? String(invitedDiscount) : "";
+      
+      console.log("Loaded referral discounts:", { inviterDiscount, invitedDiscount });
+
+    } catch (error) {
+      console.error("Load clinic settings error:", error);
+      const msg = window.i18n ? window.i18n.t('settings.errors.loadFailed', { error: error.message }) : `Ayarlar yüklenemedi: ${error.message}`;
+      $("status").innerHTML = `<div class="status error">${msg}</div>`;
+    }
+  }
+
+  $("plan") && $("plan").addEventListener("change", (e) => applyBrandingLock(e.target.value));
+
+  $("clinicForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    
+    // Get admin token from localStorage
+    const token = localStorage.getItem('admin_token') || '';
+    
+    if (!token) {
+      const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı. Lütfen admin olarak giriş yapın.';
+      $("status").innerHTML = `<div class="status error">${msg}</div>`;
+      return;
+    }
+
+        const payload = {
+      plan: ($("plan") ? $("plan").value : (clinicPlan || "FREE")),
+      defaultInviterDiscountPercent: $("defaultInviterDiscountPercent").value.trim(),
+      defaultInvitedDiscountPercent: $("defaultInvitedDiscountPercent").value.trim(),
+    };
+    const brandingLocked = String(payload.plan || "").toUpperCase() !== "PRO";
+    if (!brandingLocked) {
+      payload.branding = {
+        clinicName: $("clinicName").value.trim(),
+        clinicLogoUrl: $("clinicLogoUrl").value.trim(),
+        address: $("clinicAddress").value.trim(),
+        googleMapLink: $("googleMapLink").value.trim(),
+        primaryColor: $("primaryColor").value.trim(),
+        secondaryColor: $("secondaryColor").value.trim(),
+        welcomeMessage: $("welcomeMessage").value.trim(),
+      };
+    }
+
+    try {
+      const loadingMsg = window.i18n ? window.i18n.t('settings.saveLoading') : 'Kaydediliyor...';
+      $("status").innerHTML = `<div class="status">${loadingMsg}</div>`;
+      
+      const res = await fetch(`${API}/api/admin/clinic`, {
+        method: "PUT",
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const successMsg = window.i18n ? window.i18n.t('settings.success') : '✅ Ayarlar kaydedildi!';
+      $("status").innerHTML = `<div class="status success">${successMsg}</div>`;
+      
+    } catch (error) {
+      console.error("Save clinic settings error:", error);
+      const errorMsg = window.i18n ? window.i18n.t('settings.errors.saveFailed', { error: error.message }) : `Kaydetme hatası: ${error.message}`;
+      $("status").innerHTML = `<div class="status error">${errorMsg}</div>`;
+    }
+  });
+
+  // Load settings on page load
+  loadClinicSettings();
+
+  // ================== TREATMENT PRICE LIST ==================
+  
+  // All procedure types from shared/procedures.js
+  const PROCEDURE_TYPES = [
+    // PROSTHETIC
+    { type: "CROWN", label: "Crown (Kuron)", category: "PROSTHETIC" },
+    { type: "TEMP_CROWN", label: "Temporary Crown (Geçici kuron)", category: "PROSTHETIC" },
+    { type: "BRIDGE_UNIT", label: "Bridge (Köprü) – tooth unit", category: "PROSTHETIC" },
+    { type: "TEMP_BRIDGE_UNIT", label: "Temporary Bridge (Geçici köprü) – tooth unit", category: "PROSTHETIC" },
+    { type: "CROWN_REPLACEMENT", label: "Crown Replacement / Renewal", category: "PROSTHETIC" },
+    { type: "BRIDGE_REPLACEMENT_OR_REMOVAL", label: "Bridge Replacement / Removal", category: "PROSTHETIC" },
+    { type: "INLAY", label: "Inlay", category: "PROSTHETIC" },
+    { type: "ONLAY", label: "Onlay", category: "PROSTHETIC" },
+    { type: "OVERLAY", label: "Overlay", category: "PROSTHETIC" },
+    { type: "POST_AND_CORE", label: "Post & Core", category: "PROSTHETIC" },
+    // RESTORATIVE
+    { type: "FILLING", label: "Filling (Dolgu)", category: "RESTORATIVE" },
+    { type: "TEMP_FILLING", label: "Temporary Filling (Geçici dolgu)", category: "RESTORATIVE" },
+    { type: "FILLING_REPLACEMENT_OR_REMOVAL", label: "Filling Replacement / Removal", category: "RESTORATIVE" },
+    // ENDODONTIC
+    { type: "ROOT_CANAL_TREATMENT", label: "Root Canal Treatment (Kanal)", category: "ENDODONTIC" },
+    { type: "ROOT_CANAL_RETREATMENT", label: "Root Canal Retreatment", category: "ENDODONTIC" },
+    { type: "CANAL_OPENING", label: "Canal Opening", category: "ENDODONTIC" },
+    { type: "CANAL_FILLING", label: "Canal Filling", category: "ENDODONTIC" },
+    // SURGICAL
+    { type: "EXTRACTION", label: "Extraction (Çekim)", category: "SURGICAL" },
+    { type: "SURGICAL_EXTRACTION", label: "Surgical Extraction (Cerrahi çekim)", category: "SURGICAL" },
+    { type: "APICAL_RESECTION", label: "Apical Resection", category: "SURGICAL" },
+    // IMPLANT
+    { type: "IMPLANT", label: "Implant", category: "IMPLANT" },
+    { type: "HEALING_ABUTMENT", label: "Healing Abutment", category: "IMPLANT" },
+    { type: "IMPLANT_CROWN", label: "Implant Crown", category: "IMPLANT" },
+  ];
+
+  let prices = {};
+  let defaultCurrency = "EUR";
+
+  async function loadPrices() {
+    try {
+      const token = localStorage.getItem('admin_token') || '';
+      if (!token) {
+        const msg = window.i18n ? window.i18n.t('settings.errors.noToken') : 'Admin token bulunamadı.';
+        $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
+        return;
+      }
+
+      const res = await fetch(`${API}/api/admin/treatment-prices`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const priceList = data.prices || [];
+      
+      // Convert array to object keyed by treatment_name
+      prices = {};
+      priceList.forEach(price => {
+        prices[price.treatment_name] = price;
+        if (price.currency) defaultCurrency = price.currency;
+      });
+
+      if ($("defaultCurrency")) {
+        $("defaultCurrency").value = defaultCurrency;
+      }
+
+      renderPrices();
+    } catch (error) {
+      console.error("Load prices error:", error);
+      const msg = window.i18n ? window.i18n.t('settings.errors.pricesLoadFailed', { error: error.message }) : `Fiyatlar yüklenemedi: ${error.message}`;
+      $("priceListContainer").innerHTML = `<div class="status error">${msg}</div>`;
+    }
+  }
+
+  function renderPrices() {
+    const container = $("priceListContainer");
+    if (!container) return;
+
+    // Group by category
+    const byCategory = {};
+    PROCEDURE_TYPES.forEach(proc => {
+      if (!byCategory[proc.category]) {
+        byCategory[proc.category] = [];
+      }
+      byCategory[proc.category].push(proc);
+    });
+
+    const categories = ["PROSTHETIC", "RESTORATIVE", "ENDODONTIC", "SURGICAL", "IMPLANT"];
+    const categoryLabels = window.i18n ? {
+      "PROSTHETIC": window.i18n.t('settings.categoryLabels.PROSTHETIC'),
+      "RESTORATIVE": window.i18n.t('settings.categoryLabels.RESTORATIVE'),
+      "ENDODONTIC": window.i18n.t('settings.categoryLabels.ENDODONTIC'),
+      "SURGICAL": window.i18n.t('settings.categoryLabels.SURGICAL'),
+      "IMPLANT": window.i18n.t('settings.categoryLabels.IMPLANT')
+    } : {
+      "PROSTHETIC": "Prosthetic (Protez)",
+      "RESTORATIVE": "Restorative (Restoratif)",
+      "ENDODONTIC": "Endodontic (Endodontik)",
+      "SURGICAL": "Surgical (Cerrahi)",
+      "IMPLANT": "Implant"
+    };
+
+    let html = '';
+    categories.forEach(category => {
+      if (!byCategory[category] || byCategory[category].length === 0) return;
+      
+      html += `<div style="margin-bottom: 24px;">`;
+      html += `<h3 style="font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--p);">${categoryLabels[category]}</h3>`;
+      html += `<table style="width: 100%; border-collapse: collapse;">`;
+      const headers = window.i18n ? {
+        treatment: window.i18n.t('settings.tableHeaders.treatment'),
+        price: window.i18n.t('settings.tableHeaders.price'),
+        active: window.i18n.t('settings.tableHeaders.active')
+      } : {
+        treatment: "Treatment",
+        price: "Price",
+        active: "Active"
+      };
+      html += `<thead><tr style="border-bottom: 1px solid var(--b);">`;
+      html += `<th style="text-align: left; padding: 12px; font-size: 14px; font-weight: 600;">${headers.treatment}</th>`;
+      html += `<th style="text-align: right; padding: 12px; font-size: 14px; font-weight: 600; width: 150px;">${headers.price}</th>`;
+      html += `<th style="text-align: center; padding: 12px; font-size: 14px; font-weight: 600; width: 100px;">${headers.active}</th>`;
+      html += `</tr></thead><tbody>`;
+      
+      byCategory[category].forEach(proc => {
+        const priceData = prices[proc.type] || {};
+        const price = priceData.default_price || '';
+        const isActive = priceData.is_active !== false;
+        const currency = priceData.currency || defaultCurrency;
+        
+        html += `<tr style="border-bottom: 1px solid rgba(55, 65, 81, 0.3);">`;
+        html += `<td style="padding: 12px; font-size: 14px;">${escapeHtml(proc.label)}</td>`;
+        html += `<td style="padding: 12px; text-align: right;">`;
+        html += `<input type="number" id="price_${proc.type}" value="${price}" placeholder="0.00" step="0.01" min="0" style="width: 100%; padding: 6px 8px; text-align: right; background: #1f2937; border: 1px solid var(--b); border-radius: 4px; color: #e6eaf2; font-size: 14px;" />`;
+        html += `</td>`;
+        html += `<td style="padding: 12px; text-align: center;">`;
+        html += `<input type="checkbox" id="active_${proc.type}" ${isActive ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;" />`;
+        html += `</td>`;
+        html += `</tr>`;
+      });
+      
+      html += `</tbody></table>`;
+      html += `</div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function saveAllPrices() {
+    try {
+      const token = localStorage.getItem('admin_token') || '';
+      if (!token) {
+        alert('Admin token bulunamadı');
+        return;
+      }
+
+      const currency = $("defaultCurrency") ? $("defaultCurrency").value : "EUR";
+      const saveBtn = $("saveAllPricesBtn");
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        const savingText = window.i18n ? window.i18n.t('settings.savingPrices') : '💾 Saving...';
+        saveBtn.textContent = savingText;
+      }
+
+      // Save each price that has a value
+      const promises = [];
+      PROCEDURE_TYPES.forEach(proc => {
+        const priceInput = $(`price_${proc.type}`);
+        const activeInput = $(`active_${proc.type}`);
+        
+        if (!priceInput || !activeInput) return;
+        
+        const priceValue = parseFloat(priceInput.value);
+        const isActive = activeInput.checked;
+        
+        // Only save if price is set (or if we want to update active status)
+        if (priceValue && priceValue > 0) {
+          const payload = {
+            id: prices[proc.type]?.id, // Keep existing ID if updating
+            treatment_name: proc.type,
+            default_price: priceValue,
+            currency: currency,
+            is_active: isActive
+          };
+
+          promises.push(
+            fetch(`${API}/api/admin/treatment-prices`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify(payload)
+            }).then(res => res.json())
+          );
+        } else if (prices[proc.type] && !isActive) {
+          // Update active status even if price is 0
+          const payload = {
+            id: prices[proc.type].id,
+            treatment_name: proc.type,
+            default_price: prices[proc.type].default_price || 0,
+            currency: currency,
+            is_active: false
+          };
+
+          promises.push(
+            fetch(`${API}/api/admin/treatment-prices`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify(payload)
+            }).then(res => res.json())
+          );
+        }
+      });
+
+      const results = await Promise.all(promises);
+      const errors = results.filter(r => !r.ok);
+      
+      if (errors.length > 0) {
+        throw new Error(`Some prices failed to save: ${errors.length} errors`);
+      }
+
+      // Show success message
+      const successMsg = document.createElement('div');
+      successMsg.className = 'status success';
+      successMsg.style.marginTop = '16px';
+      const successText = window.i18n ? window.i18n.t('settings.pricesSaved') : '✅ Tüm fiyatlar başarıyla kaydedildi!';
+      successMsg.textContent = successText;
+      const container = $("priceListContainer").parentElement;
+      const existingMsg = container.querySelector('.status.success');
+      if (existingMsg) existingMsg.remove();
+      container.appendChild(successMsg);
+      setTimeout(() => {
+        if (successMsg.parentElement) successMsg.remove();
+      }, 5000);
+      
+      // Reload prices to show saved values
+      await loadPrices();
+    } catch (error) {
+      console.error("Save all prices error:", error);
+      const errorMsg = window.i18n ? window.i18n.t('settings.errors.pricesSaveFailed', { error: error.message }) : `Fiyatlar kaydedilemedi: ${error.message}`;
+      alert(errorMsg);
+    } finally {
+      const saveBtn = $("saveAllPricesBtn");
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        const saveText = window.i18n ? window.i18n.t('settings.saveAllPrices') : '💾 Save All Prices';
+        saveBtn.textContent = saveText;
+      }
+    }
+  }
+
+  // Save all prices button
+  $("saveAllPricesBtn") && $("saveAllPricesBtn").addEventListener('click', saveAllPrices);
+
+  // Load prices on page load
+  loadPrices();
+
+  // Update UI when language changes
+  window.onLanguageChange = function() {
+    // Update all dynamic text
+    if (window.i18n) {
+      // Update status messages if they exist
+      const statusEl = $("status");
+      if (statusEl && statusEl.innerHTML) {
+        // Re-render status if it contains translatable content
+        // This is handled by i18n system automatically for data-i18n elements
+      }
+      
+      // Update save button text
+      const saveBtn = $("saveAllPricesBtn");
+      if (saveBtn && !saveBtn.disabled) {
+        saveBtn.textContent = window.i18n.t('settings.saveAllPrices');
+      }
+      
+      // Re-render prices table with new language
+      if (prices && Object.keys(prices).length > 0) {
+        renderPrices();
+      }
+    }
+  };
+</script>
+</body>
+</html>
+

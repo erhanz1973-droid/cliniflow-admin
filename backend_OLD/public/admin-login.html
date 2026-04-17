@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title id="pageTitle">Clinifly Admin – Login</title>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root { 
+      --bg:#0f172a; 
+      --card:#020617; 
+      --b:#1f2937; 
+      --p:#2563eb; 
+      --g:#16a34a; 
+      --r:#dc2626;
+      --warn:#f59e0b;
+      --muted:#a7b2c8;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-height:100vh;
+      padding:20px;
+    }
+    .container{
+      max-width:500px;
+      width:100%;
+    }
+    .header{
+      text-align:center;
+      margin-bottom:32px;
+    }
+    .header h1{
+      font-size:32px;
+      margin:0 0 8px;
+      font-weight:900;
+      color:#e6eaf2;
+    }
+    .subtitle{
+      color:var(--muted);
+      font-size:16px;
+      margin:0;
+    }
+    .form-container{
+      background:var(--card);
+      border:1px solid var(--b);
+      border-radius:16px;
+      padding:32px;
+      box-shadow:0 4px 12px rgba(0,0,0,0.2);
+    }
+    .form-group{
+      margin-bottom:20px;
+    }
+    label{
+      display:block;
+      font-size:14px;
+      font-weight:600;
+      color:#e6eaf2;
+      margin-bottom:8px;
+    }
+    .required{
+      color:var(--r);
+    }
+    input{
+      width:100%;
+      padding:12px 16px;
+      border:1px solid var(--b);
+      border-radius:8px;
+      background:#1f2937;
+      color:#e6eaf2;
+      font-size:15px;
+      box-sizing:border-box;
+      transition:border-color 0.2s;
+    }
+    input:focus{
+      outline:none;
+      border-color:var(--p);
+    }
+    input::placeholder{
+      color:#6b7280;
+    }
+    .help-text{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:6px;
+    }
+    .btn{
+      width:100%;
+      padding:14px;
+      border:none;
+      border-radius:8px;
+      font-size:16px;
+      font-weight:700;
+      cursor:pointer;
+      transition:all 0.2s;
+    }
+    .btn-primary{
+      background:var(--p);
+      color:#fff;
+    }
+    .btn-primary:hover{
+      background:#1d4ed8;
+    }
+    .btn-primary:disabled{
+      background:#6b7280;
+      cursor:not-allowed;
+    }
+    .btn-secondary{
+      background:#374151;
+      color:#e6eaf2;
+      margin-top:12px;
+    }
+    .btn-secondary:hover{
+      background:#4b5563;
+    }
+    #alert-container{
+      margin-bottom:20px;
+    }
+    .alert{
+      padding:12px 16px;
+      border-radius:8px;
+      margin-bottom:12px;
+      font-size:14px;
+      font-weight:600;
+    }
+    .alert-success{
+      background:#065f46;
+      border:1px solid var(--g);
+      color:#86efac;
+    }
+    .alert-error{
+      background:#7f1d1d;
+      border:1px solid var(--r);
+      color:#fca5a5;
+    }
+    .nav{
+      text-align:center;
+      margin-top:24px;
+    }
+    .nav a{
+      color:var(--p);
+      text-decoration:none;
+      font-size:14px;
+      font-weight:600;
+    }
+    .nav a:hover{
+      text-decoration:underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 id="pageHeading" data-i18n="login.title">Clinic Login</h1>
+      <p class="subtitle" id="pageSubtitle" data-i18n="login.subtitle">Mevcut klinik hesabınızla giriş yapın</p>
+    </div>
+
+    <div id="alert-container"></div>
+
+    <div id="form-container" class="form-container">
+      <form id="login-form">
+        <div class="form-group">
+          <label>
+            <span data-i18n="login.clinicCode">Clinic Code</span> <span class="required" data-i18n="login.clinicCodeRequired">*</span>
+          </label>
+          <input
+            type="text"
+            id="clinicCode"
+            name="clinicCode"
+            data-i18n-placeholder="login.clinicCodePlaceholder"
+            placeholder="SAAT"
+            style="text-transform: uppercase;"
+            required
+            autofocus
+          />
+          <div class="help-text" data-i18n="login.clinicCodeHelp">Klinik kodunuzu giriniz (örn: SAAT, MOON, CLINIC01)</div>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span data-i18n="login.password">Password</span> <span class="required" data-i18n="login.passwordRequired">*</span>
+          </label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            autocomplete="off"
+            required
+          />
+          <div class="help-text" data-i18n="login.passwordHelp">Klinik şifrenizi giriniz</div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submit-btn" data-i18n="login.submit">
+          Login
+        </button>
+
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick="window.location.href='/admin-register.html'"
+          data-i18n="login.registerLink"
+        >
+          Yeni Klinik Kaydı
+        </button>
+      </form>
+    </div>
+
+    <div class="nav">
+      <a href="/admin.html" data-i18n="login.dashboardLink">Dashboard'a Git</a>
+    </div>
+  </div>
+
+<script>
+  const API = window.location.origin;
+  
+  function showAlert(message, type = "error") {
+    const container = document.getElementById("alert-container");
+    container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    setTimeout(() => {
+      container.innerHTML = "";
+    }, type === "error" ? 5000 : 3000);
+  }
+
+  function setMsg(message, type = "ok") {
+    showAlert(message, type === "err" ? "error" : "success");
+  }
+
+  function updateUI() {
+    if (typeof i18n === 'undefined') return;
+    const titleEl = document.getElementById("pageTitle");
+    const headingEl = document.getElementById("pageHeading");
+    const subtitleEl = document.getElementById("pageSubtitle");
+    if (titleEl) titleEl.textContent = i18n.t("login.title");
+    if (headingEl) headingEl.textContent = i18n.t("login.title");
+    if (subtitleEl) subtitleEl.textContent = i18n.t("login.subtitle");
+    
+    // Update button texts
+    const submitBtn = document.getElementById("submit-btn");
+    if (submitBtn && !submitBtn.disabled) {
+      submitBtn.textContent = i18n.t("login.submit");
+    }
+  }
+  
+  window.onLanguageChange = updateUI;
+
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    
+    const submitBtn = document.getElementById("submit-btn");
+    const clinicCode = document.getElementById("clinicCode").value.trim().toUpperCase();
+    const password = document.getElementById("password").value;
+    
+    if (!clinicCode) {
+      setMsg(i18n.t("login.errors.clinicCodeRequired"), "err");
+      return;
+    }
+    
+    if (!password) {
+      setMsg(i18n.t("login.errors.passwordRequired"), "err");
+      return;
+    }
+    
+    submitBtn.disabled = true;
+    submitBtn.textContent = i18n.t("login.submitLoading");
+    
+    try {
+      const res = await fetch(`${API}/api/admin/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clinicCode, password }),
+      });
+      
+      const json = await res.json();
+      
+      if (!res.ok) {
+        let errorMsg = json.message || json.error || i18n.t("login.errors.loginFailed");
+        if (json.error === "invalid_clinic_code_or_password") {
+          errorMsg = i18n.t("login.errors.invalidCredentials");
+        } else if (json.error === "clinic_code_required") {
+          errorMsg = i18n.t("login.errors.clinicCodeRequired");
+        } else if (json.error === "password_required") {
+          errorMsg = i18n.t("login.errors.passwordRequired");
+        }
+        setMsg(errorMsg, "err");
+        submitBtn.disabled = false;
+        submitBtn.textContent = i18n.t("login.submit");
+        return;
+      }
+      
+      if (json.ok && json.token) {
+        // Save token to localStorage (without Bearer prefix, adminHeaders adds it)
+        localStorage.setItem("admin_token", json.token);
+        localStorage.setItem("clinic_code", json.clinicCode || clinicCode);
+        localStorage.setItem("clinic_name", json.clinicName || "");
+        
+        setMsg(i18n.t("login.success", { name: json.clinicName || clinicCode }), "ok");
+        
+        // Redirect to dashboard after a short delay
+        setTimeout(() => {
+          window.location.href = "/admin.html";
+        }, 1000);
+      } else {
+        setMsg(i18n.t("login.errors.loginFailed"), "err");
+        submitBtn.disabled = false;
+        submitBtn.textContent = i18n.t("login.submit");
+      }
+    } catch (error) {
+      console.error("Login error:", error);
+      setMsg(i18n.t("login.errors.genericError", { error: error.message || "Bilinmeyen hata" }), "err");
+      submitBtn.disabled = false;
+      submitBtn.textContent = i18n.t("login.submit");
+    }
+  });
+
+  // Wait for i18n to be ready
+  if (typeof i18n !== 'undefined') {
+    updateUI();
+  } else {
+    window.addEventListener('load', () => {
+      setTimeout(updateUI, 100);
+    });
+  }
+
+  // Auto-focus on clinic code input
+  document.getElementById("clinicCode").focus();
+</script>
+</body>
+</html>

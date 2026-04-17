@@ -1,9 +1,15 @@
-# Render Blueprint (optional): Static Site — HTML/CSS/JS in ./public
-# Dashboard: create a Static Site, set Publish directory to `public` (or use this Blueprint).
+# Static Site: only ./public is built and published. Backend at repo root (index.cjs,
+# lib/, shared/, cliniflow-backend/, etc.) stays in the repo but is not deployed here.
+#
+# Dashboard (match this if not using Blueprint):
+#   Root Directory: public
+#   Build Command: (empty)
+#   Publish Directory: .
 services:
   - type: web
     name: cliniflow-admin
     runtime: static
     region: oregon
-    buildCommand: "echo static"
-    staticPublishPath: ./public
+    rootDir: public
+    buildCommand: "true"
+    staticPublishPath: .

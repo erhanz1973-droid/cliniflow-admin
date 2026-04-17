@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <title>Admin Travel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="/admin-i18n.js"></script>
+  <style>
+    body { font-family: system-ui; background:#111827; color:#e5e7eb; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; background:#1f2937; border-radius: 16px; }
+    h1 { margin: 0 0 20px; font-size: 24px; font-weight: 700; }
+    .muted { opacity:.75; font-size: 13px; }
+    label { display:block; margin-top: 10px; font-weight: 600; }
+    input, textarea, button, select {
+      width:100%; margin-top:6px; padding:10px 12px;
+      border-radius:8px; border:1px solid #1f2937; background:#1f2937; color:#e5e7eb;
+    }
+    button { cursor:pointer; background:#2563eb; border:none; }
+    button:hover { background:#1d4ed8; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .row3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .card { margin-top: 14px; padding: 20px; border:0.5px solid rgba(55, 65, 81, 0.5); border-radius:16px; background:#1f2937; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .card-hotel { margin-top: 14px; padding: 20px; border:0.5px solid rgba(30, 58, 95, 0.5); border-radius:16px; background:#0a1629; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .card-pickup { margin-top: 14px; padding: 20px; border:0.5px solid rgba(45, 74, 45, 0.5); border-radius:16px; background:#0f1f0f; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .card-flight { margin-top: 14px; padding: 20px; border:0.5px solid rgba(61, 42, 31, 0.5); border-radius:16px; background:#1a1210; box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); }
+    .actions { display:flex; gap:10px; margin-top:12px; flex-wrap: wrap; }
+    .btn2 { background:#0ea5e9; }
+    .btn2:hover { background:#0284c7; }
+    .danger { background:#ef4444; }
+    .danger:hover { background:#dc2626; }
+    .ok { color:#22c55e; }
+    .err { color:#ef4444; }
+    pre { white-space:pre-wrap; margin: 0; }
+    code { background:#0b1220; padding:2px 6px; border-radius:6px; }
+    table { width:100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border-bottom: 1px solid #1f2937; padding: 10px 8px; text-align:left; vertical-align: top; }
+    th { opacity:.8; font-weight:700; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #334155; border-radius:999px; font-size: 12px; opacity:.9; }
+
+    /* timeline */
+    .tl { margin-top: 10px; }
+    .tlItem {
+      display:grid;
+      grid-template-columns: 140px 14px 1fr;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #111827;
+      align-items: start;
+    }
+    .tlTime { font-size: 12px; opacity:.85; }
+    .dot { width: 12px; height: 12px; border-radius: 999px; background:#2563eb; margin-top: 4px; }
+    .dot.hotel { background:#22c55e; }
+    .dot.note { background:#a78bfa; }
+    .dot.out { background:#38bdf8; }
+    .dot.ret { background:#f59e0b; }
+    /* .dot.tx removed (treatment events moved to admin-treatment.html) */
+    .dot.pickup { background:#10b981; } /* airport pickup */
+    .tlTitle { font-weight: 800; }
+    .tlDesc { opacity:.88; margin-top: 2px; font-size: 13px; }
+    .tlMeta { opacity:.75; font-size: 12px; margin-top: 6px; }
+    .split { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 820px){
+      .row3, .split, .grid { grid-template-columns: 1fr; }
+      .tlItem{ grid-template-columns: 120px 14px 1fr; }
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #374151;
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2563eb;
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 14px;
+      color: #a7b2c8;
+      font-weight: 500;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: #a7b2c8;
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: #2563eb;
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: #a7b2c8;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #a7b2c8;
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>✈️ Clinifly Admin – Travel</h1>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+    </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link">Patients</a>
+        <a href="/admin-treatment.html" class="nav-link">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link">Chat</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <div class="lang-toggle">
+          <span class="active">TR</span>
+          <span>|</span>
+          <span>EN</span>
+        </div>
+        <a href="/admin-login.html" class="nav-link secondary">Logout</a>
+      </div>
+    </nav>
+    <div id="globalWarning" style="display:none; padding:14px; background:#fef3c7; border:2px solid #f59e0b; border-radius:8px; margin-bottom:16px; color:#92400e; font-size:14px; font-weight:600;">
+      ⚠️ <strong>UYARI:</strong> Hasta tarafından doldurulacak alan(lar) var. Aşağıdaki uyarıları kontrol edin.
+    </div>
+
+    <div class="card">
+      <div>
+        <label>Hasta Adı (Seç)</label>
+        <select id="patientSelect">
+          <option value="">— Hasta seç —</option>
+        </select>
+        <div class="muted">Hasta listesinden Travel'a basınca otomatik seçilir. Buradan hasta değiştirince otomatik yüklenir.</div>
+        <input id="patientId" type="hidden" value="" />
+      </div>
+
+      <h3 style="margin:20px 0 8px;">📝 Düzenleme Politikası (Kim Düzenleyecek?)</h3>
+      <div class="row3" style="margin-bottom: 16px;">
+        <div>
+          <label>Otel</label>
+          <select id="editPolicy_hotel" disabled style="opacity:0.6; cursor:not-allowed;" title="Hasta tarafından belirlenir">
+            <option value="ADMIN">Admin Dolduruyor</option>
+            <option value="PATIENT">Hasta Dolduruyor</option>
+            <option value="BOTH">İkisi de Doldurabilir</option>
+          </select>
+          <div style="font-size:11px; opacity:0.7; margin-top:4px;">⚠️ Hasta tarafından belirlenir</div>
+        </div>
+        <div>
+          <label>Uçuşlar</label>
+          <select id="editPolicy_flights" disabled style="opacity:0.6; cursor:not-allowed;" title="Hasta tarafından belirlenir">
+            <option value="ADMIN">Admin Dolduruyor</option>
+            <option value="PATIENT">Hasta Dolduruyor</option>
+            <option value="BOTH">İkisi de Doldurabilir</option>
+          </select>
+          <div style="font-size:11px; opacity:0.7; margin-top:4px;">⚠️ Hasta tarafından belirlenir</div>
+        </div>
+        <div>
+          <label>Havalimanı Karşılama</label>
+          <select id="editPolicy_airportPickup" disabled style="opacity:0.6; cursor:not-allowed;">
+            <option value="ADMIN">Admin Dolduruyor</option>
+            <option value="PATIENT">Hasta Dolduruyor</option>
+            <option value="BOTH">İkisi de Doldurabilir</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="hotelWarning" style="display:none; padding:12px; background:#fef3c7; border:2px solid #f59e0b; border-radius:8px; margin-bottom:10px; color:#92400e; font-size:14px;">
+        <strong>⚠️ UYARI:</strong> Otel bilgilerini hasta dolduracak. Bu alanları değiştiremezsiniz. Hasta mobil uygulamadan otel bilgilerini girecek.
+      </div>
+
+      <div class="card-hotel">
+        <h3 style="margin:0 0 12px;">🏨 Otel Bilgileri</h3>
+        <div class="grid">
+          <div>
+            <label>Otel Adı</label>
+            <input id="hotelName" placeholder="Radisson Blu" />
+          </div>
+          <div>
+            <label>Giriş Tarihi</label>
+            <input id="hotelCheckIn" type="date" />
+          </div>
+        </div>
+        <div class="grid" style="margin-top:12px;">
+          <div>
+            <label>Otel Telefon Numarası</label>
+            <input id="hotelPhone" type="tel" placeholder="+90 242 123 4567" />
+          </div>
+          <div>
+            <label>Çıkış Tarihi</label>
+            <input id="hotelCheckOut" type="date" />
+          </div>
+        </div>
+        <div style="margin-top:12px;">
+          <label>Otel Adresi</label>
+          <input id="hotelAddress" placeholder="Lara Cd. No:10, 07110 Muratpaşa/Antalya" />
+        </div>
+        <div style="margin-top:12px;">
+          <label>Otel Google Map Linki</label>
+          <input id="hotelGoogleMapLink" type="url" placeholder="https://maps.google.com/?q=..." />
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <label>Notlar</label>
+        <textarea id="notes" rows="2" placeholder="opsiyonel not"></textarea>
+      </div>
+
+      <div class="card-pickup">
+        <h3 style="margin:0 0 12px;">🚗 Havalimanı Karşılama</h3>
+        <div class="grid">
+          <div>
+            <label>Karşılayacak Kişi Adı</label>
+            <input id="pickup_name" placeholder="Ahmet Yılmaz" />
+          </div>
+          <div>
+            <label>Telefon</label>
+            <input id="pickup_phone" placeholder="+90 555 123 4567" />
+          </div>
+        </div>
+        <div class="grid" style="margin-top:10px;">
+          <div>
+            <label>Araç Bilgisi (ops.)</label>
+            <input id="pickup_vehicle" placeholder="Siyah BMW, Plaka: 34 ABC 123" />
+          </div>
+          <div>
+            <label>Notlar (ops.)</label>
+            <input id="pickup_notes" placeholder="Terminal 1, Dış Hatlar Çıkışı" />
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn2" onclick="loadTravel()">GET • Yükle</button>
+        <button onclick="saveTravel()">POST • Kaydet</button>
+      </div>
+
+      <div id="pickupInfo" class="muted" style="margin-top:14px; padding:12px; background:#0b1220; border-radius:8px;">
+        <div style="margin-bottom:8px;">Henüz karşılama bilgisi yok.</div>
+      </div>
+
+      <div id="status" class="muted" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card-flight">
+      <h3 style="margin:0 0 8px;">✈️ Uçuş Formu</h3>
+      <div id="flightsWarning" style="display:none; padding:12px; background:#fef3c7; border:2px solid #f59e0b; border-radius:8px; margin-bottom:10px; color:#92400e; font-size:14px;">
+        <strong>⚠️ UYARI:</strong> Uçuş bilgilerini hasta dolduracak. Bu alanları değiştiremezsiniz. Hasta mobil uygulamadan uçuş bilgilerini girecek.
+      </div>
+
+      <div class="row3">
+        <div>
+          <label>Havayolu (ops.)</label>
+          <input id="f_airline" placeholder="Turkish Airlines" />
+        </div>
+        <div>
+          <label>Uçuş No (ops.)</label>
+          <input id="f_flightNo" placeholder="TK 1234" />
+        </div>
+        <div>
+          <label>Not (ops.)</label>
+          <input id="f_note" placeholder="bagaj/koltuk vb." />
+        </div>
+      </div>
+
+      <div class="row3" style="margin-top:12px;">
+        <div>
+          <label>Kalkış (IATA)</label>
+          <input id="f_from" placeholder="IST" />
+        </div>
+        <div>
+          <label>Varış (IATA)</label>
+          <input id="f_to" placeholder="TBS" />
+        </div>
+        <div>
+          <label>Saat (ops.)</label>
+          <input id="f_time" type="time" />
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:12px;">
+        <div>
+          <label>Tarih</label>
+          <input id="f_date" type="date" />
+        </div>
+        <div>
+          <label>Form</label>
+          <button class="danger" onclick="clearFlightForm()">Formu Temizle</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn2" onclick="addFlight('OUTBOUND')">➕ Gidiş Uçuşu Ekle</button>
+        <button class="btn2" onclick="addFlight('RETURN')">➕ Dönüş Uçuşu Ekle</button>
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button onclick="saveTravel()">POST • Kaydet</button>
+      </div>
+
+      <div style="margin-top:10px;" class="muted">
+        <span class="pill">Zorunlu</span> from, to, date
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="split">
+        <div>
+          <h3 style="margin:0 0 8px;">Gidiş</h3>
+          <table>
+            <thead><tr><th>Rota</th><th>Tarih/Saat</th><th></th></tr></thead>
+            <tbody id="outBody"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3 style="margin:0 0 8px;">Dönüş</h3>
+          <table>
+            <thead><tr><th>Rota</th><th>Tarih/Saat</th><th></th></tr></thead>
+            <tbody id="retBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button onclick="saveTravel()">POST • Kaydet</button>
+        <button class="btn2" onclick="loadTravel()">GET • Yenile</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px;">🕒 Zaman Çizelgesi (Uçuş + Otel + Karşılama + Notlar)</h3>
+      <div id="timeline" class="tl muted">—</div>
+    </div>
+
+  </div>
+
+<script>
+  // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+  (function bindNavTravelLink() {
+    try {
+      const pid = String(localStorage.getItem("selected_patient_id") || "").trim();
+      if (!pid) return;
+      const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+      if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+    } catch {}
+  })();
+
+  const DEFAULT_API_BASE = (location.origin && location.origin.startsWith("http"))
+    ? location.origin
+    : "http://127.0.0.1:5050";
+
+  let state = { hotel: null, flights: [], notes: "", airportPickup: null, editPolicy: { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" } };
+  const $ = (id) => document.getElementById(id);
+
+  function getAdminToken() {
+    try { return localStorage.getItem("admin_token") || ""; } catch { return ""; }
+  }
+
+  function adminHeaders(extra = {}) {
+    const token = getAdminToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...extra,
+    };
+  }
+
+  function getPatientIdFromUrlOrStorage() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const pid = (params.get("patientId") || "").trim();
+      if (pid) return pid;
+    } catch {}
+    try {
+      return (localStorage.getItem("selected_patient_id") || "").trim();
+    } catch {}
+    return "";
+  }
+
+  function setPatientIdAndUrl(pid) {
+    const clean = String(pid || "").trim();
+    if (!clean) return;
+    $("patientId").value = clean;
+    try {
+      localStorage.setItem("selected_patient_id", clean);
+    } catch {}
+    try {
+      const u = new URL(location.href);
+      u.searchParams.set("patientId", clean);
+      history.replaceState({}, "", u.toString());
+    } catch {}
+  }
+
+  async function loadPatientOptions() {
+    const select = $("patientSelect");
+    if (!select) return;
+    const token = getAdminToken();
+    if (!token) return; // if not logged in, skip silently
+    try {
+      const r = await fetch(`${apiBase()}/api/admin/patients`, {
+        headers: adminHeaders({ Accept: "application/json" }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j) return;
+      const list = Array.isArray(j.patients) ? j.patients : (Array.isArray(j.list) ? j.list : []);
+
+      // reset options
+      select.innerHTML = `<option value="">— Hasta seç —</option>`;
+      list.forEach((p) => {
+        const pid = String(p.patientId || p.patient_id || "").trim();
+        if (!pid) return;
+        const name = String(p.fullName || p.name || pid).trim();
+        const opt = document.createElement("option");
+        opt.value = pid;
+        opt.textContent = `${name} (${pid})`;
+        select.appendChild(opt);
+      });
+
+      const currentPid = String($("patientId").value || "").trim();
+      if (currentPid) select.value = currentPid;
+    } catch (e) {
+      console.warn("[ADMIN-TRAVEL] loadPatientOptions error:", e);
+    }
+  }
+
+  function setStatus(msg, ok=true){
+    $("status").innerHTML = ok ? `<span class="ok">✅ ${msg}</span>` : `<span class="err">❌ ${msg}</span>`;
+  }
+  function apiBase(){ return DEFAULT_API_BASE; }
+  function endpoint(pid){ return `${apiBase()}/api/patient/${encodeURIComponent(pid)}/travel`; }
+
+  function toSortableTs(dateStr, timeStr){
+    if(!dateStr) return 0;
+    const t = timeStr ? timeStr : "00:00";
+    const iso = `${dateStr}T${t}:00`;
+    const ts = Date.parse(iso);
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  function detailText(f){
+    const parts = [];
+    if (f.airline) parts.push(`Havayolu: ${f.airline}`);
+    if (f.flightNo) parts.push(`Uçuş No: ${f.flightNo}`);
+    if (f.note) parts.push(`Not: ${f.note}`);
+    return parts.join(" • ") || "-";
+  }
+
+  function renderTables(){
+    const flights = Array.isArray(state.flights) ? state.flights : [];
+    // Support both "OUTBOUND" and "DEPARTURE" types for outbound flights
+    const outbound = flights.filter(f => {
+      const type = f.type || "OUTBOUND";
+      return type === "OUTBOUND" || type === "DEPARTURE";
+    });
+    const ret = flights.filter(f => (f.type || "") === "RETURN");
+
+    const outBody = $("outBody");
+    const retBody = $("retBody");
+    outBody.innerHTML = "";
+    retBody.innerHTML = "";
+
+    // Airport Pickup info
+    const pickupInfo = $("pickupInfo");
+    if (state.airportPickup && (state.airportPickup.name || state.airportPickup.phone)){
+      const parts = [];
+      if (state.airportPickup.name) parts.push(`<strong>İsim:</strong> ${escapeHtml(state.airportPickup.name)}`);
+      if (state.airportPickup.phone) parts.push(`<strong>Telefon:</strong> ${escapeHtml(state.airportPickup.phone)}`);
+      if (state.airportPickup.vehicle) parts.push(`<strong>Araç:</strong> ${escapeHtml(state.airportPickup.vehicle)}`);
+      if (state.airportPickup.notes) parts.push(`<strong>Not:</strong> ${escapeHtml(state.airportPickup.notes)}`);
+      pickupInfo.innerHTML = `<div style="line-height:1.8;">${parts.join("<br/>")}</div>`;
+      pickupInfo.className = "";
+    } else {
+      pickupInfo.innerHTML = "<div style='margin-bottom:8px;'>Henüz karşılama bilgisi yok.</div>";
+      pickupInfo.className = "muted";
+    }
+
+    function rowSimple(f){
+      const route = `${String(f.from||"").toUpperCase()} → ${String(f.to||"").toUpperCase()}`;
+      const dt = `${f.date || "-"} ${f.time || ""}`.trim();
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${route}</td>
+        <td class="muted">${dt}</td>
+        <td style="width:120px;"><button class="danger" onclick="removeFlight('${f.id}')">Sil</button></td>
+      `;
+      return tr;
+    }
+
+    if(outbound.length === 0){
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="muted" colspan="3">Gidiş yok.</td>`;
+      outBody.appendChild(tr);
+    } else outbound.forEach(f => outBody.appendChild(rowSimple(f)));
+
+    if(ret.length === 0){
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="muted" colspan="3">Dönüş yok.</td>`;
+      retBody.appendChild(tr);
+    } else ret.forEach(f => retBody.appendChild(rowSimple(f)));
+
+    // treatment events moved to admin-treatment.html
+  }
+
+  function renderTimeline(){
+    const el = $("timeline");
+    const items = [];
+
+    // flights
+    (Array.isArray(state.flights) ? state.flights : []).forEach(f => {
+      const ts = toSortableTs(f.date, f.time);
+      const isReturn = (f.type === "RETURN");
+      // Support both "OUTBOUND" and "DEPARTURE" types
+      const isOutbound = (f.type === "OUTBOUND" || f.type === "DEPARTURE");
+      const title = isReturn ? "Dönüş Uçuşu" : (isOutbound ? "Gidiş Uçuşu" : "Uçuş");
+      const dotClass = isReturn ? "ret" : "out";
+      const route = `${String(f.from||"").toUpperCase()} → ${String(f.to||"").toUpperCase()}`;
+      const when = `${f.date || "-"} ${f.time || ""}`.trim();
+      items.push({
+        ts,
+        dotClass,
+        timeText: when || "-",
+        title: `${title} • ${route}`,
+        desc: detailText(f),
+        meta: ""
+      });
+    });
+
+    // treatment events moved to admin-treatment.html
+
+    // hotel
+    if (state.hotel && state.hotel.name){
+      // check-in'i gidiş sonrası gibi yerleştirmek için:
+      const outTs = items.filter(x=>x.dotClass==="out").sort((a,b)=>a.ts-b.ts)[0]?.ts || 0;
+      const ts = outTs ? (outTs + 60*60*1000) : 0;
+      items.push({
+        ts,
+        dotClass: "hotel",
+        timeText: outTs ? "Check-in (tahmini)" : "-",
+        title: `Otel • ${state.hotel.name}`,
+        desc: "Konaklama",
+        meta: ""
+      });
+    }
+
+    // airport pickup
+    if (state.airportPickup && (state.airportPickup.name || state.airportPickup.phone)){
+      const outTs = items.filter(x=>x.dotClass==="out").sort((a,b)=>a.ts-b.ts)[0]?.ts || 0;
+      const ts = outTs ? outTs : 0;
+      const pickupInfo = [
+        state.airportPickup.name ? `İsim: ${state.airportPickup.name}` : "",
+        state.airportPickup.phone ? `Tel: ${state.airportPickup.phone}` : "",
+        state.airportPickup.vehicle ? `Araç: ${state.airportPickup.vehicle}` : "",
+        state.airportPickup.notes ? `Not: ${state.airportPickup.notes}` : ""
+      ].filter(x => x).join(" • ");
+      
+      items.push({
+        ts,
+        dotClass: "pickup",
+        timeText: outTs ? "Karşılama" : "-",
+        title: `🚗 Havaalanı Karşılama`,
+        desc: pickupInfo || "-",
+        meta: ""
+      });
+    }
+
+    // notes
+    if (state.notes && state.notes.trim()){
+      const maxTs = items.reduce((m,x)=>Math.max(m, x.ts||0), 0);
+      items.push({
+        ts: maxTs ? (maxTs + 1) : 0,
+        dotClass: "note",
+        timeText: "Not",
+        title: "Notlar",
+        desc: state.notes.trim(),
+        meta: ""
+      });
+    }
+
+    items.sort((a,b) => {
+      const ta = a.ts || 0, tb = b.ts || 0;
+      if (ta === 0 && tb === 0) return 0;
+      if (ta === 0) return 1;
+      if (tb === 0) return -1;
+      return ta - tb;
+    });
+
+    if (items.length === 0){
+      el.textContent = "Henüz timeline verisi yok.";
+      return;
+    }
+
+    el.innerHTML = items.map(it => `
+      <div class="tlItem">
+        <div class="tlTime">${escapeHtml(it.timeText)}</div>
+        <div class="dot ${it.dotClass}"></div>
+        <div>
+          <div class="tlTitle">${escapeHtml(it.title)}</div>
+          <div class="tlDesc">${escapeHtml(it.desc || "-")}</div>
+          ${it.meta ? `<div class="tlMeta">${escapeHtml(it.meta)}</div>` : ``}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function updateInputStates(){
+    console.log("[ADMIN-TRAVEL] updateInputStates START - state:", state);
+    console.log("[ADMIN-TRAVEL] updateInputStates START - state.editPolicy:", state.editPolicy);
+    
+    // Ensure editPolicy exists
+    if (!state.editPolicy) {
+      state.editPolicy = { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" };
+      console.warn("[ADMIN-TRAVEL] updateInputStates - editPolicy was missing, using defaults");
+    }
+    
+    const hotelPolicy = state.editPolicy?.hotel || "ADMIN";
+    const flightsPolicy = state.editPolicy?.flights || "ADMIN";
+    
+    console.log("[ADMIN-TRAVEL] updateInputStates called:", {
+      hotelPolicy,
+      flightsPolicy,
+      editPolicy: state.editPolicy,
+      hasState: !!state,
+      hasEditPolicy: !!state.editPolicy,
+      hotelPolicyIsPATIENT: hotelPolicy === "PATIENT",
+      flightsPolicyIsPATIENT: flightsPolicy === "PATIENT"
+    });
+    
+    // Global warning - show if either hotel or flights is PATIENT (dynamic text)
+    const globalWarning = $("globalWarning");
+    if (!globalWarning) {
+      console.error("[ADMIN-TRAVEL] globalWarning element not found!");
+      // Don't return early - continue with other updates
+    }
+    const patientSections = [];
+    if (hotelPolicy === "PATIENT") patientSections.push("Otel");
+    if (flightsPolicy === "PATIENT") patientSections.push("Uçuş");
+    const sectionText = patientSections.length > 0 ? patientSections.join(" ve ") : "";
+    if (globalWarning) {
+      if (patientSections.length > 0) {
+        globalWarning.innerHTML =
+          `⚠️ <strong>UYARI:</strong> ${sectionText} bilgilerini hasta dolduracak. Bu alanları değiştiremezsiniz. ` +
+          `Hasta mobil uygulamadan ${sectionText.toLowerCase()} bilgilerini girecek.`;
+        globalWarning.style.display = "block";
+        console.log("[ADMIN-TRAVEL] Global warning shown:", sectionText);
+      } else {
+        globalWarning.style.display = "none";
+        console.log("[ADMIN-TRAVEL] Global warning hidden");
+      }
+    }
+    
+    // Hotel warning and inputs
+    const hotelWarning = $("hotelWarning");
+    const hotelInputs = ["hotelName", "hotelCheckIn", "hotelCheckOut", "hotelAddress", "hotelPhone", "hotelGoogleMapLink"].map(id => $(id)).filter(Boolean);
+    
+    if (!hotelWarning) {
+      console.error("[ADMIN-TRAVEL] hotelWarning element not found!");
+    }
+    if (hotelInputs.length === 0) {
+      console.error("[ADMIN-TRAVEL] Hotel inputs not found!");
+    }
+    
+    if (hotelPolicy === "PATIENT") {
+      console.log("[ADMIN-TRAVEL] Hotel policy is PATIENT - disabling inputs and showing warning");
+      if (hotelWarning) hotelWarning.style.display = "block";
+      hotelInputs.forEach(input => {
+        if (input) {
+          input.disabled = true;
+          input.style.opacity = "0.6";
+          input.style.cursor = "not-allowed";
+        }
+      });
+    } else {
+      console.log("[ADMIN-TRAVEL] Hotel policy is", hotelPolicy, "- enabling inputs");
+      if (hotelWarning) hotelWarning.style.display = "none";
+      hotelInputs.forEach(input => {
+        if (input) {
+          input.disabled = false;
+          input.style.opacity = "1";
+          input.style.cursor = "text";
+        }
+      });
+    }
+    
+    // Flights warning and inputs
+    const flightsWarning = $("flightsWarning");
+    if (!flightsWarning) {
+      console.error("[ADMIN-TRAVEL] flightsWarning element not found!");
+      // Don't return early - continue with other updates
+    }
+    const flightInputs = ["f_airline", "f_flightNo", "f_from", "f_to", "f_note", "f_date", "f_time"];
+    const flightButtons = document.querySelectorAll('button[onclick*="addFlight"]');
+    
+    if (flightsPolicy === "PATIENT") {
+      console.log("[ADMIN-TRAVEL] Flights policy is PATIENT - disabling inputs and showing warning");
+      if (flightsWarning) flightsWarning.style.display = "block";
+      flightInputs.forEach(id => {
+        const input = $(id);
+        if (input) {
+          input.disabled = true;
+          input.style.opacity = "0.6";
+          input.style.cursor = "not-allowed";
+        } else {
+          console.warn(`[ADMIN-TRAVEL] Flight input ${id} not found`);
+        }
+      });
+      flightButtons.forEach(btn => {
+        btn.disabled = true;
+        btn.style.opacity = "0.6";
+        btn.style.cursor = "not-allowed";
+      });
+      console.log("[ADMIN-TRAVEL] Flight inputs disabled - count:", flightInputs.length, "buttons:", flightButtons.length);
+    } else {
+      console.log("[ADMIN-TRAVEL] Flights policy is", flightsPolicy, "- enabling inputs");
+      if (flightsWarning) flightsWarning.style.display = "none";
+      flightInputs.forEach(id => {
+        const input = $(id);
+        if (input) {
+          input.disabled = false;
+          input.style.opacity = "1";
+          input.style.cursor = "text";
+        }
+      });
+      flightButtons.forEach(btn => {
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        btn.style.cursor = "pointer";
+      });
+      console.log("[ADMIN-TRAVEL] Flight inputs enabled");
+    }
+  }
+
+  function renderAll(){
+    renderTables();
+    renderTimeline();
+  }
+
+  function normalizeFromServer(j){
+    state = {
+      hotel: j.hotel ?? null,
+      flights: Array.isArray(j.flights) ? j.flights : [],
+      notes: typeof j.notes === "string" ? j.notes : "",
+      airportPickup: j.airportPickup ?? null,
+      editPolicy: j.editPolicy || { hotel: "ADMIN", flights: "ADMIN", airportPickup: "ADMIN", notes: "ADMIN" }
+    };
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - editPolicy:", state.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - j.editPolicy:", j.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - state after assignment:", JSON.stringify(state, null, 2));
+    $("hotelName").value = state.hotel?.name || "";
+    $("hotelCheckIn").value = state.hotel?.checkIn || "";
+    $("hotelCheckOut").value = state.hotel?.checkOut || "";
+    $("hotelAddress").value = state.hotel?.address || "";
+    $("hotelPhone").value = state.hotel?.phone || "";
+    $("hotelGoogleMapLink").value = state.hotel?.googleMapLink || "";
+    $("notes").value = state.notes || "";
+    $("editPolicy_hotel").value = state.editPolicy.hotel || "ADMIN";
+    $("editPolicy_flights").value = state.editPolicy.flights || "ADMIN";
+    $("editPolicy_airportPickup").value = state.editPolicy.airportPickup || "ADMIN";
+    // Airport Pickup fields
+    $("pickup_name").value = state.airportPickup?.name || "";
+    $("pickup_phone").value = state.airportPickup?.phone || "";
+    $("pickup_vehicle").value = state.airportPickup?.vehicle || "";
+    $("pickup_notes").value = state.airportPickup?.notes || "";
+    
+    // Update input states based on editPolicy
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - calling updateInputStates, state.editPolicy:", state.editPolicy);
+    console.log("[ADMIN-TRAVEL] normalizeFromServer - hotel policy:", state.editPolicy?.hotel, "flights policy:", state.editPolicy?.flights);
+    try {
+      updateInputStates();
+      console.log("[ADMIN-TRAVEL] normalizeFromServer - updateInputStates completed");
+    } catch (e) {
+      console.error("[ADMIN-TRAVEL] normalizeFromServer - updateInputStates error:", e);
+    }
+    
+    renderAll();
+  }
+
+  async function loadTravel(){
+    const pid = $("patientId").value.trim();
+    if(!pid) return setStatus("patientId boş", false);
+
+    try{
+      console.log("[ADMIN-TRAVEL] loadTravel - fetching from:", endpoint(pid));
+      const r = await fetch(endpoint(pid));
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      console.log("[ADMIN-TRAVEL] loadTravel - received response:", j);
+      console.log("[ADMIN-TRAVEL] loadTravel - j.editPolicy:", j.editPolicy);
+      normalizeFromServer(j);
+      setStatus("GET başarılı. Veri yüklendi.");
+    }catch(e){
+      console.error("[ADMIN-TRAVEL] loadTravel - error:", e);
+      setStatus("GET hata: " + e.message, false);
+    }
+  }
+
+  async function saveTravel(){
+    const pid = $("patientId").value.trim();
+    if(!pid) return setStatus("patientId boş", false);
+
+    // EditPolicy is determined by patient, don't allow admin to change it
+    // Use existing editPolicy from state
+    const editPolicy = state.editPolicy || {
+      hotel: "ADMIN",
+      flights: "ADMIN",
+      airportPickup: "ADMIN",
+      notes: "ADMIN"
+    };
+
+    // Check if admin can edit hotel
+    let hotelName = "";
+    let hotelChanged = false;
+    if (editPolicy.hotel === "PATIENT") {
+      // If patient fills, keep existing hotel data - don't allow changes
+      hotelName = state.hotel?.name || "";
+      const inputHotelName = $("hotelName").value.trim();
+      if (inputHotelName !== hotelName) {
+        setStatus("⚠️ Otel bilgilerini hasta dolduracak. Değişiklik yapılamaz. Mevcut veri korunuyor.", false);
+        // Reset input to original value
+        $("hotelName").value = hotelName;
+      }
+    } else {
+      hotelName = $("hotelName").value.trim();
+    }
+
+    // Check if admin can edit flights
+    let flights = [];
+    if (editPolicy.flights === "PATIENT") {
+      // If patient fills, keep existing flights - don't allow changes
+      flights = Array.isArray(state.flights) ? state.flights : [];
+      // Check if flights were modified (compare lengths or IDs)
+      const currentFlightsCount = flights.length;
+      const stateFlightsCount = Array.isArray(state.flights) ? state.flights.length : 0;
+      if (currentFlightsCount !== stateFlightsCount) {
+        setStatus("⚠️ Uçuş bilgilerini hasta dolduracak. Değişiklik yapılamaz. Mevcut veri korunuyor.", false);
+        // Flights already set to state.flights above
+      }
+    } else {
+      flights = Array.isArray(state.flights) ? state.flights : [];
+    }
+
+    // Notes can always be edited by admin (or check policy if needed)
+    const notes = $("notes").value;
+
+    // Airport Pickup data
+    const pickupName = $("pickup_name").value.trim();
+    const pickupPhone = $("pickup_phone").value.trim();
+    const pickupVehicle = $("pickup_vehicle").value.trim();
+    const pickupNotes = $("pickup_notes").value.trim();
+    
+    const airportPickup = (pickupName || pickupPhone) ? {
+      name: pickupName || "",
+      phone: pickupPhone || "",
+      vehicle: pickupVehicle || "",
+      notes: pickupNotes || ""
+    } : null;
+
+    // Build hotel object - preserve checkIn/checkOut if patient fills
+    let hotelObj = null;
+    const hotelCheckIn = $("hotelCheckIn").value.trim();
+    const hotelCheckOut = $("hotelCheckOut").value.trim();
+    const hotelAddress = $("hotelAddress").value.trim();
+    const hotelPhone = $("hotelPhone").value.trim();
+    const hotelGoogleMapLink = $("hotelGoogleMapLink").value.trim();
+    
+    if (editPolicy.hotel === "PATIENT") {
+      // Keep existing hotel data completely
+      hotelObj = state.hotel || null;
+    } else {
+      // Admin can edit - use input values but preserve other fields
+      if (hotelName || hotelCheckIn || hotelCheckOut || hotelAddress || hotelPhone || hotelGoogleMapLink) {
+        hotelObj = {
+          ...(state.hotel || {}),
+          name: hotelName || "",
+          checkIn: hotelCheckIn || "",
+          checkOut: hotelCheckOut || "",
+          address: hotelAddress || "",
+          phone: hotelPhone || "",
+          googleMapLink: hotelGoogleMapLink || ""
+        };
+      } else {
+        hotelObj = null;
+      }
+    }
+
+    const payload = {
+      hotel: hotelObj,
+      flights: flights,
+      notes: notes || "",
+      airportPickup: airportPickup,
+      editPolicy: editPolicy
+    };
+
+    try{
+      const r = await fetch(endpoint(pid), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const text = await r.text();
+      if(!r.ok) throw new Error(`HTTP ${r.status} → ${text}`);
+
+      let j = null;
+      try { j = JSON.parse(text); } catch {}
+      if (j && j.travel) normalizeFromServer(j.travel);
+
+      setStatus("POST başarılı. Kaydedildi.");
+    }catch(e){
+      setStatus("POST hata: " + e.message, false);
+    }
+  }
+
+  function addFlight(type){
+    // Check if flights are editable
+    const flightsPolicy = state.editPolicy?.flights || "ADMIN";
+    if (flightsPolicy === "PATIENT") {
+      return setStatus("Uçuş bilgilerini hasta dolduracak. Yeni uçuş ekleyemezsiniz.", false);
+    }
+    
+    const f = {
+      id: String(Date.now()),
+      type,
+      airline: $("f_airline").value.trim() || "",
+      flightNo: $("f_flightNo").value.trim() || "",
+      from: $("f_from").value.trim() || "",
+      to: $("f_to").value.trim() || "",
+      date: $("f_date").value || "",
+      time: $("f_time").value || "",
+      note: $("f_note").value.trim() || ""
+    };
+
+    if (!f.from || !f.to || !f.date){
+      return setStatus("Uçuş için en az: from, to, date gerekli.", false);
+    }
+
+    state.flights = Array.isArray(state.flights) ? state.flights : [];
+    state.flights.push(f);
+    renderAll();
+    setStatus((type === "RETURN" ? "Dönüş" : "Gidiş") + " uçuşu eklendi. (Kaydet'e bas)");
+  }
+
+  function removeFlight(id){
+    // Check if flights are editable
+    const flightsPolicy = state.editPolicy?.flights || "ADMIN";
+    if (flightsPolicy === "PATIENT") {
+      return setStatus("Uçuş bilgilerini hasta dolduracak. Uçuş silemezsiniz.", false);
+    }
+    
+    state.flights = Array.isArray(state.flights) ? state.flights : [];
+    state.flights = state.flights.filter(f => String(f.id) !== String(id));
+    renderAll();
+    setStatus("Uçuş silindi. (Kaydet'e bas)");
+  }
+
+  function clearFlightForm(){
+    $("f_airline").value = "";
+    $("f_flightNo").value = "";
+    $("f_from").value = "";
+    $("f_to").value = "";
+    $("f_date").value = "";
+    $("f_time").value = "";
+    $("f_note").value = "";
+    setStatus("Uçuş formu temizlendi.");
+  }
+
+  // add/remove treatment events moved to admin-treatment.html
+
+  // init
+
+  // Auto-fill patientId from URL or selected patient, then load dropdown + auto-load travel
+  const initialPid = getPatientIdFromUrlOrStorage();
+  if (initialPid) {
+    setPatientIdAndUrl(initialPid);
+  } else {
+    // If Travel is opened from the top menu without any patient context, do not load a random patient.
+    try {
+      const s = $("status");
+      if (s) {
+        s.innerHTML =
+          '⚠️ Önce hasta seçmelisiniz. <a href="/admin-patients.html" style="color:#2563eb; font-weight:700;">Patients</a> sayfasından bir hasta seçin veya yukarıdan hasta adı seçin.';
+      }
+    } catch {}
+  }
+  loadPatientOptions();
+  if ($("patientSelect")) {
+    $("patientSelect").addEventListener("change", () => {
+      const pid = $("patientSelect").value;
+      if (!pid) return;
+      setPatientIdAndUrl(pid);
+      loadTravel();
+    });
+  }
+  $("patientId").addEventListener("change", () => {
+    const pid = $("patientId").value.trim();
+    if (!pid) return;
+    setPatientIdAndUrl(pid);
+    if ($("patientSelect")) $("patientSelect").value = pid;
+  });
+  if ($("patientId").value.trim()) loadTravel();
+  
+  // EditPolicy selects are disabled - patient determines this
+  // No event listeners needed since selects are disabled
+  
+  // Update input states on initial load
+  updateInputStates();
+  
+  renderAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Clinifly Super Admin – Dashboard</title>
+  <style>
+    :root { 
+      --bg:#111827; 
+      --card:#1f2937; 
+      --b:#374151; 
+      --p:#8b5cf6; 
+      --g:#16a34a; 
+      --r:#dc2626;
+      --warn:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ 
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; 
+      margin:0; 
+      background:var(--bg); 
+      color:#e6eaf2; 
+    }
+    .wrap{ max-width:1400px; margin:0 auto; padding:20px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+    h2{ font-size:18px; margin:20px 0 12px; font-weight:600; }
+    .card{ 
+      background:var(--card); 
+      border:0.5px solid rgba(55, 65, 81, 0.5); 
+      border-radius:16px; 
+      padding:24px; 
+      box-shadow:inset 0 1px 0 rgba(255,255,255,0.05); 
+      margin-bottom:16px;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: var(--p);
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: var(--muted);
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--card);
+      border: 0.5px solid rgba(55, 65, 81, 0.5);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: #e6eaf2;
+      margin-bottom: 8px;
+    }
+    .stat-label {
+      font-size: 14px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid rgba(55, 65, 81, 0.5);
+    }
+    th {
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td {
+      color: #e6eaf2;
+    }
+    tr:hover {
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-success {
+      background: rgba(22, 163, 74, 0.2);
+      color: #86efac;
+      border: 1px solid rgba(22, 163, 74, 0.3);
+    }
+    .badge-warning {
+      background: rgba(245, 158, 11, 0.2);
+      color: #fde68a;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .badge-danger {
+      background: rgba(220, 38, 38, 0.2);
+      color: #fca5a5;
+      border: 1px solid rgba(220, 38, 38, 0.3);
+    }
+    .badge-suspended {
+      background: rgba(156, 163, 175, 0.2);
+      color: #d1d5db;
+      border: 1px solid rgba(156, 163, 175, 0.3);
+    }
+    .badge-info {
+      background: rgba(139, 92, 246, 0.2);
+      color: #c4b5fd;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+    }
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .alert-error {
+      background: rgba(220, 38, 38, 0.15);
+      border: 1px solid rgba(220, 38, 38, 0.3);
+      color: #fca5a5;
+    }
+    .alert-success {
+      background: rgba(22, 163, 74, 0.15);
+      border: 1px solid rgba(22, 163, 74, 0.3);
+      color: #86efac;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      background: var(--p);
+      color: #fff;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #7c3aed;
+    }
+    button.secondary {
+      background: #6b7280;
+    }
+    button.secondary:hover {
+      background: #4b5563;
+    }
+    button.success {
+      background: var(--g);
+    }
+    button.success:hover {
+      background: #15803d;
+    }
+    button.danger {
+      background: var(--r);
+    }
+    button.danger:hover {
+      background: #b91c1c;
+    }
+    button:disabled {
+      background: #6b7280;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--muted);
+    }
+    .search-box {
+      width: 100%;
+      padding: 12px 16px;
+      border: 1px solid var(--b);
+      border-radius: 8px;
+      background: #1f2937;
+      color: #e6eaf2;
+      font-size: 14px;
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+    .search-box:focus {
+      outline: none;
+      border-color: var(--p);
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .text-center {
+      text-align: center;
+    }
+    .link-btn {
+      background: none;
+      border: none;
+      color: var(--link);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 0;
+      text-decoration: underline;
+    }
+    .link-btn:hover {
+      color: #8bb5ff;
+    }
+    /* Modal styles */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      z-index: 1000;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .modal-overlay.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: var(--card);
+      border: 0.5px solid rgba(55, 65, 81, 0.5);
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+    }
+    .modal-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+    }
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 24px;
+      cursor: pointer;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+    }
+    .modal-close:hover {
+      background: rgba(55, 65, 81, 0.5);
+      color: #e6eaf2;
+    }
+    .modal-section {
+      margin-bottom: 24px;
+    }
+    .modal-section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--p);
+    }
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .stat-item {
+      background: rgba(55, 65, 81, 0.3);
+      padding: 12px;
+      border-radius: 8px;
+    }
+    .stat-item-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .stat-item-value {
+      font-size: 18px;
+      font-weight: 600;
+      color: #e6eaf2;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🔐 Super Admin Dashboard</h1>
+    
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+        </div>
+        <div style="font-size: 18px; font-weight: 700; color: var(--p);">Super Admin</div>
+      </div>
+      <div class="navbar-right">
+        <a href="/super-admin.html" class="nav-link active">Dashboard</a>
+        <a href="/super-admin-login.html" class="nav-link secondary" onclick="logout(); return false;">Logout</a>
+      </div>
+    </nav>
+
+    <div id="alert-container"></div>
+
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card">
+        <div class="stat-value" id="totalClinics">—</div>
+        <div class="stat-label">Total Clinics</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="activeClinics">—</div>
+        <div class="stat-label">Active Clinics</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="suspendedClinics">—</div>
+        <div class="stat-label">Suspended Clinics</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🏥 All Clinics</h2>
+      <input 
+        type="text" 
+        id="searchInput" 
+        class="search-box" 
+        placeholder="Search clinics by name, code, email..."
+        oninput="filterClinics()"
+      />
+      <div id="clinicsContainer" class="loading">Loading clinics...</div>
+    </div>
+  </div>
+
+  <!-- Clinic Details Modal -->
+  <div id="clinicDetailsModal" class="modal-overlay" onclick="closeClinicDetails(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">Clinic Details</h3>
+        <button class="modal-close" onclick="closeClinicDetails()">×</button>
+      </div>
+      <div id="modalBody">
+        <div class="loading">Loading clinic details...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clinic Details Modal -->
+  <div id="clinicDetailsModal" class="modal-overlay" onclick="closeClinicDetails(event)">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">Clinic Details</h3>
+        <button class="modal-close" onclick="closeClinicDetails()">×</button>
+      </div>
+      <div id="modalBody">
+        <div class="loading">Loading clinic details...</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const API = location.origin;
+  let allClinics = [];
+
+  function getSuperAdminToken() {
+    try { return localStorage.getItem("super_admin_token") || ""; } catch { return ""; }
+  }
+
+  function checkAuth() {
+    const token = getSuperAdminToken();
+    if (!token) {
+      window.location.href = "/super-admin-login.html";
+      return false;
+    }
+    return true;
+  }
+
+  function superAdminHeaders(extra = {}) {
+    const token = getSuperAdminToken();
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...extra,
+    };
+  }
+
+  function setAlert(msg, type = "error") {
+    const container = document.getElementById("alert-container");
+    container.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+    setTimeout(() => {
+      container.innerHTML = "";
+    }, 5000);
+  }
+
+  function logout() {
+    localStorage.removeItem("super_admin_token");
+    window.location.href = "/super-admin-login.html";
+  }
+
+  function formatDate(timestamp) {
+    if (!timestamp) return "—";
+    try {
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) return timestamp;
+      return date.toLocaleDateString("tr-TR", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+    } catch {
+      return timestamp;
+    }
+  }
+
+  function getStatusBadge(status) {
+    const statusUpper = (status || "").toUpperCase();
+    if (statusUpper === "ACTIVE" || statusUpper === "APPROVED") {
+      return '<span class="badge badge-success">Active</span>';
+    } else if (statusUpper === "SUSPENDED") {
+      return '<span class="badge badge-suspended">Suspended</span>';
+    } else if (statusUpper === "PENDING") {
+      return '<span class="badge badge-warning">Pending</span>';
+    } else {
+      return '<span class="badge badge-info">' + (status || "—") + '</span>';
+    }
+  }
+
+  function getPlanBadge(plan) {
+    const planUpper = (plan || "FREE").toUpperCase();
+    const colors = {
+      FREE: "badge-info",
+      BASIC: "badge-info",
+      PRO: "badge-success",
+      PREMIUM: "badge-success"
+    };
+    const color = colors[planUpper] || "badge-info";
+    return '<span class="badge ' + color + '">' + (plan || "FREE") + '</span>';
+  }
+
+  function renderClinics(clinics) {
+    const container = document.getElementById("clinicsContainer");
+    
+    if (!clinics || clinics.length === 0) {
+      container.innerHTML = '<div class="empty-state">No clinics found</div>';
+      return;
+    }
+
+    let html = '<table>';
+    html += '<thead><tr>';
+    html += '<th>Clinic Code</th>';
+    html += '<th>Name</th>';
+    html += '<th>Address</th>';
+    html += '<th>Phone</th>';
+    html += '<th>Email</th>';
+    html += '<th>Plan</th>';
+    html += '<th>Status</th>';
+    html += '<th>👤 Hasta</th>';
+    html += '<th>💬 Mesaj</th>';
+    html += '<th>📎 Referral</th>';
+    html += '<th>Created At</th>';
+    html += '<th>Actions</th>';
+    html += '</tr></thead>';
+    html += '<tbody>';
+
+    clinics.forEach(clinic => {
+      const statusUpper = (clinic.status || "").toUpperCase();
+      const clinicId = clinic.clinicId || clinic.id || "";
+      const stats = clinic.stats || {};
+      
+      html += '<tr>';
+      html += '<td><strong>' + (clinic.clinicCode || clinic.code || "—") + '</strong></td>';
+      html += '<td>';
+      html += '<div>' + (clinic.name || clinic.clinicName || "—") + '</div>';
+      html += '<button class="link-btn" onclick="showClinicDetails(\'' + clinicId + '\')" style="font-size:11px; color:#2563EB; margin-top:4px;">📊 Detay</button>';
+      html += '</td>';
+      html += '<td class="muted" style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">' + (clinic.address || "—") + '</td>';
+      html += '<td class="muted">' + (clinic.phone || "—") + '</td>';
+      html += '<td>' + (clinic.email || "—") + '</td>';
+      html += '<td>' + getPlanBadge(clinic.plan) + '</td>';
+      html += '<td>' + getStatusBadge(clinic.status) + '</td>';
+      html += '<td class="text-center"><strong>' + (stats.patientCount || 0) + '</strong></td>';
+      html += '<td class="text-center"><strong>' + (stats.messageCount || 0) + '</strong></td>';
+      html += '<td class="text-center"><strong>' + (stats.activeReferralCount || 0) + '/' + (stats.referralCount || 0) + '</strong></td>';
+      html += '<td class="muted">' + formatDate(clinic.createdAt) + '</td>';
+      html += '<td>';
+      html += '<div class="action-buttons">';
+      
+      // Only show suspend/reactivate buttons - no approval needed
+      // Payment = Verification - clinics are ACTIVE by default after registration
+      if (statusUpper === "SUSPENDED") {
+        html += '<button class="success" onclick="activateClinic(\'' + clinicId + '\')">✅ Aktifleştir</button>';
+        html += '<span class="muted" style="font-size:12px; margin-left:8px;">Askıya Alındı</span>';
+      } else if (statusUpper === "ACTIVE" || statusUpper === "APPROVED") {
+        html += '<button class="danger" onclick="suspendClinic(\'' + clinicId + '\')">⚠️ Askıya Al</button>';
+        html += '<span class="muted" style="font-size:12px; margin-left:8px;">Aktif</span>';
+      } else {
+        // PENDING or other status - show activate button (shouldn't happen with new flow)
+        html += '<button class="success" onclick="activateClinic(\'' + clinicId + '\')">✅ Aktifleştir</button>';
+      }
+      
+      html += '</div>';
+      html += '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function filterClinics() {
+    const searchTerm = document.getElementById("searchInput").value.toLowerCase().trim();
+    
+    if (!searchTerm) {
+      renderClinics(allClinics);
+      return;
+    }
+
+    const filtered = allClinics.filter(clinic => {
+      const code = (clinic.clinicCode || clinic.code || "").toLowerCase();
+      const name = (clinic.name || clinic.clinicName || "").toLowerCase();
+      const email = (clinic.email || "").toLowerCase();
+      
+      return code.includes(searchTerm) || 
+             name.includes(searchTerm) || 
+             email.includes(searchTerm);
+    });
+
+    renderClinics(filtered);
+  }
+
+  async function suspendClinic(clinicId) {
+    if (!clinicId) {
+      setAlert("Clinic ID bulunamadı", "error");
+      return;
+    }
+
+    const reason = prompt("Askıya alma nedeni (opsiyonel):");
+    if (reason === null) {
+      return; // User cancelled
+    }
+
+    try {
+      const res = await fetch(`${API}/api/super-admin/clinics/${encodeURIComponent(clinicId)}/suspend`, {
+        method: "PATCH",
+        headers: superAdminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ reason: reason || "Suspended by super admin" })
+      });
+
+      // Check content type before parsing
+      const contentType = res.headers.get("content-type");
+      let data;
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error("Non-JSON response:", text.substring(0, 200));
+        throw new Error(`Unexpected response format: ${res.status}`);
+      }
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          setAlert("Unauthorized. Please login again.", "error");
+          setTimeout(() => {
+            window.location.href = "/super-admin-login.html";
+          }, 2000);
+          return;
+        }
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      
+      if (data.ok) {
+        setAlert("⚠️ Klinik askıya alındı", "error");
+        // Reload clinics
+        loadClinics();
+      } else {
+        throw new Error(data.message || "Askıya alma başarısız");
+      }
+    } catch (error) {
+      console.error("Suspend clinic error:", error);
+      setAlert("Hata: " + error.message, "error");
+    }
+  }
+
+  async function activateClinic(clinicId) {
+    if (!clinicId) {
+      setAlert("Clinic ID bulunamadı", "error");
+      return;
+    }
+
+    console.log("[ACTIVATE] Activating clinic:", clinicId);
+
+    try {
+      const url = `${API}/api/super-admin/clinics/${encodeURIComponent(clinicId)}/activate`;
+      console.log("[ACTIVATE] Calling:", url);
+      
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: superAdminHeaders({ "Content-Type": "application/json" })
+      });
+      
+      console.log("[ACTIVATE] Response status:", res.status);
+      console.log("[ACTIVATE] Response headers:", res.headers.get("content-type"));
+
+      // Check content type before parsing
+      const contentType = res.headers.get("content-type");
+      let data;
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+        console.log("[ACTIVATE] Response data:", data);
+      } else {
+        const text = await res.text();
+        console.error("[ACTIVATE] Non-JSON response (status:", res.status, "):", text.substring(0, 500));
+        throw new Error(`Unexpected response format: ${res.status}. Server returned HTML instead of JSON.`);
+      }
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          setAlert("Unauthorized. Please login again.", "error");
+          setTimeout(() => {
+            window.location.href = "/super-admin-login.html";
+          }, 2000);
+          return;
+        }
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      
+      if (data.ok) {
+        setAlert("✅ Klinik aktifleştirildi!", "success");
+        // Reload clinics
+        loadClinics();
+      } else {
+        throw new Error(data.message || "Aktifleştirme başarısız");
+      }
+    } catch (error) {
+      console.error("[ACTIVATE] Activate clinic error:", error);
+      let errorMsg = error.message || "Bilinmeyen hata";
+      if (errorMsg.includes("Unexpected token") || errorMsg.includes("Unexpected response format")) {
+        errorMsg = "Sunucu hatası: Endpoint bulunamadı veya geçersiz yanıt formatı. Lütfen sunucu loglarını kontrol edin.";
+      }
+      setAlert("Hata: " + errorMsg, "error");
+    }
+  }
+
+  async function loadClinics() {
+    if (!checkAuth()) return;
+
+    const container = document.getElementById("clinicsContainer");
+    container.innerHTML = '<div class="loading">Loading clinics...</div>';
+
+    try {
+      const res = await fetch(`${API}/api/super-admin/clinics`, {
+        headers: superAdminHeaders({ Accept: "application/json" })
+      });
+
+      // Check content type before parsing
+      const contentType = res.headers.get("content-type");
+      let data;
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error("Non-JSON response:", text.substring(0, 200));
+        throw new Error(`Unexpected response format: ${res.status}`);
+      }
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          setAlert("Unauthorized. Please login again.", "error");
+          setTimeout(() => {
+            window.location.href = "/super-admin-login.html";
+          }, 2000);
+          return;
+        }
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      
+      if (!data.ok || !data.clinics) {
+        throw new Error("Invalid response format");
+      }
+
+      allClinics = Array.isArray(data.clinics) ? data.clinics : [];
+      
+      // Update stats
+      const total = allClinics.length;
+      const active = allClinics.filter(c => {
+        const statusUpper = (c.status || "").toUpperCase();
+        return statusUpper === "ACTIVE" || statusUpper === "APPROVED";
+      }).length;
+      const suspended = allClinics.filter(c => (c.status || "").toUpperCase() === "SUSPENDED").length;
+
+      document.getElementById("totalClinics").textContent = total;
+      document.getElementById("activeClinics").textContent = active;
+      document.getElementById("suspendedClinics").textContent = suspended;
+
+      // Render clinics
+      renderClinics(allClinics);
+
+    } catch (error) {
+      console.error("Load clinics error:", error);
+      container.innerHTML = '<div class="alert alert-error">Error loading clinics: ' + error.message + '</div>';
+      setAlert("Failed to load clinics: " + error.message, "error");
+    }
+  }
+
+  async function showClinicDetails(clinicId) {
+    if (!clinicId) return;
+    
+    const modal = document.getElementById("clinicDetailsModal");
+    const modalBody = document.getElementById("modalBody");
+    const modalTitle = document.getElementById("modalTitle");
+    
+    modal.classList.add("active");
+    modalBody.innerHTML = '<div class="loading">Loading clinic details...</div>';
+    
+    try {
+      const res = await fetch(`${API}/api/super-admin/clinics/${encodeURIComponent(clinicId)}/statistics`, {
+        headers: superAdminHeaders({ Accept: "application/json" })
+      });
+      
+      // Check content type before parsing
+      const contentType = res.headers.get("content-type");
+      let data;
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        console.error("[CLINIC_DETAILS] Non-JSON response:", text.substring(0, 200));
+        throw new Error(`Unexpected response format: ${res.status}`);
+      }
+      
+      if (!res.ok) {
+        if (res.status === 401) {
+          setAlert("Unauthorized. Please login again.", "error");
+          closeClinicDetails();
+          setTimeout(() => {
+            window.location.href = "/super-admin-login.html";
+          }, 2000);
+          return;
+        }
+        throw new Error(data.message || data.error || `HTTP ${res.status}`);
+      }
+      
+      if (!data.ok || !data.statistics) {
+        throw new Error("Invalid response format");
+      }
+      
+      const stats = data.statistics;
+      const clinic = stats.clinic;
+      
+      modalTitle.textContent = `${clinic.name || "Clinic"} - Detaylı İstatistikler`;
+      
+      let html = '';
+      
+      // 1. Basic Info
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">1️⃣ Klinik Temel Bilgileri</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Klinik Adı</div><div class="stat-item-value">' + escapeHtml(clinic.name) + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Email</div><div class="stat-item-value">' + escapeHtml(clinic.email) + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Telefon</div><div class="stat-item-value">' + escapeHtml(clinic.phone || "—") + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Plan</div><div class="stat-item-value">' + getPlanBadge(clinic.plan) + '</div></div>';
+      html += '</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item" style="grid-column: 1 / -1;"><div class="stat-item-label">Adres</div><div class="stat-item-value">' + escapeHtml(clinic.address || "—") + '</div></div>';
+      html += '</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Durum</div><div class="stat-item-value">' + getStatusBadge(clinic.status) + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Kayıt Tarihi</div><div class="stat-item-value">' + formatDate(clinic.createdAt) + '</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 2. Activity Summary
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">2️⃣ Klinik Aktivite Özeti</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">👤 Toplam Hasta</div><div class="stat-item-value">' + stats.activity.totalPatients + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">💬 Toplam Mesaj</div><div class="stat-item-value">' + stats.activity.totalMessages + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">📎 Yüklenen Dosya</div><div class="stat-item-value">' + stats.activity.totalFiles + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">🦷 Toplam İşlem</div><div class="stat-item-value">' + stats.activity.totalTreatments + '</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 3. Treatment Statistics
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">3️⃣ Hasta Başına İşlem Bilgisi</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Ortalama İşlem/Hasta</div><div class="stat-item-value">' + stats.treatments.averagePerPatient + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">En Çok İşlem Yapılan</div><div class="stat-item-value">' + (stats.treatments.topPatients[0]?.treatmentCount || 0) + ' işlem</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 4. Messaging Statistics
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">4️⃣ Mesajlaşma Verileri</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Toplam Mesaj</div><div class="stat-item-value">' + stats.messaging.total + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Klinik → Hasta</div><div class="stat-item-value">' + stats.messaging.fromClinic + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Hasta → Klinik</div><div class="stat-item-value">' + stats.messaging.fromPatient + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Son Mesaj</div><div class="stat-item-value">' + (stats.messaging.lastMessageAt ? formatDate(stats.messaging.lastMessageAt) : "—") + '</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 5. Referral Statistics
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">5️⃣ Referral / İndirim Sistemi</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Toplam Referral</div><div class="stat-item-value">' + stats.referrals.total + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Başarılı Referral</div><div class="stat-item-value">' + stats.referrals.successful + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Toplam İndirim Tutarı</div><div class="stat-item-value">' + stats.referrals.totalDiscountAmount.toFixed(2) + ' ₺</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 6. Travel Statistics
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">6️⃣ Seyahat Bilgileri</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Seyahat Bilgisi Olan Hasta</div><div class="stat-item-value">' + stats.travel.patientsWithTravel + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Hasta Tarafından Doldurulan</div><div class="stat-item-value">' + stats.travel.filledByPatient + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Klinik Tarafından Doldurulan</div><div class="stat-item-value">' + stats.travel.filledByClinic + '</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      // 7. Recent Activity
+      html += '<div class="modal-section">';
+      html += '<div class="modal-section-title">7️⃣ Son 7 Günlük Aktivite</div>';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-item-label">Yeni Hasta</div><div class="stat-item-value">' + stats.recentActivity.newPatients + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Yeni Mesaj</div><div class="stat-item-value">' + stats.recentActivity.newMessages + '</div></div>';
+      html += '<div class="stat-item"><div class="stat-item-label">Yeni İşlem</div><div class="stat-item-value">' + stats.recentActivity.newTreatments + '</div></div>';
+      html += '</div>';
+      html += '</div>';
+      
+      modalBody.innerHTML = html;
+    } catch (error) {
+      console.error("[CLINIC_DETAILS] Error loading clinic details:", error);
+      modalBody.innerHTML = '<div class="empty-state">Hata: ' + escapeHtml(error.message) + '</div>';
+    }
+  }
+
+  function closeClinicDetails(event) {
+    if (event && event.target !== event.currentTarget) return;
+    const modal = document.getElementById("clinicDetailsModal");
+    modal.classList.remove("active");
+  }
+
+  // Initialize
+  if (checkAuth()) {
+    loadClinics();
+  }
+</script>
+</body>
+</html>

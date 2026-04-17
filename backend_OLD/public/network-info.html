@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Network Info - Clinifly</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #0f172a;
+      color: #e6eaf2;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #2563eb;
+      margin-bottom: 30px;
+    }
+    .card {
+      background: #020617;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .url-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 15px;
+      margin: 10px 0;
+      font-family: 'Courier New', monospace;
+      word-break: break-all;
+      color: #6aa6ff;
+    }
+    .copy-btn {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-left: 10px;
+    }
+    .copy-btn:hover {
+      background: #1d4ed8;
+    }
+    .info {
+      color: #a7b2c8;
+      font-size: 14px;
+      margin-top: 10px;
+    }
+    .success {
+      color: #16a34a;
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 10px;
+      display: none;
+    }
+    .warning {
+      color: #f59e0b;
+      background: #fef3c7;
+      border: 1px solid #fde68a;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌐 Clinifly Network Configuration</h1>
+  
+  <div class="card">
+    <h2>Current Location</h2>
+    <div class="url-box" id="currentUrl">Loading...</div>
+    <div class="info">Bu sayfaya nasıl eriştiğinizi gösterir</div>
+  </div>
+
+  <div class="card">
+    <h2>Android Studio Emülatörü İçin</h2>
+    <div class="url-box">
+      http://10.0.2.2:5050/admin.html
+      <button class="copy-btn" onclick="copyToClipboard('http://10.0.2.2:5050/admin.html')">Kopyala</button>
+    </div>
+    <div class="info">
+      Android Studio emülatöründe host makineye erişmek için <strong>10.0.2.2</strong> IP adresini kullanın.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Fiziksel Cihaz veya Diğer Emülatörler İçin</h2>
+    <div class="url-box" id="networkUrl">Hesaplanıyor...</div>
+    <div class="info">
+      Aynı Wi-Fi ağındaki cihazlar için Mac'inizin yerel IP adresini kullanın.
+      <br><br>
+      <strong>Not:</strong> Mac'inizin IP adresini bulmak için terminal'de şu komutu çalıştırın:
+      <br>
+      <code style="background: #1e293b; padding: 5px; border-radius: 4px; display: inline-block; margin-top: 5px;">
+        ifconfig | grep "inet " | grep -v 127.0.0.1
+      </code>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Test Bağlantısı</h2>
+    <button class="copy-btn" onclick="testConnection()" style="margin: 0;">Health Endpoint'i Test Et</button>
+    <div id="testResult" class="success"></div>
+  </div>
+
+  <div class="card">
+    <h2>Hızlı Linkler</h2>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <a href="/admin.html" style="color: #6aa6ff; text-decoration: none; padding: 10px; background: #1e293b; border-radius: 6px;">
+        📊 Dashboard
+      </a>
+      <a href="/admin-patients.html" style="color: #6aa6ff; text-decoration: none; padding: 10px; background: #1e293b; border-radius: 6px;">
+        👥 Patients
+      </a>
+      <a href="/admin-travel.html" style="color: #6aa6ff; text-decoration: none; padding: 10px; background: #1e293b; border-radius: 6px;">
+        ✈️ Travel
+      </a>
+      <a href="/admin-treatment.html" style="color: #6aa6ff; text-decoration: none; padding: 10px; background: #1e293b; border-radius: 6px;">
+        Treatment
+      </a>
+    </div>
+  </div>
+
+  <script>
+    // Show current URL
+    document.getElementById('currentUrl').textContent = window.location.href;
+
+    // Try to detect network IP (this won't work from browser due to security, but we can show instructions)
+    function detectNetworkIP() {
+      const hostname = window.location.hostname;
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        document.getElementById('networkUrl').innerHTML = `
+          <div class="warning">
+            ⚠️ Şu anda localhost'tan erişiyorsunuz. Fiziksel cihaz veya emülatör için Mac'inizin IP adresini kullanmanız gerekir.
+            <br><br>
+            Terminal'de şu komutu çalıştırın: <code>ifconfig | grep "inet " | grep -v 127.0.0.1</code>
+            <br>
+            Bulduğunuz IP ile: <code>http://[IP_ADRESI]:5050/admin.html</code>
+          </div>
+        `;
+      } else if (hostname.startsWith('192.168.') || hostname.startsWith('10.') || hostname.startsWith('172.')) {
+        const baseUrl = `http://${hostname}:5050/admin.html`;
+        document.getElementById('networkUrl').innerHTML = `
+          ${baseUrl}
+          <button class="copy-btn" onclick="copyToClipboard('${baseUrl}')">Kopyala</button>
+        `;
+      } else {
+        document.getElementById('networkUrl').textContent = 'Network IP adresi tespit edilemedi.';
+      }
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        const result = document.getElementById('testResult');
+        result.textContent = '✅ URL kopyalandı!';
+        result.style.display = 'block';
+        result.style.background = '#dcfce7';
+        result.style.color = '#166534';
+        setTimeout(() => {
+          result.style.display = 'none';
+        }, 2000);
+      }).catch(err => {
+        alert('Kopyalama başarısız: ' + err);
+      });
+    }
+
+    async function testConnection() {
+      const testResult = document.getElementById('testResult');
+      testResult.style.display = 'block';
+      testResult.textContent = '⏳ Test ediliyor...';
+      testResult.style.background = '#fef3c7';
+      testResult.style.color = '#92400e';
+
+      const baseUrl = window.location.origin;
+      try {
+        const response = await fetch(`${baseUrl}/health`);
+        const data = await response.json();
+        if (data.ok) {
+          testResult.textContent = '✅ Bağlantı başarılı! Sunucu çalışıyor.';
+          testResult.style.background = '#dcfce7';
+          testResult.style.color = '#166534';
+        } else {
+          throw new Error('Health check failed');
+        }
+      } catch (error) {
+        testResult.textContent = '❌ Bağlantı başarısız: ' + error.message;
+        testResult.style.background = '#fee2e2';
+        testResult.style.color = '#991b1b';
+      }
+    }
+
+    detectNetworkIP();
+  </script>
+</body>
+</html>
