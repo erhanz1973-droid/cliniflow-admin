@@ -1,0 +1,10 @@
+# Static Site — repo contains only ./public; no Node build.
+# Render: Root Directory = public, Build = empty, Publish = .
+services:
+  - type: web
+    name: cliniflow-admin
+    runtime: static
+    region: oregon
+    rootDir: public
+    buildCommand: "true"
+    staticPublishPath: .

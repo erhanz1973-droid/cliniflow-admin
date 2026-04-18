@@ -5,10 +5,10 @@
  */
 (function () {
 
-  /** When admin HTML is on backend static but API lives on cliniflow-admin service (must match login + JWT_SECRET there). */
+  /** API origin (Railway production; api-base.js sets CLINIFLOW_ADMIN_API_ORIGIN). */
   var RENDER_ADMIN_API_FALLBACK =
     (typeof window !== 'undefined' && window.CLINIFLOW_ADMIN_API_ORIGIN) ||
-    'https://cliniflow-admin.onrender.com';
+    'https://cliniflow-backend-clean-production.up.railway.app';
   function isBackendUiHost() {
     var h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
     return /^cliniflow-backend[a-z0-9-]*\.onrender\.com$/i.test(h);

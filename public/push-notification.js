@@ -282,14 +282,3 @@ function setupChatMessageListener() {
   console.log('[Chat] Message listener setup for vibration');
 }
 
-// Export functions for use in other scripts
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    initializePushNotifications,
-    subscribeToPush,
-    unsubscribeFromPush,
-    isPushNotificationSupported,
-    requestNotificationPermission,
-    registerServiceWorker,
-  };
-}
