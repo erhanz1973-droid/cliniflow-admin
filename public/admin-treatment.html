@@ -369,6 +369,14 @@
     <div id="loading" class="loading" style="display:none;" data-i18n="common.loading">Yükleniyor...</div>
 
     <div id="content" style="display:none;">
+      <div id="treatmentPlanCard" class="card" style="display:none; margin-top:12px;">
+        <div class="row" style="justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <b style="color:#e5e7eb;">🦷 Visit tedavi planı</b>
+          <span class="muted" id="treatmentPlanEncounterLabel" style="font-size:12px;"></span>
+        </div>
+        <div id="treatmentPlanBody" style="margin-top:10px; font-size:14px; line-height:1.7; color:#e5e7eb;"></div>
+      </div>
+
       <div class="two" style="margin-top:12px;">
         <div class="card">
           <div class="row" style="justify-content:space-between;">
@@ -682,6 +690,89 @@
   let TREATMENT_PRICES = {}; // { procedureType: { default_price, currency, is_active } }
   let DOCTORS = []; // [{ id, name }]
   let ALL_DIAGNOSES = []; // Live list from encounter_diagnoses (Supabase)
+
+  function escapeHtmlPlan(s) {
+    const d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function pickEncounterIdForPlan() {
+    const fromUrl = new URLSearchParams(window.location.search).get("encounterId");
+    if (fromUrl) return fromUrl.trim();
+    const list = ALL_DIAGNOSES || [];
+    const withEnc = list.filter((d) => d && d.encounter_id);
+    if (!withEnc.length) return "";
+    const sorted = [...withEnc].sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+    );
+    return String(sorted[0].encounter_id || "").trim();
+  }
+
+  async function loadVisitTreatmentPlan() {
+    const card = document.getElementById("treatmentPlanCard");
+    const body = document.getElementById("treatmentPlanBody");
+    const lbl = document.getElementById("treatmentPlanEncounterLabel");
+    if (!card || !body) return;
+    const encounterId = pickEncounterIdForPlan();
+    if (!encounterId || !API_BASE) {
+      card.style.display = "none";
+      return;
+    }
+    lbl.textContent = "encounter " + encounterId.slice(0, 8) + "…";
+    body.innerHTML = '<span class="muted">Yükleniyor…</span>';
+    card.style.display = "block";
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/admin/treatment-plan/${encodeURIComponent(encounterId)}`,
+        { headers: adminHeaders({ Accept: "application/json" }) }
+      );
+      const j = await r.json().catch(() => null);
+      if (!r.ok) {
+        const err = (j && (j.error || j.message)) || r.status;
+        body.innerHTML =
+          '<span style="color:#fb923c">Plan yüklenemedi: ' + escapeHtmlPlan(err) + "</span>";
+        return;
+      }
+      if (Array.isArray(j) && j.length === 0) {
+        body.innerHTML =
+          '<span class="muted">Bu visit için aktif tedavi planı yok.</span>';
+        return;
+      }
+      const items = Array.isArray(j?.items) ? j.items : [];
+      if (!items.length) {
+        body.innerHTML = '<span class="muted">Planda satır yok.</span>';
+        return;
+      }
+      let total = 0;
+      const lines = items.map((it) => {
+        const label = String(it.procedure_name || it.procedure_code || "Item").trim();
+        const qty = Math.max(1, Number(it.quantity) || 1);
+        let lineTotal = NaN;
+        if (it.total_price != null && Number.isFinite(Number(it.total_price)))
+          lineTotal = Number(it.total_price);
+        else if (it.unit_price != null && Number.isFinite(Number(it.unit_price)))
+          lineTotal = Number(it.unit_price) * qty;
+        else if (it.price != null && Number.isFinite(Number(it.price))) lineTotal = Number(it.price);
+        if (Number.isFinite(lineTotal)) total += lineTotal;
+        const cur = String(it.currency || "USD").toUpperCase();
+        const sym = cur === "TRY" ? "₺" : cur === "EUR" ? "€" : "$";
+        const priceStr = Number.isFinite(lineTotal) ? sym + lineTotal.toFixed(0) : "—";
+        return "<div>🦷 " + escapeHtmlPlan(label) + " — " + priceStr + "</div>";
+      });
+      const cur0 = String(items[0]?.currency || "USD").toUpperCase();
+      const sym0 = cur0 === "TRY" ? "₺" : cur0 === "EUR" ? "€" : "$";
+      const totalStr = Number.isFinite(total) ? sym0 + total.toFixed(0) : "—";
+      body.innerHTML =
+        lines.join("") +
+        '<div style="border-top:1px solid #374151;margin-top:10px;padding-top:10px;font-weight:700;">Total: ' +
+        totalStr +
+        "</div>";
+    } catch (e) {
+      body.innerHTML =
+        '<span style="color:#fb923c">' + escapeHtmlPlan(e.message || "error") + "</span>";
+    }
+  }
 
   async function loadDoctors() {
     try {
@@ -1240,6 +1331,8 @@
       }
     } catch (e) {
       console.error("[loadDiagnoses] error:", e.message);
+    } finally {
+      loadVisitTreatmentPlan();
     }
   }
 
