@@ -325,91 +325,58 @@
         }
 
         const patients = Array.isArray(json.list) ? json.list : (Array.isArray(json.patients) ? json.patients : []);
-        
-        // Load unread counts and last message times for each patient
-        const patientsWithUnread = await Promise.all(patients.map(async (patient) => {
-          const patientId = patient.patientId || patient.id;
-          let unreadCount = 0;
-          let lastMessageTime = 0;
-          let lastMessagePreview = '';
-          let messages = [];
-          
-          if (patientId) {
-            try {
-              const messagesRes = await fetch(`${API_BASE}/api/patient/${encodeURIComponent(patientId)}/messages`, {
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Accept': 'application/json'
-                }
-              });
 
-              if (messagesRes.ok) {
-                const messagesData = await messagesRes.json();
-                if (messagesData.ok && Array.isArray(messagesData.messages)) {
-                  messages = messagesData.messages;
-
-                  // Count unread patient messages (server-side read_at tracking)
-                  unreadCount = messages.filter((m) => m.from === "PATIENT" && !m.readAt).length;
-                  
-                  // Find last message time (most recent message timestamp)
-                  if (messages.length > 0) {
-                    messages.forEach(m => {
-                      if (m.createdAt) {
-                        const msgTimestamp = new Date(m.createdAt).getTime();
-                        if (msgTimestamp > lastMessageTime) {
-                          lastMessageTime = msgTimestamp;
-                        }
-                      }
-                    });
-                    
-                    // Get last message preview
-                    const lastMsg = messages[messages.length - 1];
-                    const lastBody = String(
-                      lastMsg.text || lastMsg.message || lastMsg.content || ''
-                    ).trim();
-                    if (lastBody) {
-                      lastMessagePreview = lastBody.substring(0, 50);
-                      if (lastBody.length > 50) lastMessagePreview += '...';
-                    } else if (lastMsg.attachment) {
-                      if (lastMsg.attachment.fileType === 'image') {
-                        lastMessagePreview = '📷 Photo';
-                      } else {
-                        lastMessagePreview = '📎 File';
-                      }
-                    }
-                  }
-                }
-              }
-            } catch (e) {
-              console.warn(`Failed to load messages for patient ${patientId}:`, e);
+        // Single round-trip unread map (replaces N× GET /api/patient/:id/messages for list hydration).
+        const unreadByPatient = new Map();
+        try {
+          const urRes = await fetch(`${API_BASE}/api/admin/messages/unread-counts`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+            },
+          });
+          if (urRes.ok) {
+            const urJson = await urRes.json();
+            const rows = Array.isArray(urJson.byPatient) ? urJson.byPatient : [];
+            for (const row of rows) {
+              const pid = String(row.patientId || "").trim().toLowerCase();
+              if (pid) unreadByPatient.set(pid, Number(row.count) || 0);
             }
           }
-          
-          return {
-            ...patient,
-            unreadCount,
-            lastMessageTime,
-            lastMessagePreview
-          };
-        }));
-        
-        // Sort by last message time (most recent first), then by unread count
-        patientsWithUnread.sort((a, b) => {
-          // First sort by last message time (most recent first)
-          if (b.lastMessageTime !== a.lastMessageTime) {
-            return b.lastMessageTime - a.lastMessageTime;
+        } catch (e) {
+          console.warn("[admin-chat] unread-counts:", e);
+        }
+
+        const unreadFor = (patient) => {
+          const keys = [patient.id, patient.patientId, patient.patient_id]
+            .map((x) => String(x || "").trim().toLowerCase())
+            .filter(Boolean);
+          for (const k of keys) {
+            if (unreadByPatient.has(k)) return unreadByPatient.get(k);
           }
-          // Then by unread count (more unread first)
-          return b.unreadCount - a.unreadCount;
+          return 0;
+        };
+
+        const patientsWithUnread = patients.map((patient) => ({
+          ...patient,
+          unreadCount: unreadFor(patient),
+          lastMessageTime: 0,
+          lastMessagePreview: "",
+        }));
+
+        patientsWithUnread.sort((a, b) => {
+          if (b.unreadCount !== a.unreadCount) return b.unreadCount - a.unreadCount;
+          const an = String(a.name || a.fullName || "").toLowerCase();
+          const bn = String(b.name || b.fullName || "").toLowerCase();
+          return an.localeCompare(bn);
         });
-        
+
         renderPatients(patientsWithUnread);
-        
+
         // After rendering, restore active state if a patient is selected
         if (selectedPatientId) {
-          // Find the patient from the list and select it
-          const patient = patients.find(p => {
-            const pid = p.patientId || p.patient_id || '';
+          const patient = patientsWithUnread.find((p) => {
+            const pid = p.patientId || p.patient_id || "";
             return pid === selectedPatientId;
           });
           
