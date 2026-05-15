@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <script src="/api-base.js?v=202603301"></script>
+  <title>Admin - Health Form</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    // Token check - redirect to login if not authenticated
+    (function() {
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+  </script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: system-ui, -apple-system, Arial;
+      background: #0f172a;
+      color: #e6eaf2;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #1f2937;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 20px;
+      font-weight: 700;
+    }
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #374151;
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .navbar-logo img {
+      height: 32px;
+      width: auto;
+    }
+    .navbar-logo-text {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2563eb;
+      display: none; /* Hide text, show logo only */
+    }
+    .navbar-clinic-name {
+      font-size: 14px;
+      color: #a7b2c8;
+      font-weight: 500;
+    }
+    .navbar-center {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: 1;
+      justify-content: center;
+    }
+    .navbar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .nav-link {
+      color: #a7b2c8;
+      text-decoration: none;
+      font-weight: 500;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      position: relative;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.3);
+    }
+    .nav-link.active {
+      color: #fff;
+      background: #2563eb;
+      font-weight: 600;
+    }
+    .nav-link.secondary {
+      color: #a7b2c8;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+    .nav-link.secondary:hover {
+      color: #e6eaf2;
+      background: rgba(55, 65, 81, 0.2);
+    }
+    .lang-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #a7b2c8;
+    }
+    .lang-toggle span {
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .lang-toggle span.active {
+      color: #fff;
+      background: rgba(37, 99, 235, 0.3);
+    }
+    .card {
+      background: #1f2937;
+      border: 0.5px solid rgba(55, 65, 81, 0.5);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #e6eaf2;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+      background: #1f2937;
+      color: #e6eaf2;
+      font-size: 14px;
+    }
+    .btn {
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+    .btn-primary {
+      background: #2563EB;
+      color: #ffffff;
+    }
+    .btn-primary:hover {
+      background: #1d4ed8;
+    }
+    .btn-success {
+      background: #16a34a;
+      color: #ffffff;
+    }
+    .btn-success:hover {
+      background: #15803d;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .alert-success {
+      background: #064e3b;
+      color: #6ee7b7;
+      border: 1px solid #059669;
+    }
+    .alert-error {
+      background: #7f1d1d;
+      color: #fca5a5;
+      border: 1px solid #dc2626;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #9ca3af;
+    }
+    .health-section {
+      margin-bottom: 30px;
+      padding: 20px;
+      background: #0f172a;
+      border-radius: 8px;
+      border: 1px solid #1f2937;
+    }
+    .health-section h2 {
+      font-size: 20px;
+      margin-bottom: 16px;
+      color: #ffffff;
+      border-bottom: 1px solid #1f2937;
+      padding-bottom: 8px;
+    }
+    .health-section h3 {
+      font-size: 16px;
+      margin-top: 20px;
+      margin-bottom: 12px;
+      color: #e6eaf2;
+    }
+    .health-item {
+      margin-bottom: 12px;
+      padding: 12px;
+      background: #1f2937;
+      border-radius: 6px;
+      border: 1px solid #1f2937;
+    }
+    .health-item strong {
+      color: #6aa6ff;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .health-item span {
+      color: #9ca3af;
+      font-size: 14px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-left: 8px;
+    }
+    .badge-complete {
+      background: #064e3b;
+      color: #6ee7b7;
+    }
+    .badge-incomplete {
+      background: #7f1d1d;
+      color: #fca5a5;
+    }
+    .badge-risk {
+      background: #92400e;
+      color: #fef3c7;
+    }
+    .checkbox-list {
+      list-style: none;
+      margin-top: 8px;
+    }
+    .checkbox-list li {
+      padding: 4px 0;
+      color: #9ca3af;
+    }
+    .checkbox-list li:before {
+      content: "✓ ";
+      color: #22c55e;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🩺 Clinifly Admin – Health</h1>
+    <nav class="navbar">
+      <div class="navbar-left">
+        <div class="navbar-logo">
+          <img src="/logo.svg" alt="Clinifly" />
+          <span class="navbar-logo-text">Clinifly</span>
+        </div>
+        <div class="navbar-clinic-name" id="navbarClinicName">Clinic</div>
+      </div>
+      <div class="navbar-center">
+        <a href="/admin.html" class="nav-link">Dashboard</a>
+        <a href="/admin-patients.html" class="nav-link">Patients</a>
+        <a href="/admin-treatment.html" class="nav-link">Treatment</a>
+        <a href="/admin-chat.html" class="nav-link">Chat</a>
+      </div>
+      <div class="navbar-right">
+        <a href="/admin-settings.html" class="nav-link secondary">Clinic Settings</a>
+        <a href="#" onclick="logout(); return false;" class="nav-link secondary" style="cursor: pointer;">Logout</a>
+      </div>
+    </nav>
+
+    <div id="alert-container"></div>
+
+    <div class="card">
+      <div class="form-group">
+        <label>Patient ID</label>
+        <input type="text" id="patient-id" placeholder="Enter patient ID" />
+      </div>
+      <div class="form-group">
+        <label>Patient Name (Select)</label>
+        <select id="patient-select">
+          <option value="">— Select patient —</option>
+        </select>
+        <div class="muted">Hasta listesinden Sağlık'a tıklanınca otomatik seçilir.</div>
+      </div>
+      <button class="btn btn-primary" onclick="loadHealthForm()">Sağlık Formunu Yükle</button>
+    </div>
+
+    <div id="health-content" style="display: none;">
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+          <h2 style="margin: 0;">Sağlık Formu Verileri</h2>
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <span id="status-badge" class="badge"></span>
+            <button class="btn btn-success" onclick="sendToWhatsApp()" id="whatsapp-btn" style="display: none;">
+              📱 Send via WhatsApp
+            </button>
+          </div>
+        </div>
+        <div class="form-group" id="whatsapp-number-group" style="display: none; margin-top: 20px;">
+          <label>Doctor WhatsApp Number (with country code, e.g.: +905551234567)</label>
+          <input type="text" id="doctor-whatsapp" placeholder="+905551234567" style="max-width: 300px;" />
+          <button class="btn btn-success" onclick="sendToWhatsApp()" style="margin-top: 8px;">
+            Send
+          </button>
+        </div>
+        <div id="health-data"></div>
+      </div>
+    </div>
+
+    <div id="loading" class="loading" style="display: none;">Yükleniyor...</div>
+  </div>
+
+  <script>
+    // Nav: if a patient is selected, make top-nav Travel link carry patientId.
+    (function bindNavTravelLink() {
+      try {
+        const pid = String(localStorage.getItem('selected_patient_id') || '').trim();
+        if (!pid) return;
+        const a = document.querySelector('.nav a[href="/admin-travel.html"]');
+        if (a) a.href = `/admin-travel.html?patientId=${encodeURIComponent(pid)}`;
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] bindNavTravelLink failed:", e);
+      }
+    })();
+
+    const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
+
+    // Get patientId from URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const patientIdParam = urlParams.get('patientId');
+    const storedPatientId = localStorage.getItem('selected_patient_id') || '';
+    const storedPatientName = localStorage.getItem('selected_patient_name') || '';
+    const initialPatientId = patientIdParam || storedPatientId;
+    if (initialPatientId) {
+      document.getElementById('patient-id').value = initialPatientId;
+    }
+
+    function getAdminToken() {
+      return localStorage.getItem('adminToken') || '';
+    }
+    function logout() {
+      try {
+        localStorage.removeItem("adminToken");
+        console.log("[LOGOUT] Admin token cleared");
+      } catch (e) {
+        console.error("[LOGOUT] Error clearing token:", e);
+      }
+      window.location.href = "/admin-login.html";
+    }
+
+    async function loadPatientOptions() {
+      const select = document.getElementById('patient-select');
+      if (!select) return;
+
+      const token = getAdminToken();
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/patients`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        if (!json || !json.ok) return;
+
+        const list = Array.isArray(json.list) ? json.list : (Array.isArray(json.patients) ? json.patients : []);
+        select.innerHTML = '<option value="">— Select patient —</option>';
+        list.forEach((p) => {
+          const pid = String(p.patientId || p.patient_id || '').trim();
+          if (!pid) return;
+          const name = String(p.fullName || p.name || pid).trim();
+          const opt = document.createElement('option');
+          opt.value = pid;
+          opt.textContent = `${name} (${pid})`;
+          select.appendChild(opt);
+        });
+
+        if (initialPatientId) {
+          select.value = initialPatientId;
+        } else if (storedPatientName && storedPatientId) {
+          const opt = document.createElement('option');
+          opt.value = storedPatientId;
+          opt.textContent = `${storedPatientName} (${storedPatientId})`;
+          select.appendChild(opt);
+          select.value = storedPatientId;
+        }
+      } catch (e) {
+        console.warn("[ADMIN-HEALTH] loadPatientOptions error:", e);
+      }
+    }
+
+    function showAlert(message, type = 'success') {
+      const container = document.getElementById('alert-container');
+      container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+      setTimeout(() => {
+        container.innerHTML = '';
+      }, 5000);
+    }
+
+    function escapeHtml(text) {
+      if (text === null || text === undefined) return '—';
+      const div = document.createElement('div');
+      div.textContent = String(text);
+      return div.innerHTML;
+    }
+
+    function yesNoLabel(field) {
+      if (!field || field.value === null || field.value === undefined) return '<span style="color:#6b7280">Yanıtlanmadı</span>';
+      return field.value
+        ? '<span style="color:#22c55e">✓ Evet</span>' + (field.detail ? ' — <em>' + escapeHtml(field.detail) + '</em>' : '')
+        : '<span style="color:#9ca3af">✗ Hayır</span>';
+    }
+
+    function renderHealthForm(formData, isComplete) {
+      const container = document.getElementById('health-data');
+      const statusBadge = document.getElementById('status-badge');
+
+      if (!formData || Object.keys(formData).length === 0) {
+        container.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:40px;">Hasta henüz sağlık formunu doldurmamış.</p>';
+        statusBadge.textContent = 'DOLDURULMADI';
+        statusBadge.className = 'badge badge-incomplete';
+        return;
+      }
+
+      statusBadge.textContent = isComplete ? 'TAMAMLANDI' : 'KISMI';
+      statusBadge.className = isComplete ? 'badge badge-complete' : 'badge badge-risk';
+
+      const conditionLabels = {
+        diabetes: 'Diyabet',
+        heart_disease: 'Kalp Hastalığı',
+        high_blood_pressure: 'Yüksek Tansiyon',
+        asthma: 'Astım',
+        bleeding_disorders: 'Kanama Bozukluğu',
+        none: 'Yok'
+      };
+
+      let html = '';
+
+      // ── Personal Health ─────────────────────────────────────
+      html += '<div class="health-section">';
+      html += '<h2>1️⃣ Kişisel Sağlık</h2>';
+      html += '<div class="health-item"><strong>Alerjisi var mı?</strong><br>' + yesNoLabel(formData.allergies) + '</div>';
+      html += '<div class="health-item"><strong>İlaç kullanıyor mu?</strong><br>' + yesNoLabel(formData.medications) + '</div>';
+      html += '<div class="health-item"><strong>Kronik hastalık var mı?</strong><br>' + yesNoLabel(formData.chronicDiseases) + '</div>';
+      html += '</div>';
+
+      // ── Medical Conditions ───────────────────────────────────
+      const conds = Array.isArray(formData.conditions) ? formData.conditions : [];
+      html += '<div class="health-section">';
+      html += '<h2>2️⃣ Tıbbi Durumlar</h2>';
+      if (conds.length === 0) {
+        html += '<p style="color:#9ca3af">Belirtilmemiş</p>';
+      } else if (conds.includes('none')) {
+        html += '<p style="color:#9ca3af">Hiçbiri (None)</p>';
+      } else {
+        html += '<ul class="checkbox-list">';
+        conds.forEach(c => { html += '<li>' + escapeHtml(conditionLabels[c] || c) + '</li>'; });
+        html += '</ul>';
+      }
+      html += '</div>';
+
+      // ── Medications List ─────────────────────────────────────
+      html += '<div class="health-section">';
+      html += '<h2>3️⃣ Kullanılan İlaçlar</h2>';
+      html += '<div class="health-item"><span>' + (formData.medicationsList ? escapeHtml(formData.medicationsList) : '<em style="color:#9ca3af">Belirtilmemiş</em>') + '</span></div>';
+      html += '</div>';
+
+      // ── Notes ────────────────────────────────────────────────
+      if (formData.notes) {
+        html += '<div class="health-section">';
+        html += '<h2>4️⃣ Ek Notlar</h2>';
+        html += '<div class="health-item"><span>' + escapeHtml(formData.notes) + '</span></div>';
+        html += '</div>';
+      }
+
+      // ── Risk Warnings ────────────────────────────────────────
+      const risks = [];
+      if (formData.allergies?.value === true) risks.push('⚠️ Alerji mevcut');
+      if (conds.includes('diabetes')) risks.push('⚠️ Diyabet');
+      if (conds.includes('heart_disease')) risks.push('⚠️ Kalp Hastalığı');
+      if (conds.includes('bleeding_disorders')) risks.push('⚠️ Kanama Bozukluğu');
+      if (conds.includes('high_blood_pressure')) risks.push('⚠️ Yüksek Tansiyon');
+      if (formData.medications?.value === true) risks.push('⚠️ İlaç kullanımı');
+
+      if (risks.length > 0) {
+        html += '<div class="health-section" style="border-color:#92400e;background:#1c1208;">';
+        html += '<h2 style="color:#fef3c7;">⚠️ Risk Uyarıları</h2>';
+        risks.forEach(r => { html += '<div class="health-item" style="border-color:#92400e;"><strong style="color:#fef3c7">' + escapeHtml(r) + '</strong></div>'; });
+        html += '</div>';
+      }
+
+      // Submitted at
+      if (formData.submittedAt) {
+        const d = new Date(formData.submittedAt);
+        html += '<p style="color:#6b7280;font-size:12px;margin-top:16px;">Gönderim tarihi: ' + d.toLocaleString('tr-TR') + '</p>';
+      }
+
+      container.innerHTML = html;
+      document.getElementById('whatsapp-btn').style.display = 'block';
+      document.getElementById('whatsapp-number-group').style.display = 'block';
+    }
+
+    function formatHealthFormForWhatsApp(formData, patientId) {
+      const lines = [];
+      const addSection = (title, items) => {
+        const cleaned = items.filter(Boolean);
+        if (!cleaned.length) return;
+        if (lines.length && lines[lines.length - 1] !== "") {
+          lines.push("");
+        }
+        lines.push(`*${title}*`);
+        cleaned.forEach((item) => lines.push(item));
+        lines.push(""); // blank line
+      };
+      const kv = (label, value) => {
+        const v = typeof value === "string" ? value.trim() : value;
+        return v ? `• ${label}: ${v}` : "";
+      };
+
+      lines.push("🦷 *PATIENT HEALTH FORM*");
+      lines.push(`Patient ID: ${patientId}`);
+      lines.push("─".repeat(30));
+      lines.push("");
+
+      if (formData.personalInfo) {
+        const p = formData.personalInfo;
+        addSection("1️⃣ PERSONAL INFORMATION", [
+          kv("Full Name", p.name),
+          kv("Date of Birth", p.birthDate),
+          kv("Gender", p.gender),
+          kv("Phone", p.phone),
+          kv("Email", p.email),
+          kv("Country", p.country),
+        ]);
+      }
+
+      if (formData.generalHealth) {
+        const gh = formData.generalHealth;
+        const labels = {
+          diabetes: "Diabetes",
+          heart_disease: "Heart Disease",
+          hypertension: "Hypertension (High Blood Pressure)",
+          bleeding_disorder: "Bleeding/Clotting Disorder",
+          asthma: "Asthma/Respiratory Disease",
+          epilepsy: "Epilepsy",
+          kidney_disease: "Kidney Disease",
+          liver_disease: "Liver Disease",
+          thyroid: "Thyroid Disease",
+          immune_system: "Immune System Disease",
+          cancer: "Cancer",
+          pregnancy: "Pregnancy",
+        };
+        const conditions = (gh.conditions || [])
+          .filter((c) => c !== "none")
+          .map((c) => labels[c])
+          .filter(Boolean);
+        const conditionLines = conditions.map((c) => `• ${c}`);
+        if (gh.pregnancyMonth && (gh.conditions || []).includes("pregnancy")) {
+          conditionLines.push(`• Pregnancy: Month ${gh.pregnancyMonth}`);
+        }
+        if (gh.conditionsNotes) {
+          conditionLines.push(`• Notes: ${gh.conditionsNotes}`);
+        }
+        addSection("2️⃣ GENERAL HEALTH STATUS", conditionLines.length ? conditionLines : ["• No information provided"]);
+      }
+
+      if (formData.medications || formData.allergies) {
+        const meds = formData.medications;
+        const allergies = formData.allergies;
+        const medLines = [];
+        if (meds) {
+          if (meds.none) {
+            medLines.push("• No medications");
+          } else {
+            if (meds.regularMedication) medLines.push("• Regular medication");
+            if (meds.bloodThinner) medLines.push("• Blood thinner");
+            if (meds.cortisone) medLines.push("• Cortisone");
+            if (meds.antibiotics) medLines.push("• Antibiotics (within last month)");
+            if (meds.medicationDetails) medLines.push(`• Medication details: ${meds.medicationDetails}`);
+          }
+        }
+        if (allergies) {
+          if (allergies.none) {
+            medLines.push("• No allergies");
+          } else {
+            if (allergies.localAnesthesia) medLines.push("• Allergy: Local anesthesia");
+            if (allergies.penicillin) medLines.push("• Allergy: Penicillin/antibiotic");
+            if (allergies.latex) medLines.push("• Allergy: Latex");
+            if (allergies.other) medLines.push("• Allergy: Other");
+            if (allergies.allergyDetails) medLines.push(`• Allergy details: ${allergies.allergyDetails}`);
+          }
+        }
+        addSection("3️⃣ MEDICATIONS & ALLERGIES", medLines);
+      }
+
+      if (formData.dentalHistory || formData.complaint || formData.habits) {
+        const dh = formData.dentalHistory || {};
+        const c = formData.complaint || {};
+        const habits = formData.habits || {};
+        const painLabels = { none: "None", mild: "Mild", moderate: "Moderate", severe: "Severe" };
+        const alcoholLabels = { none: "No", occasional: "Occasional", regular: "Regular" };
+
+        const linesDh = [
+          kv("Previous problems", dh.previousProblems ? "Yes" : dh.previousProblems === false ? "No" : ""),
+          kv("Anesthesia problems", dh.anesthesiaProblems ? "Yes" : dh.anesthesiaProblems === false ? "No" : ""),
+          kv("Previous procedures", dh.previousProcedures ? "Yes" : dh.previousProcedures === false ? "No" : ""),
+        ];
+        const linesComplaint = [
+          kv("Main complaint", c.mainComplaint),
+          kv("Pain level", painLabels[c.painLevel] || ""),
+        ];
+        const smoking = habits.smoking
+          ? `Yes${habits.cigarettesPerDay ? ` (${habits.cigarettesPerDay} cigarettes/day)` : ""}`
+          : habits.smoking === false ? "No" : "";
+        const linesHabits = [
+          kv("Smoking", smoking),
+          kv("Alcohol", alcoholLabels[habits.alcohol] || ""),
+        ];
+        addSection("4️⃣ DENTAL HISTORY & COMPLAINT", [
+          ...linesDh,
+          ...linesComplaint,
+          ...linesHabits,
+        ]);
+      }
+
+      const risks = [];
+      if (formData.generalHealth?.conditions?.includes("diabetes")) risks.push("⚠️ Diabetes");
+      if (formData.medications?.bloodThinner) risks.push("⚠️ Blood Thinner");
+      if (formData.allergies && !formData.allergies.none) risks.push("⚠️ Allergy");
+      if (risks.length) {
+        addSection("⚠️ RISK WARNINGS", risks.map((r) => `• ${r}`));
+      }
+
+      // Trim trailing blanks
+      while (lines[lines.length - 1] === "") lines.pop();
+      return lines.join("\\n");
+    }
+
+    function sendToWhatsApp() {
+      const healthData = window.currentHealthFormData;
+      const patientId = document.getElementById('patient-id').value.trim();
+      const whatsappNumber = document.getElementById('doctor-whatsapp').value.trim();
+
+      if (!healthData || !patientId) {
+        showAlert("Please load the health form first", 'error');
+        return;
+      }
+
+      if (!whatsappNumber) {
+        showAlert('Please enter doctor WhatsApp number', 'error');
+        return;
+      }
+
+      // Format phone number (remove spaces, dashes, etc.)
+      let phoneNumber = whatsappNumber.replace(/[^0-9+]/g, '');
+      if (!phoneNumber.startsWith('+')) {
+        phoneNumber = '+' + phoneNumber;
+      }
+
+      const message = formatHealthFormForWhatsApp(healthData, patientId);
+      const encodedMessage = encodeURIComponent(message);
+      const whatsappUrl = `https://wa.me/${phoneNumber.replace('+', '')}?text=${encodedMessage}`;
+
+      // Open WhatsApp in new tab
+      window.open(whatsappUrl, '_blank');
+      showAlert(`WhatsApp mesajı hazırlandı: ${phoneNumber}`, 'success');
+    }
+
+    async function loadHealthForm() {
+      const patientIdInput = document.getElementById('patient-id');
+      const token = getAdminToken();
+      const patientId = patientIdInput.value.trim();
+
+      if (!token) {
+        showAlert('Admin token bulunamadı. Lütfen admin olarak giriş yapın.', 'error');
+        return;
+      }
+
+      if (!patientId) {
+        showAlert('Please enter patient ID', 'error');
+        return;
+      }
+
+      const loading = document.getElementById('loading');
+      const healthContent = document.getElementById('health-content');
+      
+      loading.style.display = 'block';
+      healthContent.style.display = 'none';
+
+      try {
+        // Use admin endpoint (requires admin token, not patient token)
+        const res = await fetch(`${API_BASE}/api/admin/patients/${encodeURIComponent(patientId)}/health`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/json',
+          },
+        });
+
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({ error: 'Unknown error' }));
+          throw new Error(error.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (!data.ok) {
+          throw new Error(data.error || 'Failed to load health form');
+        }
+
+        loading.style.display = 'none';
+        healthContent.style.display = 'block';
+
+        window.currentHealthFormData = data.form;
+        const isComplete = !!(data.form && Object.keys(data.form).length > 0);
+        renderHealthForm(data.form, isComplete);
+        showAlert('Health form loaded successfully', 'success');
+      } catch (error) {
+        loading.style.display = 'none';
+        showAlert(`Error loading health form: ${error.message}`, 'error');
+        console.error('Load health form error:', error);
+      }
+    }
+
+    // Auto-load on page load if token is in localStorage and patientId is in URL
+    window.addEventListener('load', () => {
+      loadPatientOptions();
+      if (initialPatientId) {
+        loadHealthForm();
+      }
+    });
+
+    document.getElementById('patient-select').addEventListener('change', (e) => {
+      const pid = e.target.value || '';
+      if (!pid) return;
+      document.getElementById('patient-id').value = pid;
+      try {
+        localStorage.setItem('selected_patient_id', pid);
+        const label = e.target.options[e.target.selectedIndex]?.text || '';
+        const name = label.split('(')[0].trim();
+        if (name) localStorage.setItem('selected_patient_name', name);
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] failed to persist selected patient:", e);
+      }
+      loadHealthForm();
+    });
+
+    document.getElementById('patient-id').addEventListener('change', (e) => {
+      const pid = (e.target.value || '').trim();
+      if (!pid) return;
+      try {
+        localStorage.setItem('selected_patient_id', pid);
+      } catch (e) {
+        console.error("[ADMIN-HEALTH] failed to persist selected patient id:", e);
+      }
+      const select = document.getElementById('patient-select');
+      if (select) select.value = pid;
+    });
+  </script>
+</body>
+</html>
+
+

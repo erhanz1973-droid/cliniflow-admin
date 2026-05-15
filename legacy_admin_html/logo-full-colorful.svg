@@ -1,0 +1,63 @@
+<svg width="240" height="80" viewBox="0 0 240 80" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="toothGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e40af;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0891b2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1e40af;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2563eb;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Tooth Icon: Larger, more prominent for login/register -->
+  <g transform="translate(20, 15)">
+    <path d="M 8 10 
+             C 8 6, 10 4, 13 3
+             C 16 2, 20 2, 23 3
+             C 24 3.5, 25 4, 26 5
+             L 26 20
+             C 26 22, 27 23, 28 23.5
+             C 29 24, 30 24, 31 23.5
+             C 32 23, 33 22, 33 20
+             L 33 5
+             C 33 4, 33.5 3.5, 34 3
+             C 36 2, 38 2, 40 3
+             C 43 4, 45 6, 45 10
+             L 45 35
+             C 45 37, 44 38, 42 39
+             C 40 40, 38 41, 36 42
+             C 34 43, 32 44, 30 45
+             C 28 46, 26 46, 24 45
+             C 22 44, 20 43, 18 42
+             C 16 41, 14 40, 12 39
+             C 10 38, 9 37, 9 35
+             Z" 
+          fill="none" 
+          stroke="url(#toothGradient)" 
+          stroke-width="3" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+    
+    <!-- Add some internal details for better visual appeal -->
+    <path d="M 15 15 C 18 14, 22 14, 25 15" 
+          fill="none" 
+          stroke="url(#toothGradient)" 
+          stroke-width="1.5" 
+          stroke-linecap="round" 
+          opacity="0.7"/>
+    <path d="M 16 20 C 19 19, 23 19, 26 20" 
+          fill="none" 
+          stroke="url(#toothGradient)" 
+          stroke-width="1.5" 
+          stroke-linecap="round" 
+          opacity="0.7"/>
+  </g>
+  
+  <!-- Text: Clinifly - Larger and more prominent -->
+  <text x="75" y="35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="32" font-weight="bold" fill="url(#textGradient)">Clinifly</text>
+  
+  <!-- Text: DENTAL CLINIC MANAGEMENT -->
+  <text x="75" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" font-size="10" font-weight="600" fill="#0891b2" letter-spacing="1">DENTAL CLINIC MANAGEMENT</text>
+</svg>

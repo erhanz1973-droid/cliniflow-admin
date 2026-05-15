@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <script src="/api-base.js?v=202603301"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Clinifly Super Admin – Yeni Şifre</title>
+  <style>
+    :root {
+      --bg:#0f172a;
+      --card:#020617;
+      --b:#1f2937;
+      --p:#8b5cf6;
+      --g:#16a34a;
+      --r:#dc2626;
+      --muted:#a7b2c8;
+    }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      margin:0;
+      background:var(--bg);
+      color:#e6eaf2;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      min-height:100vh;
+      padding:20px;
+    }
+    .container{ max-width:500px; width:100%; }
+    .header{ text-align:center; margin-bottom:32px; }
+    .header h1{ font-size:28px; margin:0 0 8px; font-weight:900; color:#e6eaf2; }
+    .subtitle{ color:var(--muted); font-size:16px; margin:0; }
+    .form-container{
+      background:var(--card);
+      border:1px solid var(--b);
+      border-radius:16px;
+      padding:32px;
+      box-shadow:0 4px 12px rgba(0,0,0,0.2);
+    }
+    .form-group{ margin-bottom:20px; }
+    label{ display:block; font-size:14px; font-weight:600; color:#e6eaf2; margin-bottom:8px; }
+    .required{ color:var(--r); }
+    input{
+      width:100%;
+      padding:12px 16px;
+      border:1px solid var(--b);
+      border-radius:8px;
+      background:#1f2937;
+      color:#e6eaf2;
+      font-size:15px;
+      box-sizing:border-box;
+    }
+    input:focus{ outline:none; border-color:var(--p); }
+    .help-text{ font-size:12px; color:var(--muted); margin-top:6px; }
+    .btn{
+      width:100%;
+      padding:14px;
+      border:none;
+      border-radius:8px;
+      font-size:16px;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .btn-primary{ background:var(--p); color:#fff; }
+    .btn-primary:disabled{ background:#6b7280; cursor:not-allowed; }
+    #alert-container{ margin-bottom:20px; }
+    .alert{ padding:12px 16px; border-radius:8px; margin-bottom:12px; font-size:14px; font-weight:600; }
+    .alert-success{ background:#065f46; border:1px solid var(--g); color:#86efac; }
+    .alert-error{ background:#7f1d1d; color:#fca5a5; }
+    .back{ text-align:center; margin-top:16px; }
+    .back a{ color:var(--p); font-size:14px; font-weight:600; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Yeni şifre</h1>
+      <p class="subtitle">Geçerli sıfırlama bağlantısından geldiniz</p>
+    </div>
+    <div id="alert-container"></div>
+    <div class="form-container">
+      <form id="reset-form">
+        <div class="form-group">
+          <label>Yeni şifre <span class="required">*</span></label>
+          <input type="password" id="password" name="password" autocomplete="new-password" required minlength="6" />
+          <div class="help-text">En az 6 karakter</div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="submit-btn">Şifreyi Güncelle</button>
+      </form>
+      <div class="back"><a href="/super-admin-login.html">← Girişe dön</a></div>
+    </div>
+  </div>
+<script>
+  (function () {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token") || "";
+    const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
+    function setMsg(msg, type) {
+      const c = document.getElementById("alert-container");
+      c.innerHTML = '<div class="alert alert-' + (type === 'error' ? 'error' : 'success') + '">' + msg + '</div>';
+    }
+    if (!token) {
+      setMsg("Geçersiz veya eksik bağlantı (token).", "error");
+      document.getElementById("submit-btn").disabled = true;
+    }
+    document.getElementById("reset-form").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      if (!token) return;
+      const btn = document.getElementById("submit-btn");
+      const password = document.getElementById("password").value;
+      if (!password || String(password).trim().length < 6) {
+        setMsg("Şifre en az 6 karakter olmalıdır.", "error");
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Güncelleniyor...";
+      try {
+        const res = await fetch(`${API}/api/super-admin/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: token, password: password }),
+        });
+        const json = await res.json().catch(function () { return {}; });
+        if (res.ok && json.ok) {
+          setMsg("Şifre güncellendi. Giriş sayfasına yönlendiriliyorsunuz...", "success");
+          setTimeout(function () { window.location.href = "/super-admin-login.html"; }, 1500);
+        } else {
+          var err = json.message || json.error || "İşlem başarısız";
+          if (json.error === "invalid_or_expired_token") err = "Bağlantı geçersiz veya süresi dolmuş.";
+          if (json.error === "password_too_short") err = "Şifre en az 6 karakter olmalıdır.";
+          setMsg(err, "error");
+          btn.disabled = false;
+          btn.textContent = "Şifreyi Güncelle";
+        }
+      } catch (err) {
+        setMsg("Bağlantı hatası: " + (err && err.message ? err.message : "Bilinmeyen hata"), "error");
+        btn.disabled = false;
+        btn.textContent = "Şifreyi Güncelle";
+      }
+    });
+  })();
+</script>
+</body>
+</html>

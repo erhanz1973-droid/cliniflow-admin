@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Doktor Başvuruları - Clinifly Admin</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <script src="https://unpkg.com/@supabase/supabase-js"></script>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg:#111827;
+      --card:#1f2937;
+      --b:#374151;
+      --p:#2563eb;
+      --g:#16a34a;
+      --r:#dc2626;
+      --y:#f59e0b;
+      --muted:#a7b2c8;
+      --link:#6aa6ff;
+    }
+    body{ font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#e6eaf2; }
+    .wrap{ max-width:1200px; margin:0 auto; padding:20px; }
+    header{ margin-bottom:20px; border-bottom:1px solid var(--b); padding-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:14px; }
+    h1{ font-size:24px; margin:0 0 20px; font-weight:700; }
+
+    .navbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--b);
+      flex-wrap: wrap;
+    }
+    .navbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .navbar-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 20px;
+      color: #fff;
+    }
+    .navbar-links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .navbar-link {
+      color: var(--muted);
+      text-decoration: none;
+      padding: 8px 12px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .navbar-link:hover {
+      color: #fff;
+      background: var(--b);
+    }
+    .navbar-link.active {
+      color: #fff;
+      background: var(--p);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+    .stat-number {
+      font-size: 32px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .stat-label {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .search-filter {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .search-input {
+      flex: 1;
+      min-width: 200px;
+      background: var(--card);
+      border: 1px solid var(--b);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .filter-btn {
+      background: var(--card);
+      border: 1px solid var(--b);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-btn:hover {
+      background: var(--b);
+    }
+
+    .doctor-grid {
+      display: grid;
+      gap: 16px;
+    }
+    .doctor-card {
+      background: var(--card);
+      border: 1px solid var(--b);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .doctor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .doctor-info h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .doctor-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .doctor-status {
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status-PENDING { background: var(--y); color: #000; }
+    .status-APPROVED { background: var(--g); color: #fff; }
+    .status-REJECTED { background: var(--r); color: #fff; }
+
+    .doctor-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-success { background: var(--g); color: #fff; }
+    .btn-danger { background: var(--r); color: #fff; }
+    .btn-secondary { background: var(--b); color: #fff; }
+    .btn:hover { opacity: 0.9; }
+
+    .loading, .error, .empty {
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+    }
+    .error {
+      color: var(--r);
+      background: rgba(220, 38, 38, 0.1);
+      border: 1px solid var(--r);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="navbar">
+        <div class="navbar-left">
+          <div class="navbar-logo">
+            🏥 Clinifly Admin
+          </div>
+        </div>
+        <div class="navbar-links">
+          <a href="/admin.html" class="navbar-link">Dashboard</a>
+          <a href="/admin-patients.html" class="navbar-link">Patients</a>
+          <a href="/admin-doctor-applications.html" class="navbar-link active">Doctor Applications</a>
+          <a href="#" onclick="logout()" class="navbar-link">Logout</a>
+        </div>
+      </div>
+      <h1>👨‍⚕️ Doktor Başvuruları</h1>
+    </header>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number" id="pending-count">-</div>
+        <div class="stat-label">Bekleyen Başvuru</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="approved-count">-</div>
+        <div class="stat-label">Onaylanan Doktor</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="rejected-count">-</div>
+        <div class="stat-label">Reddedilen Başvuru</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="total-count">-</div>
+        <div class="stat-label">Toplam Başvuru</div>
+      </div>
+    </div>
+
+    <div class="search-filter">
+      <input type="text" class="search-input" id="search-input" placeholder="Doktor adı, email veya telefon ile ara...">
+      <select class="filter-btn" id="status-filter">
+        <option value="">Tüm Durumlar</option>
+        <option value="PENDING">Bekleyen</option>
+        <option value="APPROVED">Onaylanan</option>
+        <option value="REJECTED">Reddedilen</option>
+      </select>
+      <button class="filter-btn" onclick="loadDoctors()">🔄 Yenile</button>
+    </div>
+
+    <div id="loading-container" class="loading" style="display:none;">
+      <div>🔄 Yükleniyor...</div>
+    </div>
+    <div id="error-container"></div>
+    <div id="doctors-container" class="doctor-grid"></div>
+    <div id="empty-container" class="empty" style="display:none;">
+      <div>📋 Henüz doktor başvurusu bulunmuyor</div>
+    </div>
+  </div>
+
+  <script>
+    // Token check
+    (function() {
+      const token = localStorage.getItem("adminToken") || localStorage.getItem("admin_token");
+      if (!token) {
+        window.location.href = "/admin-login.html";
+      }
+    })();
+
+    // Initialize Supabase directly with production credentials
+    const { createClient } = supabase;
+    const supabaseClient = createClient(
+      'https://dqjrqxqqjgqzayxjxqdv.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxanJxeHFxamdxemF5eGp4cWR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY0OTc3MDQsImV4cCI6MjA1MjA3MzcwNH0.8rFqLs8_4Fz6QWgKJhQxJQvNkDnZjD5JQhQxJQvNkDnZjD5JQ'
+    );
+
+    let allDoctors = [];
+    let filteredDoctors = [];
+
+    async function loadDoctors() {
+      const loadingContainer = document.getElementById("loading-container");
+      const errorContainer = document.getElementById("error-container");
+      const doctorsContainer = document.getElementById("doctors-container");
+      const emptyContainer = document.getElementById("empty-container");
+
+      loadingContainer.style.display = "block";
+      errorContainer.innerHTML = "";
+      doctorsContainer.innerHTML = "";
+      emptyContainer.style.display = "none";
+
+      try {
+        console.log("[SUPABASE] Loading doctors from Supabase...");
+        
+        const { data, error } = await supabaseClient
+          .from('doctors')
+          .select(`
+            id,
+            doctor_id,
+            name,
+            email,
+            phone,
+            status,
+            clinic_code,
+            department,
+            title,
+            specialties,
+            license_number,
+            created_at,
+            updated_at
+          `)
+          .eq('clinic_code', 'SAVSAT') // Bu dinamik olmalı
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('[SUPABASE] Failed to load doctors:', error);
+          throw new Error(error.message);
+        }
+
+        console.log("[SUPABASE] Doctors loaded successfully:", data);
+        
+        allDoctors = data || [];
+        filteredDoctors = [...allDoctors];
+        updateStats();
+        renderDoctors();
+        
+      } catch (error) {
+        console.error("Load doctors error:", error);
+        errorContainer.innerHTML = `<div class="error">❌ ${error.message}</div>`;
+      } finally {
+        loadingContainer.style.display = "none";
+      }
+    }
+
+    function updateStats() {
+      const pending = filteredDoctors.filter(d => d.status === 'PENDING').length;
+      const approved = filteredDoctors.filter(d => d.status === 'APPROVED').length;
+      const rejected = filteredDoctors.filter(d => d.status === 'REJECTED').length;
+      const total = filteredDoctors.length;
+
+      document.getElementById('pending-count').textContent = pending;
+      document.getElementById('approved-count').textContent = approved;
+      document.getElementById('rejected-count').textContent = rejected;
+      document.getElementById('total-count').textContent = total;
+    }
+
+    function renderDoctors() {
+      const doctorsContainer = document.getElementById("doctors-container");
+      const emptyContainer = document.getElementById("empty-container");
+
+      if (filteredDoctors.length === 0) {
+        doctorsContainer.innerHTML = "";
+        emptyContainer.style.display = "block";
+        return;
+      }
+
+      doctorsContainer.innerHTML = filteredDoctors.map(doctor => `
+        <div class="doctor-card">
+          <div class="doctor-header">
+            <div class="doctor-info">
+              <h3>${doctor.name || '-'}</h3>
+              <div class="doctor-meta">
+                <div>📧 ${doctor.email || '-'}</div>
+                <div>📱 ${doctor.phone || '-'}</div>
+                <div>🏥 ${doctor.clinic_code}</div>
+                ${doctor.department ? `<div>🩺 ${doctor.department}</div>` : ''}
+                ${doctor.title ? `<div>👔 ${doctor.title}</div>` : ''}
+                ${doctor.license_number ? `<div>📜 ${doctor.license_number}</div>` : ''}
+                <div>📅 ${new Date(doctor.created_at).toLocaleString("tr-TR")}</div>
+              </div>
+            </div>
+            <div class="doctor-status status-${doctor.status}">
+              ${getStatusText(doctor.status)}
+            </div>
+          </div>
+          <div class="doctor-actions">
+            ${doctor.status === 'PENDING' ? `
+              <button class="btn btn-success" onclick="approveDoctor('${doctor.doctor_id}')">✅ Onayla</button>
+              <button class="btn btn-danger" onclick="rejectDoctor('${doctor.doctor_id}')">❌ Reddet</button>
+            ` : ""}
+            <button class="btn btn-secondary" onclick="viewDetails('${doctor.doctor_id}')">👁️ Detaylar</button>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function getStatusText(status) {
+      const statusMap = {
+        "PENDING": "Bekleyen",
+        "APPROVED": "Onaylı",
+        "REJECTED": "Reddedildi"
+      };
+      return statusMap[status] || status;
+    }
+
+    async function approveDoctor(doctorId) {
+      console.log("[SUPABASE] Approving doctor with doctor_id:", doctorId);
+      
+      if (!doctorId) {
+        alert('doctor_id missing (this should never happen)');
+        return;
+      }
+
+      if (!confirm("Bu doktor başvurusunu onaylamak istediğinizden emin misiniz?")) {
+        return;
+      }
+
+      try {
+        const { error } = await supabaseClient
+          .from('doctors')
+          .update({
+            status: 'APPROVED',
+            approved_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('doctor_id', doctorId);
+
+        if (error) {
+          console.error('[SUPABASE] Approve failed:', error);
+          alert('Approve failed: ' + error.message);
+          return;
+        }
+
+        console.log('[SUPABASE] Doctor approved successfully');
+        alert('✅ Doktor başarıyla onaylandı!');
+        loadDoctors(); // refresh list
+        
+      } catch (error) {
+        console.error('[SUPABASE] Approve error:', error);
+        alert('❌ Onaylama hatası: ' + error.message);
+      }
+    }
+
+    async function rejectDoctor(doctorId) {
+      console.log("[SUPABASE] Rejecting doctor with doctor_id:", doctorId);
+      
+      if (!doctorId) {
+        alert('doctor_id missing (this should never happen)');
+        return;
+      }
+
+      if (!confirm("Bu doktor başvurusunu reddetmek istediğinizden emin misiniz?")) {
+        return;
+      }
+
+      try {
+        const { error } = await supabaseClient
+          .from('doctors')
+          .update({
+            status: 'REJECTED',
+            rejected_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('doctor_id', doctorId);
+
+        if (error) {
+          console.error('[SUPABASE] Reject failed:', error);
+          alert('Reject failed: ' + error.message);
+          return;
+        }
+
+        console.log('[SUPABASE] Doctor rejected successfully');
+        alert('❌ Doktor başvurusu reddedildi!');
+        loadDoctors(); // refresh list
+        
+      } catch (error) {
+        console.error('[SUPABASE] Reject error:', error);
+        alert('❌ Reddetme hatası: ' + error.message);
+      }
+    }
+
+    function viewDetails(doctorId) {
+      const doctor = allDoctors.find(d => d.doctor_id === doctorId);
+      if (!doctor) return;
+
+      const details = `
+👨‍⚕️ DOKTOR DETAYLARI
+
+Ad: ${doctor.name || '-'}
+Email: ${doctor.email || '-'}
+Telefon: ${doctor.phone || '-'}
+Klinik: ${doctor.clinic_code}
+Departman: ${doctor.department || '-'}
+Ünvan: ${doctor.title || '-'}
+Lisans: ${doctor.license_number || '-'}
+Uzmanlık: ${doctor.specialties || '-'}
+Durum: ${getStatusText(doctor.status)}
+Kayıt: ${new Date(doctor.created_at).toLocaleString("tr-TR")}
+Doctor ID: ${doctor.doctor_id}
+      `.trim();
+
+      alert(details);
+    }
+
+    function logout() {
+      localStorage.removeItem("adminToken");
+      localStorage.removeItem("admin_token");
+      window.location.href = "/admin-login.html";
+    }
+
+    // Search and filter
+    document.getElementById('search-input').addEventListener('input', filterDoctors);
+    document.getElementById('status-filter').addEventListener('change', filterDoctors);
+
+    function filterDoctors() {
+      const searchTerm = document.getElementById('search-input').value.toLowerCase();
+      const statusFilter = document.getElementById('status-filter').value;
+
+      filteredDoctors = allDoctors.filter(doctor => {
+        const matchesSearch = !searchTerm || 
+          (doctor.name && doctor.name.toLowerCase().includes(searchTerm)) ||
+          (doctor.email && doctor.email.toLowerCase().includes(searchTerm)) ||
+          (doctor.phone && doctor.phone.includes(searchTerm));
+        
+        const matchesStatus = !statusFilter || doctor.status === statusFilter;
+        
+        return matchesSearch && matchesStatus;
+      });
+
+      updateStats();
+      renderDoctors();
+    }
+
+    // Load doctors on page load
+    document.addEventListener("DOMContentLoaded", loadDoctors);
+  </script>
+</body>
+</html>

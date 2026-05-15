@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title id="pageTitle">Clinifly - Fiyatlandırma</title>
+  <script src="/admin-i18n.js"></script>
+  <style>
+    :root {
+      --bg: #111827;
+      --card: #1f2937;
+      --border: #374151;
+      --primary: #2563eb;
+      --success: #16a34a;
+      --warning: #f59e0b;
+      --text: #e6eaf2;
+      --muted: #a7b2c8;
+      --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+
+    .header h1 {
+      font-size: 48px;
+      font-weight: 800;
+      margin-bottom: 16px;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header p {
+      font-size: 20px;
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .pricing-info {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 48px;
+      text-align: center;
+    }
+
+    .pricing-info .highlight {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    .plans {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 32px;
+      margin-bottom: 60px;
+    }
+
+    .plan {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 32px;
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .plan:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+      border-color: var(--primary);
+    }
+
+    .plan.featured {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+
+    .plan-badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--primary);
+      color: white;
+      padding: 4px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .plan-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .plan-name {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .plan-patients {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--primary);
+      margin-bottom: 16px;
+    }
+
+    .plan-description {
+      color: var(--muted);
+      margin-bottom: 24px;
+      font-style: italic;
+    }
+
+    .plan-features {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 32px 0;
+    }
+
+    .plan-features li {
+      padding: 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .plan-features .check {
+      color: var(--success);
+      font-weight: bold;
+    }
+
+    .plan-cta {
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .plan-cta.primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .plan-cta.primary:hover {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+    }
+
+    .plan-cta.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 2px solid var(--border);
+    }
+
+    .plan-cta.secondary:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .comparison-table {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 40px;
+    }
+
+    .comparison-table table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .comparison-table th,
+    .comparison-table td {
+      padding: 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .comparison-table th {
+      background: rgba(37, 99, 235, 0.1);
+      font-weight: 600;
+    }
+
+    .comparison-table .check {
+      color: var(--success);
+      font-size: 18px;
+    }
+
+    .comparison-table .cross {
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .faq {
+      margin-top: 60px;
+    }
+
+    .faq h2 {
+      text-align: center;
+      font-size: 32px;
+      margin-bottom: 40px;
+    }
+
+    .faq-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+
+    .faq-question {
+      padding: 20px;
+      cursor: pointer;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s ease;
+    }
+
+    .faq-question:hover {
+      background: rgba(37, 99, 235, 0.05);
+    }
+
+    .faq-answer {
+      padding: 0 20px;
+      max-height: 0;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .faq-answer.active {
+      padding: 0 20px 20px;
+      max-height: 300px;
+    }
+
+    .contact {
+      text-align: center;
+      margin-top: 60px;
+      padding: 40px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+
+    .contact h3 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .contact p {
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+
+    .contact-button {
+      display: inline-block;
+      padding: 12px 24px;
+      background: var(--primary);
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .contact-button:hover {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+    }
+
+    @media (max-width: 768px) {
+      .plans {
+        grid-template-columns: 1fr;
+      }
+      
+      .header h1 {
+        font-size: 32px;
+      }
+      
+      .comparison-table {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 data-i18n="pricing.title">Clinifly Fiyatlandırma</h1>
+      <p data-i18n="pricing.subtitle">Aktif hasta sayınıza göre esnek planlar</p>
+    </div>
+
+    <div class="pricing-info">
+      <p data-i18n="pricing.info">
+        Planlar <span class="highlight">aktif hasta sayısına</span> göre belirlenir. 
+        Mevccut hastalarınızla çalışmaya devam edebilirsiniz.
+      </p>
+    </div>
+
+    <div class="plans">
+      <div class="plan">
+        <div class="plan-icon">🆓</div>
+        <div class="plan-name" data-i18n="pricing.free.name">Free</div>
+        <div class="plan-patients">5 Hasta</div>
+        <div class="plan-description" data-i18n="pricing.free.description">
+          "Clinifly'i gerçek hastalarla denemeniz için."
+        </div>
+        <ul class="plan-features">
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.allCore">Tüm core özellikler</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.patientCommunication">Hasta iletişimi</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.fileSharing">Dosya paylaşımı</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.referral">Referral sistemi</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.branding">Clinifly branding</span></li>
+        </ul>
+        <button class="plan-cta secondary" data-i18n="pricing.free.cta">Başla</button>
+      </div>
+
+      <div class="plan featured">
+        <div class="plan-badge" data-i18n="pricing.basic.badge">Popüler</div>
+        <div class="plan-icon">💼</div>
+        <div class="plan-name" data-i18n="pricing.basic.name">Basic</div>
+        <div class="plan-patients">15 Hasta</div>
+        <div class="plan-description" data-i18n="pricing.basic.description">
+          "Günlük hasta iletişimi olan klinikler için ideal."
+        </div>
+        <ul class="plan-features">
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.allCore">Tüm core özellikler</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.customBranding">Özel branding</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.referral">Gelişmiş referral</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.analytics">Temel analizler</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.support">E-posta desteği</span></li>
+        </ul>
+        <button class="plan-cta primary" data-i18n="pricing.basic.cta">Upgrade Et</button>
+      </div>
+
+      <div class="plan">
+        <div class="plan-icon">🚀</div>
+        <div class="plan-name" data-i18n="pricing.pro.name">Pro</div>
+        <div class="plan-patients">Sınırsız</div>
+        <div class="plan-description" data-i18n="pricing.pro.description">
+          "Büyüyen klinikler için limitsiz kullanım."
+        </div>
+        <ul class="plan-features">
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.allCore">Tüm core özellikler</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.unlimitedPatients">Sınırsız hasta</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.advancedReferral">Gelişmiş referral (level, kampanya)</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.analytics">Detaylı raporlama</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.prioritySupport">Öncelikli destek</span></li>
+          <li><span class="check">✓</span> <span data-i18n="pricing.features.onboarding">Özel onboarding</span></li>
+        </ul>
+        <button class="plan-cta primary" data-i18n="pricing.pro.cta">İletişime Geç</button>
+      </div>
+    </div>
+
+    <div class="comparison-table">
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="pricing.comparison.feature">Özellik</th>
+            <th data-i18n="pricing.comparison.free">Free</th>
+            <th data-i18n="pricing.comparison.basic">Basic</th>
+            <th data-i18n="pricing.comparison.pro">Pro</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-i18n="pricing.comparison.patients">Aktif Hasta Sayısı</td>
+            <td>5</td>
+            <td>15</td>
+            <td data-i18n="pricing.comparison.unlimited">Sınırsız</td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.coreFeatures">Core Özellikler</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.branding">Clinifly Branding</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.customBranding">Özel Branding</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.referral">Referral Sistemi</td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.advancedReferral">Gelişmiş Referral</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.analytics">Analizler</td>
+            <td><span class="cross">✗</span></td>
+            <td><span class="check">✓</span></td>
+            <td><span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="pricing.comparison.support">Destek</td>
+            <td data-i18n="pricing.comparison.community">Topluluk</td>
+            <td data-i18n="pricing.comparison.email">E-posta</td>
+            <td data-i18n="pricing.comparison.priority">Öncelikli</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="faq">
+      <h2 data-i18n="pricing.faq.title">Sıkça Sorulan Sorular</h2>
+      
+      <div class="faq-item">
+        <div class="faq-question" onclick="toggleFaq(this)">
+          <span data-i18n="pricing.faq.q1.question">Aktif hasta sayısı nasıl hesaplanır?</span>
+          <span>▼</span>
+        </div>
+        <div class="faq-answer">
+          <p data-i18n="pricing.faq.q1.answer">
+            Sadece APPROVED (onaylı) durumundaki hastalar sayılır. Pending, rejected veya cancelled durumundaki hastalar limite dahil edilmez.
+          </p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" onclick="toggleFaq(this)">
+          <span data-i18n="pricing.faq.q2.question">Limit dolduğunda ne olur?</span>
+          <span>▼</span>
+        </div>
+        <div class="faq-answer">
+          <p data-i18n="pricing.faq.q2.answer">
+            Mevcut hastalarınızla çalışmaya devam edebilirsiniz. Sadece yeni hasta onayı engellenir. Upgrade yaptığınızda işlemlerinize devam edebilirsiniz.
+          </p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" onclick="toggleFaq(this)">
+          <span data-i18n="pricing.faq.q3.question">Plan değiştirebilir miyim?</span>
+          <span>▼</span>
+        </div>
+        <div class="faq-answer">
+          <p data-i18n="pricing.faq.q3.answer">
+            Evet, istediğiniz zaman planınızı yükseltebilir veya düşürebilirsiniz. Değişiklikler anında geçerli olur.
+          </p>
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question" onclick="toggleFaq(this)">
+          <span data-i18n="pricing.faq.q4.question">Ödeme yöntemleri nelerdir?</span>
+          <span>▼</span>
+        </div>
+        <div class="faq-answer">
+          <p data-i18n="pricing.faq.q4.answer">
+            Kredi kartı, banka transferi ve yerel ödeme yöntemlerini kabul ediyoruz. Ödemeler SSL güvenliği ile korunur.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="contact">
+      <h3 data-i18n="pricing.contact.title">Özel ihtiyaçlarınız mı var?</h3>
+      <p data-i18n="pricing.contact.description">
+        Büyük klinikler ve kurumsal çözümler için özel planlar sunuyoruz.
+      </p>
+      <a href="mailto:hello@clinifly.com" class="contact-button" data-i18n="pricing.contact.button">
+        İletişime Geç
+      </a>
+    </div>
+  </div>
+
+  <script>
+    function toggleFaq(element) {
+      const answer = element.nextElementSibling;
+      const allAnswers = document.querySelectorAll('.faq-answer');
+      const allQuestions = document.querySelectorAll('.faq-question span:last-child');
+      
+      // Close all other FAQs
+      allAnswers.forEach(a => {
+        if (a !== answer) a.classList.remove('active');
+      });
+      
+      allQuestions.forEach(q => {
+        if (q !== element.querySelector('span:last-child')) q.textContent = '▼';
+      });
+      
+      // Toggle current FAQ
+      answer.classList.toggle('active');
+      element.querySelector('span:last-child').textContent = 
+        answer.classList.contains('active') ? '▲' : '▼';
+    }
+
+    // Initialize i18n
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.i18n) {
+        window.i18n.updatePage();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <script src="/api-base.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Super Admin – Analytics</title>
+  <style>
+    :root {
+      --bg:#111827; --card:#1f2937; --b:#374151; --p:#8b5cf6;
+      --g:#16a34a;  --r:#dc2626;   --warn:#f59e0b; --muted:#a7b2c8;
+      --link:#6aa6ff; --teal:#0891b2;
+    }
+    *{box-sizing:border-box;}
+    body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#e6eaf2;}
+    .wrap{max-width:1500px;margin:0 auto;padding:20px;}
+
+    /* NAV */
+    .navbar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid var(--b);flex-wrap:wrap;}
+    .navbar-left{display:flex;align-items:center;gap:12px;}
+    .navbar-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+    .nav-link{color:var(--muted);text-decoration:none;font-weight:500;padding:8px 12px;border-radius:8px;font-size:14px;transition:all .2s;cursor:pointer;}
+    .nav-link:hover{color:#e6eaf2;background:rgba(55,65,81,.3);}
+    .nav-link.active{color:#fff;background:var(--p);font-weight:600;}
+    .nav-link.secondary{font-size:13px;}
+
+    /* SUMMARY CARDS */
+    .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:28px;}
+    .sum-card{background:var(--card);border:0.5px solid rgba(55,65,81,.5);border-radius:14px;padding:20px 18px;position:relative;overflow:hidden;}
+    .sum-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0;}
+    .sum-card.c-purple::before{background:var(--p);}
+    .sum-card.c-green::before{background:var(--g);}
+    .sum-card.c-blue::before{background:#2563eb;}
+    .sum-card.c-teal::before{background:var(--teal);}
+    .sum-card.c-orange::before{background:#ea580c;}
+    .sum-card.c-warn::before{background:var(--warn);}
+    .sum-icon{font-size:22px;margin-bottom:10px;}
+    .sum-value{font-size:30px;font-weight:800;color:#e6eaf2;line-height:1;}
+    .sum-label{font-size:12px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.5px;}
+    .sum-sub{font-size:11px;color:var(--muted);margin-top:4px;}
+
+    /* SECTION */
+    .section-title{font-size:16px;font-weight:700;color:#e6eaf2;margin:0 0 14px;display:flex;align-items:center;gap:8px;}
+    .card{background:var(--card);border:0.5px solid rgba(55,65,81,.5);border-radius:16px;padding:22px;margin-bottom:20px;}
+
+    /* TABS */
+    .tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;}
+    .tab{padding:8px 18px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:1px solid var(--b);background:transparent;color:var(--muted);transition:all .2s;}
+    .tab:hover{color:#e6eaf2;border-color:#6b7280;}
+    .tab.active{background:var(--p);border-color:var(--p);color:#fff;}
+    .tab-content{display:none;}
+    .tab-content.active{display:block;}
+
+    /* TABLE */
+    table{width:100%;border-collapse:collapse;font-size:13px;}
+    th{padding:10px 12px;text-align:left;border-bottom:1px solid rgba(55,65,81,.5);font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;}
+    td{padding:10px 12px;border-bottom:1px solid rgba(55,65,81,.3);color:#e6eaf2;vertical-align:middle;}
+    tr:hover{background:rgba(55,65,81,.15);}
+    tr:last-child td{border-bottom:none;}
+    th.num,td.num{text-align:right;}
+    th.center,td.center{text-align:center;}
+
+    /* BADGES */
+    .badge{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
+    .b-green{background:rgba(22,163,74,.2);color:#86efac;border:1px solid rgba(22,163,74,.3);}
+    .b-red{background:rgba(220,38,38,.2);color:#fca5a5;border:1px solid rgba(220,38,38,.3);}
+    .b-warn{background:rgba(245,158,11,.2);color:#fde68a;border:1px solid rgba(245,158,11,.3);}
+    .b-purple{background:rgba(139,92,246,.2);color:#c4b5fd;border:1px solid rgba(139,92,246,.3);}
+    .b-blue{background:rgba(37,99,235,.2);color:#93c5fd;border:1px solid rgba(37,99,235,.3);}
+    .b-gray{background:rgba(107,114,128,.2);color:#d1d5db;border:1px solid rgba(107,114,128,.3);}
+
+    /* SCORE BAR */
+    .score-wrap{display:flex;align-items:center;gap:8px;}
+    .score-bar{height:6px;border-radius:3px;background:rgba(55,65,81,.6);flex:1;min-width:60px;}
+    .score-fill{height:6px;border-radius:3px;transition:width .4s;}
+    .score-num{font-size:13px;font-weight:700;min-width:28px;text-align:right;}
+
+    /* MINI BAR CHART */
+    .bar-chart{display:flex;align-items:flex-end;gap:4px;height:80px;padding-top:8px;}
+    .bar-col{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;}
+    .bar{width:100%;border-radius:3px 3px 0 0;min-height:2px;background:var(--p);transition:height .4s;}
+    .bar-lbl{font-size:9px;color:var(--muted);text-align:center;}
+
+    /* ALERT CARDS */
+    .alert-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
+    .alert-card{background:rgba(55,65,81,.3);border:1px solid rgba(55,65,81,.5);border-radius:10px;padding:14px 16px;display:flex;align-items:flex-start;gap:10px;}
+    .alert-card.warn{border-color:rgba(245,158,11,.3);background:rgba(245,158,11,.06);}
+    .alert-card.danger{border-color:rgba(220,38,38,.3);background:rgba(220,38,38,.06);}
+    .alert-card.info{border-color:rgba(139,92,246,.3);background:rgba(139,92,246,.06);}
+    .alert-icon{font-size:18px;margin-top:1px;}
+    .alert-body{}
+    .alert-title{font-size:13px;font-weight:700;color:#e6eaf2;margin-bottom:3px;}
+    .alert-msg{font-size:12px;color:var(--muted);}
+
+    /* 2-col layout */
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+    @media(max-width:900px){.two-col{grid-template-columns:1fr;}}
+
+    /* Misc */
+    .loading{text-align:center;padding:50px;color:var(--muted);font-size:15px;}
+    .refresh-row{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
+    .refresh-row span{font-size:13px;color:var(--muted);}
+    button.btn{cursor:pointer;border:none;background:var(--p);color:#fff;font-weight:600;padding:8px 18px;border-radius:8px;font-size:13px;transition:background .2s;}
+    button.btn:hover{background:#7c3aed;}
+    button.btn:disabled{background:#6b7280;cursor:not-allowed;}
+    .search-box{padding:9px 14px;border:1px solid var(--b);border-radius:8px;background:#1f2937;color:#e6eaf2;font-size:13px;width:280px;}
+    .search-box:focus{outline:none;border-color:var(--p);}
+    .empty{text-align:center;padding:40px;color:var(--muted);}
+    .text-green{color:#86efac;} .text-warn{color:#fde68a;} .text-red{color:#fca5a5;} .text-muted{color:var(--muted);}
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="navbar">
+    <div class="navbar-left">
+      <div style="font-size:22px;font-weight:800;color:var(--p);">⚡ Super Admin</div>
+    </div>
+    <div class="navbar-right">
+      <a href="/super-admin.html"         class="nav-link">🏥 Klinikler</a>
+      <a href="/super-admin-analytics.html" class="nav-link active">📊 Analytics</a>
+      <a href="/super-admin-login.html" class="nav-link secondary" onclick="logout();return false;">Logout</a>
+    </div>
+  </nav>
+
+  <div id="mainContent">
+    <div class="loading">📊 Analytics yükleniyor…</div>
+  </div>
+
+</div>
+<script>
+const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
+let data = null;
+
+function getSuperAdminToken() {
+  try { return localStorage.getItem("super_admin_token") || ""; } catch { return ""; }
+}
+function checkAuth() {
+  if (!getSuperAdminToken()) { window.location.href = "/super-admin-login.html"; return false; }
+  return true;
+}
+function logout() {
+  localStorage.removeItem("super_admin_token");
+  window.location.href = "/super-admin-login.html";
+}
+function fmt(n) { return n == null ? "—" : Number(n).toLocaleString(); }
+function fmtDate(d) {
+  if (!d) return "—";
+  try { return new Date(d).toLocaleDateString("tr-TR", { day:"numeric", month:"short", year:"numeric" }); }
+  catch { return d; }
+}
+function scoreColor(s) {
+  if (s >= 75) return "#86efac";
+  if (s >= 50) return "#fde68a";
+  if (s >= 25) return "#fb923c";
+  return "#fca5a5";
+}
+function statusBadge(s) {
+  const u = (s||"").toUpperCase();
+  if (u==="ACTIVE"||u==="APPROVED") return '<span class="badge b-green">Active</span>';
+  if (u==="SUSPENDED") return '<span class="badge b-red">Suspended</span>';
+  if (u==="PENDING")   return '<span class="badge b-warn">Pending</span>';
+  return '<span class="badge b-gray">'+(s||"—")+'</span>';
+}
+function planBadge(p) {
+  const u=(p||"FREE").toUpperCase();
+  if (u==="PRO"||u==="PREMIUM") return '<span class="badge b-green">'+u+'</span>';
+  return '<span class="badge b-blue">'+u+'</span>';
+}
+
+async function loadAnalytics() {
+  const token = getSuperAdminToken();
+  document.getElementById("mainContent").innerHTML = '<div class="loading">📊 Analytics yükleniyor…</div>';
+  try {
+    const res = await fetch(`${API}/api/super-admin/analytics`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" }
+    });
+    if (res.status === 401) { logout(); return; }
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.message || "Yükleme başarısız");
+    data = json;
+    render(json);
+  } catch(e) {
+    document.getElementById("mainContent").innerHTML = `<div class="loading" style="color:#fca5a5;">⚠️ Hata: ${e.message}</div>`;
+  }
+}
+
+function render(d) {
+  const s = d.summary || {};
+  const cm = d.clinicMetrics || [];
+  const dp = d.doctorPerformance || [];
+  const tr = d.topReferrers || [];
+  const al = d.alerts || [];
+
+  // Clinic distribution for mini bar
+  const planCounts = {};
+  for (const c of cm) { const p=(c.plan||"FREE").toUpperCase(); planCounts[p]=(planCounts[p]||0)+1; }
+  const planEntries = Object.entries(planCounts).sort((a,b)=>b[1]-a[1]);
+  const maxPlan = Math.max(...planEntries.map(([,v])=>v),1);
+
+  let html = `
+  <div class="refresh-row">
+    <button class="btn" onclick="loadAnalytics()">🔄 Yenile</button>
+    <span>Son güncelleme: ${new Date(d.generatedAt||Date.now()).toLocaleTimeString("tr-TR")}</span>
+  </div>
+
+  <!-- SUMMARY CARDS -->
+  <div class="summary-grid">
+    <div class="sum-card c-purple">
+      <div class="sum-icon">🏥</div>
+      <div class="sum-value">${fmt(s.totalClinics)}</div>
+      <div class="sum-label">Toplam Klinik</div>
+      <div class="sum-sub">${fmt(s.activeClinics)} aktif</div>
+    </div>
+    <div class="sum-card c-blue">
+      <div class="sum-icon">👤</div>
+      <div class="sum-value">${fmt(s.totalPatients)}</div>
+      <div class="sum-label">Toplam Hasta</div>
+      <div class="sum-sub">${fmt(s.activePatients30d)} son 30 gün | ${fmt(s.newPatients7d)} bu hafta</div>
+    </div>
+    <div class="sum-card c-teal">
+      <div class="sum-icon">🩺</div>
+      <div class="sum-value">${fmt(s.totalDoctors)}</div>
+      <div class="sum-label">Toplam Doktor</div>
+    </div>
+    <div class="sum-card c-green">
+      <div class="sum-icon">✅</div>
+      <div class="sum-value">${fmt(s.completedTreatments)}</div>
+      <div class="sum-label">Tamamlanan İşlem</div>
+      <div class="sum-sub">${fmt(s.pendingTreatments)} bekleyen</div>
+    </div>
+    <div class="sum-card c-orange">
+      <div class="sum-icon">🔗</div>
+      <div class="sum-value">${fmt(s.totalReferrals)}</div>
+      <div class="sum-label">Toplam Referral</div>
+      <div class="sum-sub">${fmt(s.convertedReferrals)} dönüştürülen</div>
+    </div>
+    <div class="sum-card c-warn">
+      <div class="sum-icon">📋</div>
+      <div class="sum-value">${s.healthFormFillRate != null ? s.healthFormFillRate+'%' : '—'}</div>
+      <div class="sum-label">Sağlık Formu Doldurma</div>
+    </div>
+  </div>
+
+  <!-- ALERTS -->
+  ${al.length > 0 ? `
+  <div class="card">
+    <div class="section-title">⚠️ Uyarılar (${al.length})</div>
+    <div class="alert-grid">
+      ${al.map(a => `
+        <div class="alert-card ${a.type==='inactive'?'danger':a.type==='no_referral'?'warn':'info'}">
+          <div class="alert-icon">${a.type==='inactive'?'🔴':a.type==='no_referral'?'🟡':'🔵'}</div>
+          <div class="alert-body">
+            <div class="alert-title">${escHtml(a.name)} <span style="color:var(--muted);font-weight:400;font-size:11px;">${escHtml(a.clinicCode)}</span></div>
+            <div class="alert-msg">${escHtml(a.message)}</div>
+          </div>
+        </div>`).join('')}
+    </div>
+  </div>` : ''}
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('clinics',this)">🏥 Klinikler</button>
+    <button class="tab" onclick="switchTab('doctors',this)">🩺 Doktorlar</button>
+    <button class="tab" onclick="switchTab('referrals',this)">🔗 Referrallar</button>
+  </div>
+
+  <!-- TAB: CLINICS -->
+  <div id="tab-clinics" class="tab-content active">
+    <div class="card" style="padding-bottom:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <div class="section-title" style="margin:0;">🏥 Klinik Performansı (${cm.length})</div>
+        <input class="search-box" id="clinicSearch" placeholder="Klinik ara…" oninput="filterClinics()"/>
+      </div>
+      <div style="overflow-x:auto;">
+      <table id="clinicTable">
+        <thead><tr>
+          <th>Klinik</th>
+          <th>Plan</th>
+          <th>Durum</th>
+          <th class="num">Hasta</th>
+          <th class="num">Aktif 30g</th>
+          <th class="num">Yeni 7g</th>
+          <th class="num">Doktor</th>
+          <th class="num">Tamam</th>
+          <th class="num">Bekl.</th>
+          <th class="num">Referral</th>
+          <th class="num">Dön.%</th>
+          <th class="num">Form%</th>
+          <th>Skor</th>
+        </tr></thead>
+        <tbody id="clinicTbody">
+          ${renderClinicRows(cm)}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: DOCTORS -->
+  <div id="tab-doctors" class="tab-content">
+    <div class="card">
+      <div class="section-title">🩺 Doktor Performansı (Top 20)</div>
+      <div style="overflow-x:auto;">
+      <table>
+        <thead><tr>
+          <th>#</th>
+          <th>Doktor</th>
+          <th class="num">İşlem Sayısı</th>
+        </tr></thead>
+        <tbody>
+          ${dp.length === 0 ? '<tr><td colspan="3" class="empty">Veri yok</td></tr>' :
+            dp.map((d,i) => `<tr>
+              <td class="text-muted">${i+1}</td>
+              <td>${escHtml(d.name)}</td>
+              <td class="num"><strong>${fmt(d.treatments)}</strong></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: REFERRALS -->
+  <div id="tab-referrals" class="tab-content">
+    <div class="two-col">
+      <div class="card">
+        <div class="section-title">🏆 En Fazla Referral Yapan Hastalar</div>
+        <table>
+          <thead><tr><th>#</th><th>Hasta ID</th><th class="num">Referral</th></tr></thead>
+          <tbody>
+            ${tr.length===0 ? '<tr><td colspan="3" class="empty">Veri yok</td></tr>' :
+              tr.map((r,i)=>`<tr>
+                <td class="text-muted">${i+1}</td>
+                <td style="font-family:monospace;font-size:12px;">${escHtml(r.patientId)}</td>
+                <td class="num"><strong>${fmt(r.count)}</strong></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="section-title">📊 Kliniğe Göre Referral</div>
+        <table>
+          <thead><tr>
+            <th>Klinik</th>
+            <th class="num">Toplam</th>
+            <th class="num">Dönüşüm</th>
+            <th class="num">Oran%</th>
+          </tr></thead>
+          <tbody>
+            ${cm.filter(c=>c.totalReferrals>0).sort((a,b)=>b.totalReferrals-a.totalReferrals).slice(0,15).map(c=>`<tr>
+              <td>${escHtml(c.name)}</td>
+              <td class="num">${fmt(c.totalReferrals)}</td>
+              <td class="num">${fmt(c.convertedReferrals)}</td>
+              <td class="num">
+                <span class="${c.referralConversionRate>=50?'text-green':c.referralConversionRate>=20?'text-warn':'text-red'}">${c.referralConversionRate}%</span>
+              </td>
+            </tr>`).join('') || '<tr><td colspan="4" class="empty">Referral verisi yok</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  `;
+
+  document.getElementById("mainContent").innerHTML = html;
+}
+
+function renderClinicRows(clinics) {
+  if (!clinics || clinics.length === 0) return '<tr><td colspan="13" class="empty">Klinik yok</td></tr>';
+  return clinics.map(c => {
+    const sc = Math.round(c.score||0);
+    const col = scoreColor(sc);
+    return `<tr>
+      <td>
+        <div style="font-weight:600;">${escHtml(c.name)}</div>
+        <div style="font-size:11px;color:var(--muted);">${escHtml(c.clinicCode)}</div>
+      </td>
+      <td>${planBadge(c.plan)}</td>
+      <td>${statusBadge(c.status)}</td>
+      <td class="num"><strong>${fmt(c.totalPatients)}</strong></td>
+      <td class="num">${fmt(c.activePatients30d)}</td>
+      <td class="num">${fmt(c.newPatients7d)}</td>
+      <td class="num">${fmt(c.totalDoctors)}</td>
+      <td class="num text-green">${fmt(c.completedTreatments)}</td>
+      <td class="num text-warn">${fmt(c.pendingTreatments)}</td>
+      <td class="num">${fmt(c.totalReferrals)}</td>
+      <td class="num"><span class="${c.referralConversionRate>=50?'text-green':c.referralConversionRate>=20?'text-warn':'text-red'}">${c.referralConversionRate}%</span></td>
+      <td class="num">${c.formFillRate!=null?c.formFillRate+'%':'—'}</td>
+      <td>
+        <div class="score-wrap">
+          <div class="score-bar"><div class="score-fill" style="width:${sc}%;background:${col};"></div></div>
+          <div class="score-num" style="color:${col};">${sc}</div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function filterClinics() {
+  const q = (document.getElementById("clinicSearch")?.value||"").toLowerCase().trim();
+  if (!data) return;
+  const cm = data.clinicMetrics||[];
+  const filtered = q ? cm.filter(c =>
+    (c.name||"").toLowerCase().includes(q) ||
+    (c.clinicCode||"").toLowerCase().includes(q) ||
+    (c.email||"").toLowerCase().includes(q)
+  ) : cm;
+  const tbody = document.getElementById("clinicTbody");
+  if (tbody) tbody.innerHTML = renderClinicRows(filtered);
+}
+
+function switchTab(id, btn) {
+  document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".tab").forEach(el => el.classList.remove("active"));
+  const tc = document.getElementById("tab-"+id);
+  if (tc) tc.classList.add("active");
+  if (btn) btn.classList.add("active");
+}
+
+function escHtml(s) {
+  if (s == null) return "—";
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+if (checkAuth()) loadAnalytics();
+</script>
+</body>
+</html>
