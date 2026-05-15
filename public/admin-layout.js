@@ -68,6 +68,7 @@
       'dashboard.nav.files': 'Files', 'dashboard.nav.referrals': 'Referrals', 'dashboard.nav.settings': 'Settings',
       'dashboard.sidebar.mainMenu': 'Main Menu', 'dashboard.sidebar.management': 'Management',
       'dashboard.sidebar.logout': 'Logout', 'dashboard.sidebar.clinic': 'Clinic',
+      'dashboard.sidebar.openMenu': 'Open menu', 'dashboard.sidebar.closeMenu': 'Close menu',
     };
     return fallbacks[key] || key.split('.').pop();
   }
@@ -89,6 +90,7 @@
     return svg('<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>');
   }
   function iconLogout()   { return svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'); }
+  function iconMenu()     { return svg('<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>'); }
 
   /* ── Build nav item HTML ──────────────────────────────────── */
   function navItem(item, active) {
@@ -144,12 +146,20 @@
     // Logout
     const logoutLabel = document.getElementById('alLogoutLabel');
     if (logoutLabel) logoutLabel.textContent = tn('dashboard.sidebar.logout');
+    const menuBtn = document.getElementById('alMenuBtn');
+    if (menuBtn) {
+      const open = document.body.classList.contains('al-nav-open');
+      menuBtn.setAttribute('aria-label', tn(open ? 'dashboard.sidebar.closeMenu' : 'dashboard.sidebar.openMenu'));
+    }
   }
 
   /* ── Build topbar HTML ───────────────────────────────────── */
   function buildTopbar(pageTitle) {
     return `
       <div class="al-topbar-left">
+        <button type="button" class="al-menu-btn" id="alMenuBtn" aria-label="${tn('dashboard.sidebar.openMenu')}" aria-expanded="false" aria-controls="alSidebar">
+          ${iconMenu()}
+        </button>
         <span class="al-page-title" id="alPageTitle">${pageTitle}</span>
       </div>
       <div class="al-topbar-right">
@@ -204,10 +214,20 @@
     // Prepend topbar inside main
     main.insertBefore(topbar, main.firstChild);
 
-    // Add sidebar + main to body
+    // Mobile drawer backdrop
+    const overlay = document.createElement('div');
+    overlay.className = 'al-nav-overlay';
+    overlay.id = 'alNavOverlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.setAttribute('tabindex', '-1');
+
+    // Add overlay, sidebar + main to body
+    document.body.appendChild(overlay);
     document.body.appendChild(sidebar);
     document.body.appendChild(main);
     document.body.classList.add('al-ready');
+
+    setupMobileNav();
 
     // Load clinic name
     loadClinicName();
@@ -221,6 +241,70 @@
       updateSidebarLabels();
       if (typeof prevOnI18nUpdated === 'function') prevOnI18nUpdated();
     };
+  }
+
+  /* ── Mobile drawer navigation ────────────────────────────── */
+  var alMobileNavMq = null;
+
+  function setupMobileNav() {
+    const btn = document.getElementById('alMenuBtn');
+    const overlay = document.getElementById('alNavOverlay');
+    const sidebar = document.getElementById('alSidebar');
+    if (!btn || !overlay || !sidebar) return;
+
+    if (!alMobileNavMq) {
+      alMobileNavMq = window.matchMedia('(max-width: 600px)');
+    }
+
+    function isMobile() {
+      return alMobileNavMq.matches;
+    }
+
+    function setNavOpen(open) {
+      document.body.classList.toggle('al-nav-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', tn(open ? 'dashboard.sidebar.closeMenu' : 'dashboard.sidebar.openMenu'));
+      overlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+
+    function closeNav() {
+      setNavOpen(false);
+    }
+
+    function toggleNav() {
+      if (!isMobile()) return;
+      setNavOpen(!document.body.classList.contains('al-nav-open'));
+    }
+
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      toggleNav();
+    });
+
+    overlay.addEventListener('click', closeNav);
+
+    sidebar.querySelectorAll('.al-nav-item, .al-logo').forEach(function (el) {
+      el.addEventListener('click', function () {
+        if (isMobile()) closeNav();
+      });
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.body.classList.contains('al-nav-open')) closeNav();
+    });
+
+    function onMqChange() {
+      if (!isMobile()) closeNav();
+    }
+
+    if (typeof alMobileNavMq.addEventListener === 'function') {
+      alMobileNavMq.addEventListener('change', onMqChange);
+    } else if (typeof alMobileNavMq.addListener === 'function') {
+      alMobileNavMq.addListener(onMqChange);
+    }
+
+    window.__alCloseNav = closeNav;
+    window.__alToggleNav = toggleNav;
   }
 
   /* ── Load clinic name ────────────────────────────────────── */

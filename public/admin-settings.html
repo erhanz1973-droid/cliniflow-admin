@@ -212,27 +212,33 @@
       </div>
       <form id="clinicForm">
         <label data-i18n="settings.subscriptionPlan">Abonelik Paketi</label>
-        <select id="plan">
-          <option value="FREE">FREE</option>
-          <option value="BASIC">BASIC</option>
-          <option value="PRO">PRO</option>
-        </select>
-        <div class="muted" data-i18n="settings.subscriptionPlanHelp">FREE / BASIC / PRO paketini buradan değiştirebilirsiniz.</div>
+        <div id="currentPlanReadonly">Mevcut Plan: —</div>
+        <div id="usageActiveTreatments" class="muted"></div>
+        <div id="usageMonthlyUploads" class="muted"></div>
+        <div id="usageReferrals" class="muted"></div>
+        <button type="button" id="planUpgradeButton">Planı Yükselt</button>
+        <div class="muted">Plan changes are done via the pricing page.</div>
 
-        <!-- ── City (all plans) ── -->
+        <!-- ── Location: country + city (all plans) ── -->
         <div style="margin-top:24px; padding:16px 18px; background:linear-gradient(135deg,#eff6ff,#f0fdf4); border:1.5px solid #3b82f6; border-radius:12px;">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
             <span style="font-size:18px;">📍</span>
-            <span style="font-size:14px;font-weight:700;color:#1d4ed8;">Clinic City</span>
+            <span style="font-size:14px;font-weight:700;color:#1d4ed8;">Location</span>
             <span style="background:#3b82f6;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;">TÜM PLANLAR</span>
           </div>
+          <label for="clinicCountry">Country</label>
+          <select
+            id="clinicCountry"
+            style="width:100%;box-sizing:border-box;padding:11px 14px;border:1.5px solid #3b82f6;border-radius:8px;font-size:15px;font-weight:600;color:#1e3a5f;background:#fff;outline:none;"
+          ></select>
+          <label for="clinicCity">City</label>
           <input
             type="text"
             id="clinicCity"
             placeholder="Antalya, Istanbul, London, Tbilisi..."
             style="width:100%;box-sizing:border-box;padding:11px 14px;border:1.5px solid #3b82f6;border-radius:8px;font-size:15px;font-weight:600;color:#1e3a5f;background:#fff;outline:none;"
           />
-          <div style="margin-top:6px;font-size:12px;color:#6b7280;">Hastalar klinik keşif ekranında şehre göre arama yapabilir. Tüm planlar için zorunludur.</div>
+          <div style="margin-top:6px;font-size:12px;color:#6b7280;">Patients can filter clinics by country and city on discovery.</div>
         </div>
 
         <h2 style="margin-top: 32px; display: flex; align-items: center; gap: 8px;" data-i18n="settings.referralDiscounts">
@@ -361,6 +367,88 @@
   const API_BASE = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
   const $ = (id) => document.getElementById(id);
 
+  const CLINIC_FORM_COUNTRY_OPTIONS = [
+    ["", "Select country"],
+    ["AE", "United Arab Emirates"],
+    ["AM", "Armenia"],
+    ["AT", "Austria"],
+    ["AZ", "Azerbaijan"],
+    ["BY", "Belarus"],
+    ["BE", "Belgium"],
+    ["BG", "Bulgaria"],
+    ["CA", "Canada"],
+    ["CH", "Switzerland"],
+    ["CY", "Cyprus"],
+    ["CZ", "Czechia"],
+    ["DE", "Germany"],
+    ["DK", "Denmark"],
+    ["EE", "Estonia"],
+    ["ES", "Spain"],
+    ["FI", "Finland"],
+    ["FR", "France"],
+    ["GB", "United Kingdom"],
+    ["GE", "Georgia"],
+    ["GR", "Greece"],
+    ["HR", "Croatia"],
+    ["HU", "Hungary"],
+    ["IE", "Ireland"],
+    ["IL", "Israel"],
+    ["IT", "Italy"],
+    ["JO", "Jordan"],
+    ["KZ", "Kazakhstan"],
+    ["LB", "Lebanon"],
+    ["LV", "Latvia"],
+    ["LT", "Lithuania"],
+    ["MD", "Moldova"],
+    ["MT", "Malta"],
+    ["NL", "Netherlands"],
+    ["NO", "Norway"],
+    ["PL", "Poland"],
+    ["PT", "Portugal"],
+    ["RO", "Romania"],
+    ["RU", "Russia"],
+    ["SA", "Saudi Arabia"],
+    ["RS", "Serbia"],
+    ["SK", "Slovakia"],
+    ["SI", "Slovenia"],
+    ["SE", "Sweden"],
+    ["SY", "Syria"],
+    ["TR", "Turkey"],
+    ["UA", "Ukraine"],
+    ["US", "United States"],
+    ["UZ", "Uzbekistan"],
+  ];
+  function initClinicCountrySelect() {
+    const sel = $("clinicCountry");
+    if (!sel || sel.getAttribute("data-options-loaded")) return;
+    sel.setAttribute("data-options-loaded", "1");
+    sel.innerHTML = "";
+    CLINIC_FORM_COUNTRY_OPTIONS.forEach(function (pair) {
+      const o = document.createElement("option");
+      o.value = pair[0];
+      o.textContent = pair[1];
+      sel.appendChild(o);
+    });
+  }
+  function syncClinicCountryUi(savedCode) {
+    initClinicCountrySelect();
+    const sel = $("clinicCountry");
+    if (!sel) return;
+    const cc = String(savedCode || "").trim().toUpperCase();
+    if (!cc) {
+      sel.value = "";
+      return;
+    }
+    sel.value = cc;
+    if (sel.value !== cc) {
+      const o = document.createElement("option");
+      o.value = cc;
+      o.textContent = cc + " (saved)";
+      sel.appendChild(o);
+      sel.value = cc;
+    }
+  }
+
   let clinicPlan = "";
   function applyBrandingLock(plan) {
     clinicPlan = String(plan || "").toUpperCase();
@@ -382,6 +470,53 @@
     if (raw === "PREMIUM") return "PRO";
     if (raw === "FREE" || raw === "BASIC" || raw === "PRO") return raw;
     return "FREE";
+  }
+  function formatLimitSettings(v) {
+    if (v == null || v === "") return "Sınırsız";
+    const n = Number(v);
+    if (!Number.isFinite(n) || n >= 999999) return "Sınırsız";
+    return String(n);
+  }
+  function formatUsageLineSettings(u, l) {
+    const nu = Number(u);
+    const n = Number.isFinite(nu) ? nu : 0;
+    return n + " / " + formatLimitSettings(l);
+  }
+  async function loadSubscriptionUsage(token) {
+    const elA = $("usageActiveTreatments");
+    const elU = $("usageMonthlyUploads");
+    const elR = $("usageReferrals");
+    if (elA) elA.textContent = "";
+    if (elU) elU.textContent = "";
+    if (elR) elR.textContent = "";
+    if (!token) return;
+    try {
+      const res = await fetch(API_BASE + "/api/clinic/usage", {
+        headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+      });
+      if (!res.ok) {
+        if (handle401(res.status)) return;
+        return;
+      }
+      const data = await res.json();
+      if (elA) {
+        elA.textContent =
+          "Aktif tedaviler: " +
+          formatUsageLineSettings(data.usage && data.usage.active_treatments, data.limits && data.limits.active_treatments);
+      }
+      if (elU) {
+        elU.textContent =
+          "Aylık yüklemeler: " +
+          formatUsageLineSettings(data.usage && data.usage.monthly_uploads, data.limits && data.limits.monthly_uploads);
+      }
+      if (elR) {
+        elR.textContent =
+          "Referans davetleri: " +
+          formatUsageLineSettings(data.usage && data.usage.referrals, data.limits && data.limits.referrals);
+      }
+    } catch (e) {
+      console.warn("[subscription usage]", e);
+    }
   }
   function logout() {
     try {
@@ -431,6 +566,27 @@
     if (discountInput && (!onlyEmpty || !discountInput.value) && discount !== null && discount !== undefined) {
       discountInput.value = String(discount);
     }
+  }
+
+  /** Top-level branding + settings.branding (admin API may return either) */
+  function mergeClinicBranding(clinic) {
+    const settings = clinic.settings && typeof clinic.settings === "object" ? clinic.settings : {};
+    const fromSettings =
+      settings.branding && typeof settings.branding === "object" ? settings.branding : {};
+    const fromTop = clinic.branding && typeof clinic.branding === "object" ? clinic.branding : {};
+    return { ...fromSettings, ...fromTop };
+  }
+
+  function resolveClinicLogoUrlForSettingsInput(clinic, branding) {
+    const settings = clinic.settings && typeof clinic.settings === "object" ? clinic.settings : {};
+    return String(
+      clinic.logo ||
+        clinic.logo_url ||
+        branding.clinicLogoUrl ||
+        settings.logoUrl ||
+        clinic.logoUrl ||
+        ""
+    ).trim();
   }
 
   async function loadClinicSettings() {
@@ -487,7 +643,7 @@
       });
       
       // Backend returns clinic object directly, not wrapped in { ok: true, clinic: {...} }
-      const branding = clinic.branding || {};
+      const branding = mergeClinicBranding(clinic);
       // IMPORTANT:
       // - subscriptionStatus is NOT a plan (can be TRIAL/ACTIVE) and would break the dropdown.
       // - Only use plan fields for plan UI.
@@ -511,18 +667,19 @@
         'final loadedPlan': loadedPlan
       });
       
-      // Update both the dropdown and the global variable
       clinicPlan = loadedPlan;
-      if ($("plan")) {
-        $("plan").value = loadedPlan;
-        console.log("Loaded and set plan:", loadedPlan);
-      }
+      const planRo = $("currentPlanReadonly");
+      if (planRo) planRo.textContent = "Mevcut Plan: " + loadedPlan;
       applyBrandingLock(clinicPlan);
+      loadSubscriptionUsage(token);
 
       // Populate form
       if ($("clinicName")) $("clinicName").value = branding.clinicName || clinic.name || "";
-      if ($("clinicLogoUrl")) $("clinicLogoUrl").value = branding.clinicLogoUrl || clinic.logoUrl || "";
+      if ($("clinicLogoUrl")) {
+        $("clinicLogoUrl").value = resolveClinicLogoUrlForSettingsInput(clinic, branding);
+      }
       if ($("clinicAddress")) $("clinicAddress").value = branding.address || clinic.address || "";
+      syncClinicCountryUi(clinic.country);
       if ($("clinicCity")) $("clinicCity").value = clinic.city || "";
       if ($("chairCount")) {
         const loadedChairCount =
@@ -595,7 +752,12 @@
     }
   }
 
-  $("plan") && $("plan").addEventListener("change", (e) => applyBrandingLock(e.target.value));
+  const planUpgradeBtn = $("planUpgradeButton");
+  if (planUpgradeBtn) {
+    planUpgradeBtn.addEventListener("click", function () {
+      window.location.href = "https://cliniflow-backend-clean-production.up.railway.app/pricing.html";
+    });
+  }
 
   $("clinicForm").addEventListener("submit", async (e) => {
     console.log("🚀 SAVE CLICKED - Form submit triggered!");
@@ -611,16 +773,25 @@
         return;
       }
 
+      initClinicCountrySelect();
+      const countryVal = ($("clinicCountry")?.value || "").trim().toUpperCase();
+      if (!countryVal) {
+        alert("Please select a country.");
+        $("clinicCountry")?.focus();
+        return;
+      }
+
       const cityVal = ($("clinicCity")?.value || "").trim();
       if (!cityVal) {
-        alert("Şehir alanı zorunludur. Lütfen şehir girin.");
+        alert("City is required.");
         $("clinicCity")?.focus();
         return;
       }
 
       const payload = {
-        plan: normalizePlanValue(($("plan") ? $("plan").value : "") || clinicPlan || "FREE"),
+        plan: normalizePlanValue(clinicPlan || "FREE"),
         referral_discount_percent: $("referralDiscountPercent").value.trim(),
+        country: countryVal,
         city: cityVal,
         address: $("clinicAddress")?.value.trim() || undefined,
         // 🎯 Eski referral sistemi için settings
@@ -639,7 +810,6 @@
       delete payload.clinicId;
       
       console.log("Submitting payload with plan:", payload.plan);
-      console.log("Dropdown value:", $("plan")?.value);
       console.log("clinicPlan variable:", clinicPlan);
       console.log("Complete payload being sent:", JSON.stringify(payload, null, 2));
       console.log("Referral discount from input:", $("referralDiscountPercent").value.trim());
@@ -707,6 +877,12 @@
 
   // Load settings on page load
   loadClinicSettings();
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") {
+      loadClinicSettings();
+    }
+  });
 
   // ================== TREATMENT PRICE LIST ==================
 

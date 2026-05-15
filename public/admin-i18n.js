@@ -1,9 +1,124 @@
-// Admin Panel i18n System
+// Admin Panel i18n — use window.AdminI18n.* only for admin_lang. Dev: ?adminI18nDev=1 blocks rogue localStorage writes; ?adminI18nValidate=1 logs EN vs TR/RU/KA section parity.
 (function() {
   'use strict';
 
+  if (window.__cliniflowI18nModuleRan) {
+    console.warn('⚠️ i18n already initialized, skipping duplicate load');
+    return;
+  }
+  window.__cliniflowI18nModuleRan = true;
+  console.log('I18N INIT RUN', Date.now());
+  console.log('I18N FILE VERSION:', 'v27');
+
   // Reentrancy guard to prevent update recursion (stack overflow)
   let isUpdatingI18n = false;
+
+  var ADMIN_LANG_ALLOWED = new Set(['tr', 'en', 'ru', 'ka']);
+  var ADMIN_LANG_STORAGE_KEY = 'admin_lang';
+
+  /** Normalize tags like en-US, EN, ru_RU → tr|en|ru|ka (never browser navigator — admin UI is explicit). */
+  function normalizeAdminLang(raw) {
+    var s = String(raw == null ? '' : raw).trim().toLowerCase().replace(/_/g, '-');
+    if (!s) return 'en';
+    var base = s.split('-')[0];
+    return ADMIN_LANG_ALLOWED.has(base) ? base : 'en';
+  }
+
+  /** Single read path for persisted admin UI language (normalized). */
+  function readAdminLangStorage() {
+    try {
+      return normalizeAdminLang(localStorage.getItem(ADMIN_LANG_STORAGE_KEY) || 'en');
+    } catch (e) {
+      return 'en';
+    }
+  }
+
+  /** Only writeAdminLangStorage may set localStorage admin_lang (dev guard enforces this on localhost). */
+  var _allowAdminLangWrite = false;
+
+  /** Single write path for localStorage — use only from i18n.setLanguage / init canonicalization. */
+  function writeAdminLangStorage(raw) {
+    var norm = normalizeAdminLang(raw);
+    try {
+      _allowAdminLangWrite = true;
+      localStorage.setItem(ADMIN_LANG_STORAGE_KEY, norm);
+    } catch (e) {
+      /* quota / private mode */
+    } finally {
+      _allowAdminLangWrite = false;
+    }
+    return norm;
+  }
+
+  /** localhost / ?adminI18nDev=1 — warn and ignore rogue writes to admin_lang */
+  function installAdminLangStorageGuard() {
+    try {
+      var h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+      var dev =
+        h === 'localhost' ||
+        h === '127.0.0.1' ||
+        h === '::1' ||
+        (typeof location !== 'undefined' && /[?&]adminI18nDev=1(?:&|$)/.test(location.search || ''));
+      if (!dev || typeof localStorage === 'undefined') return;
+      var orig = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = function (key, val) {
+        if (key === ADMIN_LANG_STORAGE_KEY && !_allowAdminLangWrite) {
+          console.warn(
+            '[AdminI18n] Ignored direct localStorage.setItem("' +
+              ADMIN_LANG_STORAGE_KEY +
+              '"). Use AdminI18n.setLanguage() or window.i18n.setLanguage().',
+          );
+          return;
+        }
+        return orig(key, val);
+      };
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  installAdminLangStorageGuard();
+
+  const DASHBOARD_SIDEBAR_I18N = {
+    mainMenu: { en: 'Main Menu', tr: 'Ana Menü', ru: 'Главное меню', ka: 'მთავარი მენიუ' },
+    management: { en: 'Management', tr: 'Yönetim', ru: 'Управление', ka: 'მართვა' },
+    logout: { en: 'Logout', tr: 'Çıkış', ru: 'Выход', ka: 'გასვლა' },
+    clinic: { en: 'Clinic', tr: 'Klinik', ru: 'Клиника', ka: 'კლინიკა' }
+  };
+
+  function validateTranslations(dict) {
+    if (!dict || typeof dict !== 'object') return;
+    Object.keys(dict).forEach((key) => {
+      const entry = dict[key];
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        ['en', 'tr', 'ru', 'ka'].forEach((lang) => {
+          if (entry[lang] == null || String(entry[lang]).trim() === '') {
+            console.warn('Missing translation:', key, lang);
+          }
+        });
+      }
+    });
+  }
+
+  try {
+    validateTranslations(DASHBOARD_SIDEBAR_I18N);
+  } catch (e) {
+    /* ignore */
+  }
+
+  function clearStaleNavTextNodes() {
+    if (typeof document === 'undefined' || !document.querySelectorAll) return;
+    try {
+      document.querySelectorAll('*').forEach(function (el) {
+        if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
+          const txt = el.textContent.trim();
+          if (txt === 'Main Menu' || txt === 'Takvim') {
+            el.textContent = '';
+          }
+        }
+      });
+    } catch (e) { /* no-op */ }
+  }
 
   const translations = {
     tr: {
@@ -26,7 +141,41 @@
         ok: "Tamam",
         error: "Hata",
         success: "Başarılı",
-        warning: "Uyarı"
+        warning: "Uyarı",
+        doctor: "Doktor"
+      },
+
+      adminPages: {
+        travelH1: "✈️ Clinifly Admin – Travel",
+        travelGlobalWarning: "⚠️ UYARI: Hasta tarafından doldurulacak alan(lar) var. Aşağıdaki uyarıları kontrol edin.",
+        travelWordHotel: "Otel",
+        travelWordFlights: "Uçuş",
+        travelListSeparator: " ve ",
+        travelDynamicWarning: "⚠️ UYARI: {list} bilgilerini hasta dolduracak. Bu alanları değiştiremezsiniz. Hasta mobil uygulamadan bu bilgileri girecek.",
+        healthH1: "🩺 Clinifly Admin – Health",
+        doctorApplicationsH1: "Doktor Başvuruları",
+        doctorAppsStatPending: "Beklemede",
+        doctorAppsStatApproved: "Onaylı",
+        doctorAppsStatRejected: "Reddedildi",
+        doctorAppsStatTotal: "Toplam",
+        doctorAppsLoading: "Doktorlar yükleniyor...",
+        doctorAppsEmptyTitle: "Henüz doktor bulunmuyor",
+        doctorAppsEmptyDesc: "Doktor başvurusu henüz yapılmadı.",
+        activePatientsH1: "👨‍⚕️ Aktif Hastalar",
+        activePatientsStatActive: "Aktif Hasta",
+        activePatientsStatPending: "Bekleyen Hasta",
+        activePatientsStatTotal: "Toplam Hasta",
+        activePatientsStatClinic: "Klinik Sayısı",
+        activePatientsSearchPlaceholder: "Hasta adı, email veya telefon ile ara...",
+        activePatientsAllClinics: "Tüm Klinikler",
+        activePatientsRefresh: "🔄 Yenile",
+        activePatientsLoading: "🔄 Yükleniyor...",
+        activePatientsEmpty: "Henüz aktif hasta bulunmuyor",
+        treatmentCreateH1: "🏥 Treatment Oluştur",
+        treatmentCreateSubtitle: "Yeni tedavi grubu oluşturun ve doktor atayın",
+        patientDetailH1: "Hasta Detay",
+        patientDetailBack: "Geri",
+        legacyNavClinics: "Klinikler"
       },
       
       // Suspended Clinic Messages
@@ -49,6 +198,12 @@
       // Dashboard (admin.html)
       dashboard: {
         title: "Clinifly Admin – Dashboard",
+        sidebar: {
+          mainMenu: "Ana Menü",
+          management: "Yönetim",
+          logout: "Çıkış",
+          clinic: "Klinik"
+        },
         nav: {
           dashboard: "Dashboard",
           patients: "Hastalar",
@@ -57,6 +212,7 @@
           schedule: "Takvim",
           doctors: "Doktorlar",
           chat: "Mesajlar",
+          leads: "Potansiyel / Atanmamış",
           files: "Dosyalar",
           referrals: "Referanslar",
           health: "Sağlık",
@@ -64,13 +220,10 @@
           login: "Login",
           register: "Klinik Kaydı"
         },
-        sidebar: {
-          mainMenu: "Ana Menü",
-          management: "Yönetim",
-          logout: "Çıkış Yap",
-          clinic: "Klinik"
-        },
         charts: {
+          metricTitleMonthlyPatients: "Aylık Kaydolan Hasta Sayısı",
+          metricTitleMonthlyProcedures: "Aylık İşlem Sayısı",
+          chartLabelMonthlyRegistered: "Aylık kayıt",
           activePatients: "Aktif Hastalar",
           procedures: "Prosedürler",
           noData: "Veri yok",
@@ -78,6 +231,7 @@
           vsPreviousMonth: "önceki aya göre",
           noPreviousData: "Önceki veri yok",
           summaryActivePatients: "{count} aktif hasta • {month}",
+          summaryMonthlyRegistered: "{count} kayıt • {month}",
           summaryProcedures: "{count} prosedür • {month}"
         },
         clinicBadge: {
@@ -124,30 +278,74 @@
             patients: "hasta",
             events: "etkinlik"
           }
-        }
+        },
+        planUsage: "Plan ve kullanım",
+        activeTreatments: "Aktif tedaviler",
+        monthlyUploads: "Aylık yüklemeler",
+        referralInvites: "Referans davetleri",
+        upgrade: "Yükselt",
+        unlimited: "Sınırsız",
+        planAlertCrit: "Limite ulaşıldı. Devam etmek için yükseltin.",
+        planAlertWarn: "Limitinize yaklaştınız",
+        planTierTitle: "Mevcut abonelik seviyesi",
+        confirmOpenPricing: "Fiyatlandırma sayfası açılsın mı?\n\n{url}",
+        metricsErrorHint: "Ayrıntılar için tarayıcı konsoluna (F12) bakın"
+      },
+      
+      calendar: {
+        documentTitle: "Takvim - Clinifly Admin",
+        pageTitle: "Randevu Takvimi",
+        title: "Randevu Takvimi",
+        weekRangeTitle: "Hafta aralığı",
+        today: "Bugün",
+        week: "Hafta",
+        month: "Ay",
+        prev: "← Önceki",
+        previous: "← Önceki",
+        next: "Sonraki →",
+        timeColumn: "Saat",
+        doctor: "Doktor",
+        chair: "Koltuk",
+        allDoctors: "Tüm Doktorlar",
+        allChairs: "Tüm Koltuklar",
+        noEvents: "Etkinlik yok",
+        noAppointmentsForWeek: "Seçili hafta için randevu bulunamadı.",
+        noAppointmentsForRange: "Seçili dönem için randevu bulunamadı.",
+        summaryLine: "{count} randevu • {doctorCount} doktor • {chairCount} koltuk",
+        loading: "Yükleniyor...",
+        tokenMissing: "Admin token bulunamadı. Tekrar giriş yapın.",
+        sessionExpired: "Oturum süresi doldu. Giriş sayfasına yönlendiriliyorsunuz...",
+        fetchFailed: "Randevular alınamadı: {message}",
+        doctorNotFound: "Doktor bulunamadı",
+        chairWithNumber: "Koltuk {n}"
       },
       
       // Pricing (pricing.html)
       pricing: {
         title: "Clinifly Fiyatlandırma",
         subtitle: "Aktif hasta sayınıza göre esnek planlar",
-        info: "Planlar <span class=\"highlight\">aktif hasta sayısına</span> göre belirlenir. Mevcut hastalarınızla çalışmaya devam edebilirsiniz.",
+        info: "Sadece aktif hasta sayınıza göre ödeme yapın.",
         free: {
           name: "Free",
+          patients: "5 Hasta",
           description: "Clinifly'i gerçek hastalarla denemeniz için.",
           cta: "Başla"
         },
         basic: {
-          name: "Basic",
+          name: "Pro",
           badge: "Popüler",
-          description: "Günlük hasta iletişimi olan klinikler için ideal.",
+          patients: "15 Hasta",
+          description: "Büyüyen klinikler için güçlü paket.",
           cta: "Upgrade Et"
         },
         pro: {
-          name: "Pro",
-          description: "Büyüyen klinikler için limitsiz kullanım.",
-          cta: "İletişime Geç"
+          name: "Premium",
+          patients: "Sınırsız hasta",
+          description: "Kurumsal klinikler için premium destek.",
+          cta: "Upgrade Et",
+          contactCta: "İletişime Geç"
         },
+        periodMonthly: "/ay",
         features: {
           allCore: "Tüm core özellikler",
           patientCommunication: "Hasta iletişimi",
@@ -165,8 +363,8 @@
         comparison: {
           feature: "Özellik",
           free: "Free",
-          basic: "Basic",
-          pro: "Pro",
+          basic: "Pro",
+          pro: "Premium",
           patients: "Aktif Hasta Sayısı",
           unlimited: "Sınırsız",
           coreFeatures: "Core Özellikler",
@@ -309,7 +507,7 @@
         inlineChairPh: "Chair No",
         inlineDoctorPick: "-- Doktor Seç --",
         deleteTitle: "Sil",
-        selToothHintActive: "Dişe tıkla, işlem ekle.",
+        selToothHintActive: "Diş seçin",
         status: {
           PLANNED: "Planlandı",
           ACTIVE: "Devam Ediyor",
@@ -342,6 +540,13 @@
         },
         success: "Hoş geldiniz {name}! Giriş başarılı.",
         sessionExpired: "⏰ Oturum süreniz doldu veya token geçersiz. Lütfen tekrar giriş yapın."
+      },
+
+      auth: {
+        email: "E-posta",
+        password: "Şifre",
+        confirm_password: "Şifreyi doğrula",
+        name: "Ad soyad",
       },
       
       // Register (admin-register.html)
@@ -387,7 +592,7 @@
           registerFailed: "Kayıt başarısız. Lütfen tekrar deneyin.",
           genericError: "Kayıt hatası: {error}",
           termsNotAccepted: "Lütfen hizmet sözleşmesini kabul edin.",
-          timeout: "⏳ Sunucu başlatılıyor, lütfen birkaç saniye bekleyip tekrar deneyin."
+          timeout: "İstek zaman aşımı (60 sn). API adresi ve internet bağlantısını kontrol edin."
         },
         success: "Klinik kaydı başarılı! Giriş sayfasına yönlendiriliyorsunuz...",
         successTitle: "Kayıt Başarılı!",
@@ -413,10 +618,12 @@
         clinicName: "Clinic Name",
         clinicLogoUrl: "Clinic Logo URL",
         clinicLogoUrlHelp: "Pro plan için logo görüntülenir",
+        chairCountLabel: "Koltuk sayısı",
+        chairCountHelp: "Randevu ekranında gösterilecek koltuk sayısı (örn: 1, 2, 3).",
         address: "Clinic Address",
-        addressHelp: "Pro plan için hasta ekranında görüntülenir",
+        addressHelp: "Zorunlu (tüm planlar). Yakındaki klinik araması ve konum; adres Google ile geocode edilir.",
         googleMapLink: "Google Maps Link",
-        googleMapLinkHelp: "Pro plan için hasta ekranında görüntülenir",
+        googleMapLinkHelp: "İsteğe bağlı (tüm planlar). Varsa bağlantıdan koordinat alınır; yoksa yalnızca adres kullanılır.",
         welcomeMessage: "Welcome Message",
         primaryColor: "Primary Color (Hex)",
         secondaryColor: "Secondary Color (Hex)",
@@ -468,6 +675,7 @@
         },
         success: "✅ Ayarlar başarıyla kaydedildi!",
         categoryLabels: {
+          EVENTS: "Muayene / Görüntüleme",
           PROSTHETIC: "Prosthetic (Protez)",
           RESTORATIVE: "Restorative (Restoratif)",
           ENDODONTIC: "Endodontic (Endodontik)",
@@ -481,7 +689,9 @@
           duration: "Süre (dk)",
           breakMin: "Mola (dk)",
           active: "Aktif"
-        }
+        },
+        recommendedDuration: "~{minutes} dk",
+        minutes: "dk"
       },
 
       // Patients (admin-patients.html)
@@ -593,7 +803,131 @@
         badgeXray: "Röntgen",
         badgePdf: "PDF",
         badgeFile: "Dosya",
-        badgeChat: "Chat"
+        badgeChat: "Chat",
+        download: "İndir"
+      },
+      doctorListV2: {
+        pageTitle: "👨‍⚕️ Doktorlar",
+        documentTitle: "Doktorlar - Clinifly Admin",
+        statPending: "Bekleyen",
+        statApproved: "Onaylı",
+        statRejected: "Reddedilen",
+        statTotal: "Toplam",
+        searchPlaceholder: "Ad, email veya telefon ara...",
+        filterAll: "Tüm Durumlar",
+        filterOptionPending: "Bekleyen",
+        filterOptionApproved: "Onaylanan",
+        filterOptionActive: "Aktif",
+        filterOptionRejected: "Reddedilen",
+        refresh: "↺ Yenile",
+        loading: "Yükleniyor...",
+        empty: "Henüz doktor kaydı bulunmuyor.",
+        errorHttp: "HTTP {status}",
+        errorLoad: "Yüklenemedi",
+        sectionProfessional: "Mesleki",
+        labelExperience: "Deneyim",
+        labelUniversity: "Üniversite",
+        labelGraduation: "Mezuniyet",
+        labelProfile: "Profil",
+        labelBio: "Bio",
+        profilePublic: "🌐 Açık",
+        profilePrivate: "🔒 Gizli",
+        sectionSpecialty: "Uzmanlık",
+        sectionLanguages: "Diller",
+        sectionProcedures: "Prosedürler",
+        notSpecified: "Belirtilmedi",
+        yearsCount: "{years} yıl",
+        dash: "—",
+        status: {
+          PENDING: "Bekleyen",
+          APPROVED: "Onaylı",
+          ACTIVE: "Aktif",
+          REJECTED: "Reddedildi"
+        },
+        btnApprove: "✅ Onayla",
+        btnReject: "❌ Reddet",
+        confirmApprove: "Bu doktoru onaylamak istediğinizden emin misiniz?",
+        confirmReject: "Bu başvuruyu reddetmek istediğinizden emin misiniz?",
+        approvedAlert: "✅ Doktor onaylandı!",
+        rejectedAlert: "Başvuru reddedildi.",
+        errorGeneric: "Hata"
+      },
+      chat: {
+        documentTitle: "Sohbet - Clinifly Admin",
+        pageHeading: "💬 Clinifly Admin – Sohbet",
+        title: "Mesajlar",
+        patientsHeading: "Hastalar",
+        loading: "Yükleniyor...",
+        selectPatient: "Bir hasta seçin",
+        noPatients: "Henüz hasta yok",
+        unnamed: "İsimsiz",
+        placeholder: "Mesaj yazın...",
+        send: "Gönder",
+        sending: "Gönderiliyor...",
+        noMessages: "Henüz mesaj yok",
+        newMessage: "Yeni mesaj",
+        youJoined: "Sohbete katıldınız",
+        photo: "Fotoğraf",
+        file: "Dosya",
+        photoFile: "📷 Foto",
+        fileAttach: "📎 Dosya",
+        download: "İndir",
+        uploadHelp: "Desteklenen formatlar: JPG, PNG, HEIC (max 10MB) • PDF/DOC/DOCX/TXT/XLS/XLSX (max 20MB) • ZIP (max 50MB)",
+        sentOk: "✓ Gönderildi",
+        uploadError: "✗ Hata",
+        errNoToken: "❌ Admin token bulunamadı. Lütfen önce giriş yapın.",
+        errTokenList: "Admin token gerekli",
+        errAuth: "❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.",
+        errAuthShort: "❌ Yetkilendirme hatası",
+        errUnknown: "Bilinmeyen hata",
+        errLoadList: "❌ Hasta listesi yüklenemedi: {message}",
+        errLoadMessages: "Mesajlar yüklenemedi",
+        errLoadMessagesFull: "❌ Mesajlar yüklenemedi: {message}",
+        errSelectFirst: "❌ Lütfen önce hasta seçin",
+        errNoTokenSend: "❌ Admin token bulunamadı",
+        errSend: "Mesaj gönderilemedi",
+        errSendFull: "❌ Mesaj gönderilemedi: {message}",
+        errFileUpload: "❌ Dosya gönderilemedi: {message}",
+        errSession: "❌ Oturum süreniz dolmuş. Lütfen sayfayı yenileyip tekrar giriş yapın.",
+        errForbidden: "❌ Bu dosya tipi desteklenmiyor: {ext}. RAR ve çalıştırılabilir dosyalar yasaktır.",
+        errMime: "❌ Dosya tipi belirlenemedi. Lütfen farklı bir dosya deneyin.",
+        errImageFmt: "❌ Desteklenen formatlar: JPG, PNG, HEIC – Max 10MB",
+        errDocFmt: "❌ Desteklenen formatlar: PDF, DOC/DOCX, TXT, XLS/XLSX, ZIP",
+        errPhotoSize: "❌ Fotoğraf boyutu 10MB'dan küçük olmalıdır.",
+        errZipSize: "❌ ZIP dosyası 50MB'dan küçük olmalıdır.",
+        errDocSize: "❌ Doküman 20MB'dan küçük olmalıdır.",
+        errSelectPatient: "❌ Lütfen önce bir hasta seçin",
+        before: "Önce",
+        after: "Sonra",
+        doctorReview: "👨‍⚕️ Doktor incelemesi",
+        defaultClinic: "Klinik",
+        defaultPhoto: "Fotoğraf",
+        defaultFile: "Dosya",
+        navClinicSettings: "Klinik Ayarları",
+        patientAssignedBanner: "Bu hasta Dr. {doctorName}'e atandı",
+      },
+      leads: {
+        documentTitle: "Mesajlar / Potansiyel / Atanmamış — Clinifly Admin",
+        pageTitle: "Mesajlar / Potansiyel / Atanmamış talepler",
+        subtitle: "Her talebi tam olarak bir doktora atayın. Sadece o doktor sohbeti doktor uygulamasında görür.",
+        backDashboard: "← Panel",
+        refreshList: "Listeyi yenile",
+        statusLoading: "Yükleniyor…",
+        statusUnassigned: "{count} atanmamış",
+        thPatient: "Hasta",
+        thContact: "İletişim",
+        thPreview: "Önizleme",
+        thAssign: "Doktor ata",
+        empty: "Atanmamış talep mesajı yok.",
+        selectDoctor: "Doktor seçin…",
+        assign: "Ata",
+        errChooseDoctor: "Önce bir doktor seçin.",
+        successAssigned: "Başarıyla atandı.",
+        errLoad: "Yükleme hatası",
+        showAssignedToggle: "Atanmışları da göster",
+        assignedBadgePrefix: "Dr.",
+        assignedOk: "Atandı:",
+        assignDisabledHint: "Önce bu atamayı kaldırmak için destek veya doktor uygulamasını kullanın.",
       }
     },
 
@@ -617,7 +951,41 @@
         ok: "OK",
         error: "Error",
         success: "Success",
-        warning: "Warning"
+        warning: "Warning",
+        doctor: "Doctor"
+      },
+
+      adminPages: {
+        travelH1: "✈️ Clinifly Admin – Travel",
+        travelGlobalWarning: "⚠️ WARNING: Some fields are reserved for the patient. Review the notes below.",
+        travelWordHotel: "Hotel",
+        travelWordFlights: "Flights",
+        travelListSeparator: " and ",
+        travelDynamicWarning: "⚠️ WARNING: The patient will enter {list} details. You cannot edit these fields. The patient will complete them in the mobile app.",
+        healthH1: "🩺 Clinifly Admin – Health",
+        doctorApplicationsH1: "Doctor applications",
+        doctorAppsStatPending: "Pending",
+        doctorAppsStatApproved: "Approved",
+        doctorAppsStatRejected: "Rejected",
+        doctorAppsStatTotal: "Total",
+        doctorAppsLoading: "Loading doctors...",
+        doctorAppsEmptyTitle: "No doctors yet",
+        doctorAppsEmptyDesc: "No doctor application has been submitted yet.",
+        activePatientsH1: "👨‍⚕️ Active patients",
+        activePatientsStatActive: "Active patients",
+        activePatientsStatPending: "Pending patients",
+        activePatientsStatTotal: "Total patients",
+        activePatientsStatClinic: "Clinics",
+        activePatientsSearchPlaceholder: "Search by name, email or phone...",
+        activePatientsAllClinics: "All clinics",
+        activePatientsRefresh: "🔄 Refresh",
+        activePatientsLoading: "🔄 Loading...",
+        activePatientsEmpty: "No active patients yet",
+        treatmentCreateH1: "🏥 Create treatment",
+        treatmentCreateSubtitle: "Create a new treatment group and assign doctors",
+        patientDetailH1: "Patient detail",
+        patientDetailBack: "Back",
+        legacyNavClinics: "Clinics"
       },
       
       // Suspended Clinic Messages
@@ -640,14 +1008,21 @@
       // Dashboard (admin.html)
       dashboard: {
         title: "Clinifly Admin – Dashboard",
+        sidebar: {
+          mainMenu: "Main Menu",
+          management: "Management",
+          logout: "Logout",
+          clinic: "Clinic"
+        },
         nav: {
           dashboard: "Dashboard",
           patients: "Patients",
           travel: "Travel",
           treatment: "Treatments",
-          schedule: "Calendar",
+          schedule: "Schedule",
           doctors: "Doctors",
-          chat: "Messages",
+          chat: "Chat",
+          leads: "Leads",
           files: "Files",
           referrals: "Referrals",
           health: "Health",
@@ -655,13 +1030,10 @@
           login: "Login",
           register: "Register Clinic"
         },
-        sidebar: {
-          mainMenu: "Main Menu",
-          management: "Management",
-          logout: "Logout",
-          clinic: "Clinic"
-        },
         charts: {
+          metricTitleMonthlyPatients: "Monthly registered patients",
+          metricTitleMonthlyProcedures: "Monthly procedure count",
+          chartLabelMonthlyRegistered: "Monthly registrations",
           activePatients: "Active Patients",
           procedures: "Procedures",
           noData: "No data",
@@ -669,6 +1041,7 @@
           vsPreviousMonth: "vs previous month",
           noPreviousData: "No previous data",
           summaryActivePatients: "{count} active patients • {month}",
+          summaryMonthlyRegistered: "{count} registered • {month}",
           summaryProcedures: "{count} procedures • {month}"
         },
         clinicBadge: {
@@ -715,30 +1088,74 @@
             patients: "patients",
             events: "events"
           }
-        }
+        },
+        planUsage: "Plan & usage",
+        activeTreatments: "Active treatments",
+        monthlyUploads: "Monthly uploads",
+        referralInvites: "Referral invites",
+        upgrade: "Upgrade",
+        unlimited: "Unlimited",
+        planAlertCrit: "Limit reached. Upgrade to continue.",
+        planAlertWarn: "You are close to your limit",
+        planTierTitle: "Current subscription tier",
+        confirmOpenPricing: "Open pricing page?\n\n{url}",
+        metricsErrorHint: "Check browser console (F12) for details"
+      },
+      
+      calendar: {
+        documentTitle: "Calendar - Clinifly Admin",
+        pageTitle: "Appointments",
+        title: "Appointments",
+        weekRangeTitle: "Week range",
+        today: "Today",
+        week: "Week",
+        month: "Month",
+        prev: "← Previous",
+        previous: "← Previous",
+        next: "Next →",
+        timeColumn: "Time",
+        doctor: "Doctor",
+        chair: "Chair",
+        allDoctors: "All doctors",
+        allChairs: "All chairs",
+        noEvents: "No events",
+        noAppointmentsForWeek: "No appointments for the selected week.",
+        noAppointmentsForRange: "No appointments in the selected range.",
+        summaryLine: "{count} appts • {doctorCount} doctors • {chairCount} chairs",
+        loading: "Loading...",
+        tokenMissing: "Admin token not found. Please sign in again.",
+        sessionExpired: "Session expired. Redirecting to sign-in...",
+        fetchFailed: "Could not load appointments: {message}",
+        doctorNotFound: "No doctor found",
+        chairWithNumber: "Chair {n}"
       },
       
       // Pricing (pricing.html)
       pricing: {
         title: "Clinifly Pricing",
         subtitle: "Flexible plans based on your active patient count",
-        info: "Plans are based on <span class=\"highlight\">active patient count</span>. You can continue working with your existing patients.",
+        info: "Pay only based on your active patient count.",
         free: {
           name: "Free",
+          patients: "5 patients",
           description: "Try Clinifly with real patients.",
           cta: "Get Started"
         },
         basic: {
-          name: "Basic",
+          name: "Pro",
           badge: "Popular",
-          description: "Ideal for clinics with daily patient communication.",
+          patients: "15 patients",
+          description: "Powerful package for growing clinics.",
           cta: "Upgrade"
         },
         pro: {
-          name: "Pro",
-          description: "Unlimited usage for growing clinics.",
-          cta: "Contact Us"
+          name: "Premium",
+          patients: "Unlimited patients",
+          description: "Premium support for enterprise clinics.",
+          cta: "Upgrade",
+          contactCta: "Contact Us"
         },
+        periodMonthly: "/month",
         features: {
           allCore: "All core features",
           patientCommunication: "Patient communication",
@@ -756,8 +1173,8 @@
         comparison: {
           feature: "Feature",
           free: "Free",
-          basic: "Basic",
-          pro: "Pro",
+          basic: "Pro",
+          pro: "Premium",
           patients: "Active Patients",
           unlimited: "Unlimited",
           coreFeatures: "Core Features",
@@ -900,7 +1317,7 @@
         inlineChairPh: "Chair No",
         inlineDoctorPick: "-- Select doctor --",
         deleteTitle: "Delete",
-        selToothHintActive: "Click a tooth to add a procedure.",
+        selToothHintActive: "Select a tooth",
         status: {
           PLANNED: "Planned",
           ACTIVE: "In progress",
@@ -933,6 +1350,13 @@
         },
         success: "Welcome {name}! Login successful.",
         sessionExpired: "⏰ Your session has expired or the token is invalid. Please log in again."
+      },
+
+      auth: {
+        email: "Email",
+        password: "Password",
+        confirm_password: "Confirm password",
+        name: "Full name",
       },
       
       // Register (admin-register.html)
@@ -978,7 +1402,7 @@
           registerFailed: "Registration failed. Please try again.",
           genericError: "Registration error: {error}",
           termsNotAccepted: "Please accept the service agreement.",
-          timeout: "⏳ Server is starting up, please wait a moment and try again."
+          timeout: "Request timed out (60s). Check API URL and your network connection."
         },
         success: "Clinic registration successful! Redirecting to login page...",
         successTitle: "Registration Successful!",
@@ -1016,10 +1440,12 @@
         clinicName: "Clinic Name",
         clinicLogoUrl: "Clinic Logo URL",
         clinicLogoUrlHelp: "Logo will be displayed for Pro plan",
+        chairCountLabel: "Chair count",
+        chairCountHelp: "Number of chairs to show on the appointment calendar (e.g. 1, 2, 3).",
         address: "Clinic Address",
-        addressHelp: "Will be displayed on patient screen for Pro plan",
+        addressHelp: "Required (all plans). Used for nearby search and pinning; address is geocoded via Google.",
         googleMapLink: "Google Maps Link",
-        googleMapLinkHelp: "Will be displayed on patient screen for Pro plan",
+        googleMapLinkHelp: "Optional (all plans). If set, coordinates are parsed from the link; otherwise the address above is used.",
         primaryColor: "Primary Color (Hex)",
         secondaryColor: "Secondary Color (Hex)",
         welcomeMessage: "Welcome Message",
@@ -1063,6 +1489,7 @@
         },
         success: "✅ Settings saved successfully!",
         categoryLabels: {
+          EVENTS: "Events / Imaging",
           PROSTHETIC: "Prosthetic (Protez)",
           RESTORATIVE: "Restorative (Restoratif)",
           ENDODONTIC: "Endodontic (Endodontik)",
@@ -1076,7 +1503,9 @@
           duration: "Duration (min)",
           breakMin: "Break (min)",
           active: "Active"
-        }
+        },
+        recommendedDuration: "~{minutes} min",
+        minutes: "min"
       },
 
       // Patients (admin-patients.html)
@@ -1188,8 +1617,132 @@
         badgeXray: "X-Ray",
         badgePdf: "PDF",
         badgeFile: "File",
-        badgeChat: "Chat"
-      }
+        badgeChat: "Chat",
+        download: "Download"
+      },
+      doctorListV2: {
+        pageTitle: "👨‍⚕️ Doctors",
+        documentTitle: "Doctors - Clinifly Admin",
+        statPending: "Pending",
+        statApproved: "Approved",
+        statRejected: "Rejected",
+        statTotal: "Total",
+        searchPlaceholder: "Search by name, email or phone...",
+        filterAll: "All statuses",
+        filterOptionPending: "Pending",
+        filterOptionApproved: "Approved",
+        filterOptionActive: "Active",
+        filterOptionRejected: "Rejected",
+        refresh: "↺ Refresh",
+        loading: "Loading...",
+        empty: "No doctor records yet.",
+        errorHttp: "HTTP {status}",
+        errorLoad: "Failed to load",
+        sectionProfessional: "Professional",
+        labelExperience: "Experience",
+        labelUniversity: "University",
+        labelGraduation: "Graduation",
+        labelProfile: "Profile",
+        labelBio: "Bio",
+        profilePublic: "🌐 Public",
+        profilePrivate: "🔒 Private",
+        sectionSpecialty: "Specialty",
+        sectionLanguages: "Languages",
+        sectionProcedures: "Procedures",
+        notSpecified: "Not specified",
+        yearsCount: "{years} yrs",
+        dash: "—",
+        status: {
+          PENDING: "Pending",
+          APPROVED: "Approved",
+          ACTIVE: "Active",
+          REJECTED: "Rejected"
+        },
+        btnApprove: "✅ Approve",
+        btnReject: "❌ Reject",
+        confirmApprove: "Are you sure you want to approve this doctor?",
+        confirmReject: "Are you sure you want to reject this application?",
+        approvedAlert: "✅ Doctor approved!",
+        rejectedAlert: "Application rejected.",
+        errorGeneric: "Error"
+      },
+      chat: {
+        documentTitle: "Chat - Clinifly Admin",
+        pageHeading: "💬 Clinifly Admin – Chat",
+        title: "Messages",
+        patientsHeading: "Patients",
+        loading: "Loading...",
+        selectPatient: "Select a patient",
+        noPatients: "No patients yet",
+        unnamed: "Unnamed",
+        placeholder: "Type a message...",
+        send: "Send",
+        sending: "Sending...",
+        noMessages: "No messages yet",
+        newMessage: "New message",
+        youJoined: "You joined the chat",
+        photo: "Photo",
+        file: "File",
+        photoFile: "📷 Photo",
+        fileAttach: "📎 File",
+        download: "Download",
+        uploadHelp: "Supported: JPG, PNG, HEIC (max 10MB) • PDF/DOC/DOCX/TXT/XLS/XLSX (max 20MB) • ZIP (max 50MB)",
+        sentOk: "✓ Sent",
+        uploadError: "✗ Error",
+        errNoToken: "❌ No admin token. Please sign in first.",
+        errTokenList: "Admin token required",
+        errAuth: "❌ Authorization error. Please sign in again.",
+        errAuthShort: "❌ Authorization error",
+        errUnknown: "Unknown error",
+        errLoadList: "❌ Could not load patients: {message}",
+        errLoadMessages: "Could not load messages",
+        errLoadMessagesFull: "❌ Could not load messages: {message}",
+        errSelectFirst: "❌ Please select a patient first",
+        errNoTokenSend: "❌ No admin token",
+        errSend: "Could not send message",
+        errSendFull: "❌ Could not send message: {message}",
+        errFileUpload: "❌ Could not upload file: {message}",
+        errSession: "❌ Your session has expired. Refresh and sign in again.",
+        errForbidden: "❌ File type not allowed: {ext}. RAR and executables are blocked.",
+        errMime: "❌ Could not detect file type. Try another file.",
+        errImageFmt: "❌ Allowed: JPG, PNG, HEIC – Max 10MB",
+        errDocFmt: "❌ Allowed: PDF, DOC/DOCX, TXT, XLS/XLSX, ZIP",
+        errPhotoSize: "❌ Photo must be under 10MB",
+        errZipSize: "❌ ZIP must be under 50MB",
+        errDocSize: "❌ Document must be under 20MB",
+        errSelectPatient: "❌ Please select a patient first",
+        before: "Before",
+        after: "After",
+        doctorReview: "👨‍⚕️ Doctor review",
+        defaultClinic: "Clinic",
+        defaultPhoto: "Photo",
+        defaultFile: "File",
+        navClinicSettings: "Clinic settings",
+        patientAssignedBanner: "This patient is assigned to Dr. {doctorName}.",
+      },
+      leads: {
+        documentTitle: "Messages / Leads / Unassigned — Clinifly Admin",
+        pageTitle: "Messages / Leads / Unassigned requests",
+        subtitle: "Assign each lead to exactly one doctor. Only that doctor will see the conversation in the doctor app.",
+        backDashboard: "← Dashboard",
+        refreshList: "Refresh list",
+        statusLoading: "Loading…",
+        statusUnassigned: "{count} unassigned",
+        thPatient: "Patient",
+        thContact: "Contact",
+        thPreview: "Preview",
+        thAssign: "Assign doctor",
+        empty: "No unassigned lead messages.",
+        selectDoctor: "Select doctor…",
+        assign: "Assign",
+        errChooseDoctor: "Choose a doctor first.",
+        successAssigned: "Assigned successfully.",
+        errLoad: "Load error",
+        showAssignedToggle: "Show assigned threads",
+        assignedBadgePrefix: "Dr.",
+        assignedOk: "Assigned:",
+        assignDisabledHint: "This lead is already assigned to a doctor.",
+      },
     },
 
     ru: {
@@ -1197,13 +1750,54 @@
         loading: "Загрузка...", save: "Сохранить", cancel: "Отмена", delete: "Удалить",
         edit: "Редактировать", search: "Поиск", filter: "Фильтр", close: "Закрыть",
         back: "Назад", next: "Далее", previous: "Предыдущий", submit: "Отправить",
-        yes: "Да", no: "Нет", ok: "ОК", error: "Ошибка", success: "Успешно", warning: "Предупреждение"
+        yes: "Да", no: "Нет", ok: "ОК", error: "Ошибка", success: "Успешно", warning: "Предупреждение",
+        doctor: "Врач"
+      },
+      adminPages: {
+        travelH1: "✈️ Clinifly Admin — Поездки",
+        travelGlobalWarning: "⚠️ ВНИМАНИЕ: часть полей заполняет пациент. Проверьте подсказки ниже.",
+        travelWordHotel: "Отель",
+        travelWordFlights: "Рейсы",
+        travelListSeparator: " и ",
+        travelDynamicWarning: "⚠️ ВНИМАНИЕ: пациент заполнит данные: {list}. Эти поля нельзя менять. Пациент внесёт их в мобильном приложении.",
+        healthH1: "🩺 Clinifly Admin — Здоровье",
+        doctorApplicationsH1: "Заявки врачей",
+        doctorAppsStatPending: "Ожидают",
+        doctorAppsStatApproved: "Одобрено",
+        doctorAppsStatRejected: "Отклонено",
+        doctorAppsStatTotal: "Всего",
+        doctorAppsLoading: "Загрузка врачей...",
+        doctorAppsEmptyTitle: "Врачей пока нет",
+        doctorAppsEmptyDesc: "Заявок ещё не было.",
+        activePatientsH1: "👨‍⚕️ Активные пациенты",
+        activePatientsStatActive: "Активные",
+        activePatientsStatPending: "В ожидании",
+        activePatientsStatTotal: "Всего пациентов",
+        activePatientsStatClinic: "Клиник",
+        activePatientsSearchPlaceholder: "Поиск по имени, email или телефону...",
+        activePatientsAllClinics: "Все клиники",
+        activePatientsRefresh: "🔄 Обновить",
+        activePatientsLoading: "🔄 Загрузка...",
+        activePatientsEmpty: "Активных пациентов пока нет",
+        treatmentCreateH1: "🏥 Создать лечение",
+        treatmentCreateSubtitle: "Создайте группу лечения и назначьте врачей",
+        patientDetailH1: "Карта пациента",
+        patientDetailBack: "Назад",
+        legacyNavClinics: "Клиники"
       },
       dashboard: {
         title: "Clinifly Admin – Панель управления",
-        nav: { dashboard: "Панель", patients: "Пациенты", travel: "Путешествие", treatment: "Лечение", schedule: "Календарь", doctors: "Врачи", chat: "Сообщения", files: "Файлы", referrals: "Рефералы", health: "Здоровье", settings: "Настройки" },
-        sidebar: { mainMenu: "Главное меню", management: "Управление", logout: "Выйти", clinic: "Клиника" },
+        sidebar: {
+          mainMenu: "Главное меню",
+          management: "Управление",
+          logout: "Выход",
+          clinic: "Клиника"
+        },
+        nav: { dashboard: "Панель", patients: "Пациенты", travel: "Поездки", treatment: "Лечение", schedule: "Расписание", doctors: "Врачи", chat: "Чат", leads: "Лиды", files: "Файлы", referrals: "Рефералы", health: "Здоровье", settings: "Настройки" },
         charts: {
+          metricTitleMonthlyPatients: "Количество зарегистрированных пациентов по месяцам",
+          metricTitleMonthlyProcedures: "Количество процедур по месяцам",
+          chartLabelMonthlyRegistered: "Регистрации по месяцам",
           activePatients: "Активные пациенты",
           procedures: "Процедуры",
           noData: "Нет данных",
@@ -1211,6 +1805,7 @@
           vsPreviousMonth: "по сравнению с прошлым месяцем",
           noPreviousData: "Нет данных за предыдущий период",
           summaryActivePatients: "{count} активных пациентов • {month}",
+          summaryMonthlyRegistered: "{count} регистраций • {month}",
           summaryProcedures: "{count} процедур • {month}"
         },
         upcoming: {
@@ -1241,12 +1836,133 @@
             SURGERY: "Хирургия",
             CHECKUP: "Осмотр"
           }
+        },
+        planUsage: "План и использование",
+        activeTreatments: "Активные процедуры",
+        monthlyUploads: "Ежемесячные загрузки",
+        referralInvites: "Реферальные приглашения",
+        upgrade: "Повысить тариф",
+        unlimited: "Безлимит",
+        planAlertCrit: "Достигнут лимит. Повысьте тариф, чтобы продолжить.",
+        planAlertWarn: "Вы близки к лимиту",
+        planTierTitle: "Текущий тариф",
+        confirmOpenPricing: "Открыть страницу с ценами?\n\n{url}",
+        metricsErrorHint: "См. консоль браузера (F12)"
+      },
+      calendar: {
+        documentTitle: "Календарь - Clinifly Admin",
+        pageTitle: "Календарь записей",
+        title: "Календарь записей",
+        weekRangeTitle: "Диапазон недель",
+        today: "Сегодня",
+        week: "Неделя",
+        month: "Месяц",
+        prev: "← Назад",
+        previous: "← Назад",
+        next: "Вперёд →",
+        timeColumn: "Время",
+        doctor: "Врач",
+        chair: "Кресло",
+        allDoctors: "Все врачи",
+        allChairs: "Все кресла",
+        noEvents: "Нет событий",
+        noAppointmentsForWeek: "Нет записей на выбранную неделю.",
+        noAppointmentsForRange: "Нет записей в выбранном периоде.",
+        summaryLine: "{count} приёмов • {doctorCount} врачей • {chairCount} кресел",
+        loading: "Загрузка...",
+        tokenMissing: "Нет токена админа. Войдите снова.",
+        sessionExpired: "Сессия истекла. Переход к входу...",
+        fetchFailed: "Не удалось загрузить записи: {message}",
+        doctorNotFound: "Врач не найден",
+        chairWithNumber: "Кресло {n}"
+      },
+      pricing: {
+        title: "Тарифы Clinifly",
+        subtitle: "Гибкие планы по числу активных пациентов",
+        info: "Платите только за количество активных пациентов.",
+        periodMonthly: "/месяц",
+        free: {
+          name: "Free",
+          patients: "5 пациентов",
+          description: "Попробуйте Clinifly с реальными пациентами.",
+          cta: "Начать"
+        },
+        basic: {
+          name: "Pro",
+          badge: "Популярно",
+          patients: "15 пациентов",
+          description: "Сильный пакет для растущих клиник.",
+          cta: "Обновить"
+        },
+        pro: {
+          name: "Premium",
+          patients: "Безлимит пациентов",
+          description: "Премиум-поддержка для крупных клиник.",
+          cta: "Обновить",
+          contactCta: "Связаться"
+        },
+        features: {
+          allCore: "Все базовые функции",
+          patientCommunication: "Коммуникация с пациентами",
+          fileSharing: "Обмен файлами",
+          referral: "Реферальная система",
+          branding: "Брендинг Clinifly",
+          customBranding: "Кастомный брендинг",
+          analytics: "Аналитика",
+          support: "Поддержка по email",
+          unlimitedPatients: "Безлимит пациентов",
+          advancedReferral: "Расширенные рефералы (уровни, кампании)",
+          prioritySupport: "Приоритетная поддержка",
+          onboarding: "Онбординг-поддержка"
+        },
+        comparison: {
+          feature: "Функция",
+          free: "Free",
+          basic: "Pro",
+          pro: "Premium",
+          patients: "Активные пациенты",
+          unlimited: "Безлимит",
+          coreFeatures: "Базовые функции",
+          branding: "Брендинг Clinifly",
+          customBranding: "Кастомный брендинг",
+          referral: "Реферальная система",
+          advancedReferral: "Расширенные рефералы",
+          analytics: "Аналитика",
+          support: "Поддержка",
+          community: "Сообщество",
+          email: "Email",
+          priority: "Приоритетная"
+        },
+        faq: {
+          title: "Частые вопросы",
+          q1: {
+            question: "Как считается число активных пациентов?",
+            answer: "Учитываются только APPROVED (активные) пациенты. Pending, rejected и cancelled не входят в лимит."
+          },
+          q2: {
+            question: "Что будет при достижении лимита?",
+            answer: "С текущими пациентами можно продолжать работу. Ограничивается только одобрение новых пациентов."
+          },
+          q3: {
+            question: "Можно ли сменить план?",
+            answer: "Да, вы можете повысить или понизить план в любое время."
+          },
+          q4: {
+            question: "Какие способы оплаты принимаются?",
+            answer: "Мы принимаем банковские карты, банковские переводы и локальные способы оплаты."
+          }
+        },
+        contact: {
+          title: "Нужны особые условия?",
+          description: "Для крупных клиник доступны индивидуальные планы.",
+          button: "Связаться"
         }
       },
       login: { title: "Вход в Clinifly Admin", clinicCode: "Код клиники", password: "Пароль", login: "Войти", loading: "Загрузка...", error: "Ошибка входа", invalidCredentials: "Неверный код клиники или пароль.", sessionExpired: "⏰ Срок сессии истёк или токен недействителен. Пожалуйста, войдите снова." },
+      auth: { email: "Эл. почта", password: "Пароль", confirm_password: "Подтвердите пароль", name: "Имя и фамилия" },
       patients: {
         title: "Пациенты", search: "Поиск пациентов...", filter: "Фильтр",
-        filterAll: "Все", approve: "Одобрить", treatment: "Лечение", chat: "Чат", travel: "Путешествие", health: "Здоровье", files: "📁 Файлы",
+        filterAll: "Все", approve: "Одобрить", treatment: "Лечение", chat: "Чат", travel: "Поездки", health: "Здоровье", files: "📁 Файлы",
         approveConfirm: "Вы хотите одобрить пациента? ({patientId})", approveSuccess: "✅ Пациент одобрен",
         before: "До", after: "После", phone: "Телефон",
         status: { PENDING: "Ожидание", APPROVED: "Одобрено" },
@@ -1275,6 +1991,8 @@
         clinicName: "Название клиники",
         clinicLogoUrl: "URL логотипа клиники",
         clinicLogoUrlHelp: "Логотип отображается для плана Pro",
+        chairCountLabel: "Количество кресел",
+        chairCountHelp: "Сколько кресел показывать в календаре записей (напр.: 1, 2, 3).",
         address: "Адрес клиники",
         addressHelp: "Отображается на экране пациента для плана Pro",
         googleMapLink: "Ссылка Google Maps",
@@ -1326,7 +2044,17 @@
           duration: "Длительность (мин)",
           breakMin: "Перерыв (мин)",
           active: "Активно"
-        }
+        },
+        categoryLabels: {
+          EVENTS: "События",
+          PROSTHETIC: "Ортопедия",
+          RESTORATIVE: "Терапия",
+          ENDODONTIC: "Эндодонтия",
+          SURGICAL: "Хирургия",
+          IMPLANT: "Имплантация"
+        },
+        recommendedDuration: "~{minutes} мин",
+        minutes: "мин"
       },
       treatment: {
         patientName: "Имя пациента (выбор)",
@@ -1464,7 +2192,126 @@
         badgeXray: "Рентген",
         badgePdf: "PDF",
         badgeFile: "Файл",
-        badgeChat: "Чат"
+        badgeChat: "Чат",
+        download: "Скачать"
+      },
+      doctorListV2: {
+        pageTitle: "👨‍⚕️ Врачи",
+        documentTitle: "Врачи - Clinifly Admin",
+        statPending: "Ожидают",
+        statApproved: "Одобрено",
+        statRejected: "Отклонено",
+        statTotal: "Всего",
+        searchPlaceholder: "Поиск по имени, email или телефону...",
+        filterAll: "Все статусы",
+        filterOptionPending: "Ожидают",
+        filterOptionApproved: "Одобрено",
+        filterOptionActive: "Активен",
+        filterOptionRejected: "Отклонено",
+        refresh: "↺ Обновить",
+        loading: "Загрузка...",
+        empty: "Записей врачей пока нет.",
+        errorHttp: "HTTP {status}",
+        errorLoad: "Не удалось загрузить",
+        sectionProfessional: "Профессия",
+        labelExperience: "Опыт",
+        labelUniversity: "Университет",
+        labelGraduation: "Окончание",
+        labelProfile: "Профиль",
+        labelBio: "О себе",
+        profilePublic: "🌐 Открыт",
+        profilePrivate: "🔒 Скрыт",
+        sectionSpecialty: "Специализация",
+        sectionLanguages: "Языки",
+        sectionProcedures: "Процедуры",
+        notSpecified: "Не указано",
+        yearsCount: "{years} лет",
+        dash: "—",
+        status: {
+          PENDING: "Ожидает",
+          APPROVED: "Одобрено",
+          ACTIVE: "Активен",
+          REJECTED: "Отклонён"
+        },
+        btnApprove: "✅ Одобрить",
+        btnReject: "❌ Отклонить",
+        confirmApprove: "Одобрить этого врача?",
+        confirmReject: "Отклонить эту заявку?",
+        approvedAlert: "✅ Врач одобрен!",
+        rejectedAlert: "Заявка отклонена.",
+        errorGeneric: "Ошибка"
+      },
+      chat: {
+        documentTitle: "Чат - Clinifly Admin",
+        pageHeading: "💬 Clinifly Admin – Чат",
+        title: "Сообщения",
+        patientsHeading: "Пациенты",
+        loading: "Загрузка...",
+        selectPatient: "Выберите пациента",
+        noPatients: "Пациентов пока нет",
+        unnamed: "Без имени",
+        placeholder: "Введите сообщение...",
+        send: "Отправить",
+        sending: "Отправка...",
+        noMessages: "Сообщений пока нет",
+        newMessage: "Новое сообщение",
+        youJoined: "Вы вошли в чат",
+        photo: "Фото",
+        file: "Файл",
+        photoFile: "📷 Фото",
+        fileAttach: "📎 Файл",
+        download: "Скачать",
+        uploadHelp: "Допустимо: JPG, PNG, HEIC (до 10 МБ) • PDF/DOC/DOCX/TXT/XLS/XLSX (до 20 МБ) • ZIP (до 50 МБ)",
+        sentOk: "✓ Отправлено",
+        uploadError: "✗ Ошибка",
+        errNoToken: "❌ Нет токена администратора. Войдите.",
+        errTokenList: "Нужен токен администратора",
+        errAuth: "❌ Ошибка авторизации. Войдите снова.",
+        errAuthShort: "❌ Ошибка авторизации",
+        errUnknown: "Неизвестная ошибка",
+        errLoadList: "❌ Не удалось загрузить пациентов: {message}",
+        errLoadMessages: "Сообщения не загружены",
+        errLoadMessagesFull: "❌ Сообщения не загружены: {message}",
+        errSelectFirst: "❌ Сначала выберите пациента",
+        errNoTokenSend: "❌ Нет токена администратора",
+        errSend: "Не удалось отправить сообщение",
+        errSendFull: "❌ Не удалось отправить: {message}",
+        errFileUpload: "❌ Не удалось загрузить файл: {message}",
+        errSession: "❌ Сессия истекла. Обновите и войдите снова.",
+        errForbidden: "❌ Тип файла не разрешён: {ext}. RAR и исполняемые файлы запрещены.",
+        errMime: "❌ Тип файла не определён. Попробуйте другой.",
+        errImageFmt: "❌ Разрешено: JPG, PNG, HEIC – до 10 МБ",
+        errDocFmt: "❌ Разрешено: PDF, DOC/DOCX, TXT, XLS/XLSX, ZIP",
+        errPhotoSize: "❌ Фото меньше 10 МБ",
+        errZipSize: "❌ ZIP меньше 50 МБ",
+        errDocSize: "❌ Документ меньше 20 МБ",
+        errSelectPatient: "❌ Сначала выберите пациента",
+        before: "До",
+        after: "После",
+        doctorReview: "👨‍⚕️ Проверка врача",
+        defaultClinic: "Клиника",
+        defaultPhoto: "Фото",
+        defaultFile: "Файл",
+        navClinicSettings: "Настройки клиники"
+      },
+      leads: {
+        documentTitle: "Сообщения / Лиды / Без врача — Clinifly Admin",
+        pageTitle: "Сообщения / Лиды / Неназначенные обращения",
+        subtitle: "Назначьте каждое обращение ровно одному врачу. Только этот врач увидит переписку в приложении.",
+        backDashboard: "← Панель",
+        refreshList: "Обновить список",
+        statusLoading: "Загрузка…",
+        statusUnassigned: "{count} без назначения",
+        thPatient: "Пациент",
+        thContact: "Контакт",
+        thPreview: "Превью",
+        thAssign: "Назначить врача",
+        empty: "Нет неназначенных обращений.",
+        selectDoctor: "Выберите врача…",
+        assign: "Назначить",
+        errChooseDoctor: "Сначала выберите врача.",
+        successAssigned: "Назначено.",
+        errLoad: "Ошибка загрузки"
       }
     },
 
@@ -1473,13 +2320,54 @@
         loading: "იტვირთება...", save: "შენახვა", cancel: "გაუქმება", delete: "წაშლა",
         edit: "რედაქტირება", search: "ძებნა", filter: "ფილტრი", close: "დახურვა",
         back: "უკან", next: "შემდეგ", previous: "წინა", submit: "გაგზავნა",
-        yes: "დიახ", no: "არა", ok: "OK", error: "შეცდომა", success: "წარმატება", warning: "გაფრთხილება"
+        yes: "დიახ", no: "არა", ok: "OK", error: "შეცდომა", success: "წარმატება", warning: "გაფრთხილება",
+        doctor: "ექიმი"
+      },
+      adminPages: {
+        travelH1: "✈️ Clinifly Admin — მოგზაურობა",
+        travelGlobalWarning: "⚠️ ყურადღება: ნაწილი ველების შეავსებს პაციენტი. შეამოწმეთ მინიშნებები ქვემოთ.",
+        travelWordHotel: "სასტუმრო",
+        travelWordFlights: "ფრენა",
+        travelListSeparator: " და ",
+        travelDynamicWarning: "⚠️ ყურადღება: {list} შეავსებს პაციენტი. ამ ველების რედაქტირება არ შეგიძლიათ. პაციენტი შეიყვანს მობილურ აპში.",
+        healthH1: "🩺 Clinifly Admin — ჯანმრთელობა",
+        doctorApplicationsH1: "ექიმის განაცხადები",
+        doctorAppsStatPending: "მოლოდინში",
+        doctorAppsStatApproved: "დამოწმებული",
+        doctorAppsStatRejected: "უარყოფილი",
+        doctorAppsStatTotal: "სულ",
+        doctorAppsLoading: "ექიმების ჩატვირთვა...",
+        doctorAppsEmptyTitle: "ექიმები ჯერ არ არის",
+        doctorAppsEmptyDesc: "განაცხადი ჯერ არ შექმნილა.",
+        activePatientsH1: "👨‍⚕️ აქტიური პაციენტები",
+        activePatientsStatActive: "აქტიური",
+        activePatientsStatPending: "მოლოდინში",
+        activePatientsStatTotal: "პაციენტები სულ",
+        activePatientsStatClinic: "კლინიკები",
+        activePatientsSearchPlaceholder: "ძებნა სახელით, ელფოსტით ან ტელეფონით...",
+        activePatientsAllClinics: "ყველა კლინიკა",
+        activePatientsRefresh: "🔄 განახლება",
+        activePatientsLoading: "🔄 იტვირთება...",
+        activePatientsEmpty: "აქტიური პაციენტი ჯერ არ არის",
+        treatmentCreateH1: "🏥 მკურნალობის შექმნა",
+        treatmentCreateSubtitle: "შექმენით ახალი ჯგუფი და მიანიჭეთ ექიმები",
+        patientDetailH1: "პაციენტის დეტალები",
+        patientDetailBack: "უკან",
+        legacyNavClinics: "კლინიკები"
       },
       dashboard: {
         title: "Clinifly Admin – მართვის პანელი",
-        nav: { dashboard: "პანელი", patients: "პაციენტები", travel: "მოგზაურობა", treatment: "მკურნალება", schedule: "კალენდარი", doctors: "ექიმები", chat: "შეტყობინებები", files: "ფაილები", referrals: "მოწვევები", health: "ჯანმრთელობა", settings: "პარამეტრები" },
-        sidebar: { mainMenu: "მთავარი მენიუ", management: "მართვა", logout: "გასვლა", clinic: "კლინიკა" },
+        sidebar: {
+          mainMenu: "მთავარი მენიუ",
+          management: "მართვა",
+          logout: "გასვლა",
+          clinic: "კლინიკა"
+        },
+        nav: { dashboard: "პანელი", patients: "პაციენტები", travel: "მოგზაურობა", treatment: "მკურნალება", schedule: "განრიგი", doctors: "ექიმები", chat: "ჩათი", leads: "ლიდები", files: "ფაილები", referrals: "მოწვევები", health: "ჯანმრთელობა", settings: "პარამეტრები" },
         charts: {
+          metricTitleMonthlyPatients: "ყოველთვიული რეგისტრაციის რაოდენობა",
+          metricTitleMonthlyProcedures: "ყოველთვიული პროცედურების რაოდენობა",
+          chartLabelMonthlyRegistered: "ყოველთვიული რეგისტრაცია",
           activePatients: "აქტიური პაციენტები",
           procedures: "პროცედურები",
           noData: "მონაცემი არ არის",
@@ -1487,6 +2375,7 @@
           vsPreviousMonth: "წინა თვესთან შედარებით",
           noPreviousData: "წინა მონაცემი არ არის",
           summaryActivePatients: "{count} აქტიური პაციენტი • {month}",
+          summaryMonthlyRegistered: "{count} რეგისტრაცია • {month}",
           summaryProcedures: "{count} პროცედურა • {month}"
         },
         upcoming: {
@@ -1517,9 +2406,130 @@
             SURGERY: "ქირურგია",
             CHECKUP: "გასინჯვა"
           }
+        },
+        planUsage: "პლანი და გამოყენება",
+        activeTreatments: "აქტიური მკურნალობები",
+        monthlyUploads: "თვიური ატვირთვები",
+        referralInvites: "რეფერალური მოწვევები",
+        upgrade: "გაუმჯობესება",
+        unlimited: "შეუზღვავი",
+        planAlertCrit: "ლიმიტი ამოიწურა. გასაგრძელებლად აირჩიეთ უფრო მაღალი ტარიფი.",
+        planAlertWarn: "ლიმიტს უახლოვდებით",
+        planTierTitle: "მიმდინარე სააბონემენტო დონე",
+        confirmOpenPricing: "გავხსნათ ფასების გვერდი?\n\n{url}",
+        metricsErrorHint: "დეტალებისთვის ნახეთ ბრაუზერის კონსოლი (F12)"
+      },
+      calendar: {
+        documentTitle: "კალენდარი - Clinifly Admin",
+        pageTitle: "ჩაწერის კალენდარი",
+        title: "ჩაწერის კალენდარი",
+        weekRangeTitle: "კვირის დიაპაზონი",
+        today: "დღეს",
+        week: "კვირა",
+        month: "თვე",
+        prev: "← წინ",
+        previous: "← წინ",
+        next: "შემდეგ →",
+        timeColumn: "საათი",
+        doctor: "ექიმი",
+        chair: "სკამი",
+        allDoctors: "ყველა ექიმი",
+        allChairs: "ყველა სკამი",
+        noEvents: "მოვლენები არ არის",
+        noAppointmentsForWeek: "არჩეული კვირისთვის ჩაწერა ვერ მოიძებნა.",
+        noAppointmentsForRange: "არჩეული პერიოდისთვის ჩაწერა ვერ მოიძებნა.",
+        summaryLine: "{count} ჩაწერა • {doctorCount} ექიმი • {chairCount} სკამი",
+        loading: "იტვირთება...",
+        tokenMissing: "ადმინის ტოკენი ვერ მოიძებნა. ხელახლა შედით.",
+        sessionExpired: "სესია ამოიწურა. გადამისამართება...",
+        fetchFailed: "ჩაწერის ჩატვირთვა ვერ მოხერხდა: {message}",
+        doctorNotFound: "ექიმი ვერ მოიძებნა",
+        chairWithNumber: "სკამი {n}"
+      },
+      pricing: {
+        title: "Clinifly ტარიფები",
+        subtitle: "მოქნილი გეგმები აქტიური პაციენტების რაოდენობაზე",
+        info: "გადაიხადეთ მხოლოდ აქტიური პაციენტების რაოდენობის მიხედვით.",
+        periodMonthly: "/თვე",
+        free: {
+          name: "Free",
+          patients: "5 პაციენტი",
+          description: "სცადეთ Clinifly რეალურ პაციენტებთან.",
+          cta: "დაწყება"
+        },
+        basic: {
+          name: "Pro",
+          badge: "პოპულარული",
+          patients: "15 პაციენტი",
+          description: "ძლიერი პაკეტი მზარდი კლინიკებისთვის.",
+          cta: "გეგმის გაუმჯობესება"
+        },
+        pro: {
+          name: "Premium",
+          patients: "ულიმიტო პაციენტი",
+          description: "პრემიუმ მხარდაჭერა მსხვილი კლინიკებისთვის.",
+          cta: "გეგმის გაუმჯობესება",
+          contactCta: "დაგვიკავშირდით"
+        },
+        features: {
+          allCore: "ყველა ძირითადი ფუნქცია",
+          patientCommunication: "პაციენტთან კომუნიკაცია",
+          fileSharing: "ფაილების გაზიარება",
+          referral: "რეფერალის სისტემა",
+          branding: "Clinifly ბრენდინგი",
+          customBranding: "მორგებული ბრენდინგი",
+          analytics: "ანალიტიკა",
+          support: "ელფოსტის მხარდაჭერა",
+          unlimitedPatients: "ულიმიტო პაციენტები",
+          advancedReferral: "გაფართოებული რეფერალი (დონეები, კამპანიები)",
+          prioritySupport: "პრიორიტეტული მხარდაჭერა",
+          onboarding: "ონბორდინგ მხარდაჭერა"
+        },
+        comparison: {
+          feature: "ფუნქცია",
+          free: "Free",
+          basic: "Pro",
+          pro: "Premium",
+          patients: "აქტიური პაციენტები",
+          unlimited: "ულიმიტო",
+          coreFeatures: "ძირითადი ფუნქციები",
+          branding: "Clinifly ბრენდინგი",
+          customBranding: "მორგებული ბრენდინგი",
+          referral: "რეფერალის სისტემა",
+          advancedReferral: "გაფართოებული რეფერალი",
+          analytics: "ანალიტიკა",
+          support: "მხარდაჭერა",
+          community: "საზოგადოება",
+          email: "ელფოსტა",
+          priority: "პრიორიტეტული"
+        },
+        faq: {
+          title: "ხშირად დასმული კითხვები",
+          q1: {
+            question: "როგორ ითვლება აქტიური პაციენტების რაოდენობა?",
+            answer: "ითვლება მხოლოდ APPROVED (აქტიური) პაციენტები. Pending, rejected ან cancelled არ შედის ლიმიტში."
+          },
+          q2: {
+            question: "რა ხდება ლიმიტის ამოწურვისას?",
+            answer: "არსებულ პაციენტებთან მუშაობას გააგრძელებთ. იზღუდება მხოლოდ ახალი პაციენტების დამტკიცება."
+          },
+          q3: {
+            question: "შემიძლია გეგმის შეცვლა?",
+            answer: "დიახ, შეგიძლიათ ნებისმიერ დროს განაახლოთ ან შეცვალოთ გეგმა."
+          },
+          q4: {
+            question: "გადახდის რა მეთოდებია ხელმისაწვდომი?",
+            answer: "ვიღებთ საბანკო ბარათებს, საბანკო გადარიცხვებს და ლოკალურ გადახდის მეთოდებს."
+          }
+        },
+        contact: {
+          title: "გაქვთ განსაკუთრებული საჭიროებები?",
+          description: "მსხვილი კლინიკებისთვის ხელმისაწვდომია ინდივიდუალური გეგმები.",
+          button: "დაგვიკავშირდით"
         }
       },
       login: { title: "Clinifly Admin-ში შესვლა", clinicCode: "კლინიკის კოდი", password: "პაროლი", login: "შესვლა", loading: "იტვირთება...", error: "შესვლის შეცდომა", invalidCredentials: "კლინიკის კოდი ან პაროლი არასწორია.", sessionExpired: "⏰ სეანსი ამოიწურა ან ტოკენი არასწორია. გთხოვთ, ხელახლა შეხვიდეთ." },
+      auth: { email: "ელ-ფოსტა", password: "პაროლი", confirm_password: "დაადასტურეთ პაროლი", name: "სახელი და გვარი" },
       patients: {
         title: "პაციენტები", search: "პაციენტის ძებნა...", filter: "ფილტრი",
         filterAll: "ყველა", approve: "დადასტურება", treatment: "მკურნალება", chat: "ჩათი", travel: "მოგზაურობა", health: "ჯანმრთელობა", files: "📁 ფაილები",
@@ -1551,6 +2561,8 @@
         clinicName: "კლინიკის სახელი",
         clinicLogoUrl: "კლინიკის ლოგოს URL",
         clinicLogoUrlHelp: "ლოგო ნაჩვენებია Pro გეგმისთვის",
+        chairCountLabel: "სკამების რაოდენობა",
+        chairCountHelp: "კალენდარში საჩვენებელი სკამების რაოდენობა (მაგ.: 1, 2, 3).",
         address: "კლინიკის მისამართი",
         addressHelp: "ნაჩვენებია პაციენტის ეკრანზე Pro გეგმისთვის",
         googleMapLink: "Google Maps ბმული",
@@ -1602,7 +2614,17 @@
           duration: "ხანგრძლივობა (წთ)",
           breakMin: "შესვენება (წთ)",
           active: "აქტიური"
-        }
+        },
+        categoryLabels: {
+          EVENTS: "შეხვედრები / დიაგნოსტიკა",
+          PROSTHETIC: "პროთეტიკა",
+          RESTORATIVE: "რესტავრაცია",
+          ENDODONTIC: "ენდოდონტია",
+          SURGICAL: "ქირურგია",
+          IMPLANT: "იმპლანტაცია"
+        },
+        recommendedDuration: "~{minutes} წთ",
+        minutes: "წთ"
       },
       treatment: {
         patientName: "პაციენტის სახელი (არჩევა)",
@@ -1740,41 +2762,338 @@
         badgeXray: "რენტგენი",
         badgePdf: "PDF",
         badgeFile: "ფაილი",
-        badgeChat: "ჩათი"
+        badgeChat: "ჩათი",
+        download: "ჩამოტვირთვა"
+      },
+      doctorListV2: {
+        pageTitle: "👨‍⚕️ ექიმები",
+        documentTitle: "ექიმები - Clinifly Admin",
+        statPending: "ლოდინი",
+        statApproved: "დამოწმებული",
+        statRejected: "უარყოფილი",
+        statTotal: "სულ",
+        searchPlaceholder: "ძიება სახელით, email-ით ან ტელეფონით...",
+        filterAll: "ყველა სტატუსი",
+        filterOptionPending: "ლოდინში",
+        filterOptionApproved: "დამოწმებული",
+        filterOptionActive: "აქტიური",
+        filterOptionRejected: "უარყოფილი",
+        refresh: "↺ განახლება",
+        loading: "იტვირთება...",
+        empty: "ექიმის ჩანაწერები ჯერ არ არის.",
+        errorHttp: "HTTP {status}",
+        errorLoad: "ჩატვირთვა ვერ მოხერხდა",
+        sectionProfessional: "პროფესია",
+        labelExperience: "გამოცდილება",
+        labelUniversity: "უნივერსიტეტი",
+        labelGraduation: "დამთავრება",
+        labelProfile: "პროფილი",
+        labelBio: "ბიო",
+        profilePublic: "🌐 საჯარო",
+        profilePrivate: "🔒 დამალული",
+        sectionSpecialty: "სპეციალიზაცია",
+        sectionLanguages: "ენები",
+        sectionProcedures: "პროცედურები",
+        notSpecified: "არ არის მითითებული",
+        yearsCount: "{years} წ",
+        dash: "—",
+        status: {
+          PENDING: "ლოდინში",
+          APPROVED: "დამოწმებული",
+          ACTIVE: "აქტიური",
+          REJECTED: "უარყოფილი"
+        },
+        btnApprove: "✅ დადასტურება",
+        btnReject: "❌ უარყოფა",
+        confirmApprove: "დარწმუნებული ხართ, რომ გინდათ ამ ექიმის დამოწმება?",
+        confirmReject: "დარწმუნებული ხართ, რომ გინდათ განაცხადის უარყოფა?",
+        approvedAlert: "✅ ექიმი დამოწმებულია!",
+        rejectedAlert: "განაცხადი უარყოფილია.",
+        errorGeneric: "შეცდომა"
+      },
+      chat: {
+        documentTitle: "ჩატი - Clinifly Admin",
+        pageHeading: "💬 Clinifly Admin – ჩატი",
+        title: "შეტყობინებები",
+        patientsHeading: "პაციენტები",
+        loading: "იტვირთება...",
+        selectPatient: "აირჩიეთ პაციენტი",
+        noPatients: "პაციენტები ჯერ არ არის",
+        unnamed: "უსახელო",
+        placeholder: "შეიყვანეთ შეტყობინება...",
+        send: "გაგზავნა",
+        sending: "იგზავნება...",
+        noMessages: "ჯერ შეტყობინებები არ არის",
+        newMessage: "ახალი შეტყობინება",
+        youJoined: "შეუერთეთ ჩატს",
+        photo: "ფოტო",
+        file: "ფაილი",
+        photoFile: "📷 ფოტო",
+        fileAttach: "📎 ფაილი",
+        download: "ჩამოტვირთვა",
+        uploadHelp: "მხარდაჭერილი: JPG, PNG, HEIC (მაქს 10 მბ) • PDF/DOC/DOCX/TXT/XLS/XLSX (მაქს 20 მბ) • ZIP (მაქს 50 მბ)",
+        sentOk: "✓ გაიგზავნა",
+        uploadError: "✗ შეცდომა",
+        errNoToken: "❌ ადმინ ტოკენი არ არის. ჯერ შედით.",
+        errTokenList: "საჭიროა ადმინ ტოკენი",
+        errAuth: "❌ ავტორიზაცია ვერ მოხერხდა. ხელახლა შედით.",
+        errAuthShort: "❌ ავტორიზაცია ვერ მოხერხდა",
+        errUnknown: "უცნობი შეცდომა",
+        errLoadList: "❌ პაციენტების ჩატვირთვა ვერ მოხერხდა: {message}",
+        errLoadMessages: "შეტყობინებების ჩატვირთვა ვერ მოხერხდა",
+        errLoadMessagesFull: "❌ შეტყობინებების ჩატვირთვა ვერ მოხერხდა: {message}",
+        errSelectFirst: "❌ ჯერ აირჩიეთ პაციენტი",
+        errNoTokenSend: "❌ ადმინ ტოკენი არ არის",
+        errSend: "შეტყობინების გაგზავნა ვერ მოხერხდა",
+        errSendFull: "❌ გაგზავნა ვერ მოხერხდა: {message}",
+        errFileUpload: "❌ ფაილის ატვირთვა ვერ მოხერხდა: {message}",
+        errSession: "❌ სესია ამოიწურა. ხელახლა შედით.",
+        errForbidden: "❌ ფაილის ტიპი აკრძალულია: {ext}.",
+        errMime: "❌ ფაილის ტიპი ვერ განისაზღვრა. სცადეთ სხვა ფაილი.",
+        errImageFmt: "❌ JPG, PNG, HEIC – მაქს 10 მბ",
+        errDocFmt: "❌ PDF, DOC/DOCX, TXT, XLS/XLSX, ZIP",
+        errPhotoSize: "❌ ფოტო 10 მბ-ზე ნაკლები",
+        errZipSize: "❌ ZIP 50 მბ-ზე ნაკლები",
+        errDocSize: "❌ დოკუმენტი 20 მბ-ზე ნაკლები",
+        errSelectPatient: "❌ ჯერ აირჩიეთ პაციენტი",
+        before: "უწინ",
+        after: "შემდეგ",
+        doctorReview: "👨‍⚕️ ექიმის მიმოხილვა",
+        defaultClinic: "კლინიკა",
+        defaultPhoto: "ფოტო",
+        defaultFile: "ფაილი",
+        navClinicSettings: "კლინიკის პარამეტრები"
+      },
+      leads: {
+        documentTitle: "შეტყობინებები / ლიდები / დაუმისამართებელი — Clinifly Admin",
+        pageTitle: "შეტყობინებები / ლიდები / დაუმისამართებელი მოთხოვნები",
+        subtitle: "თითო მოთხოვნა ზუსტად ერთ ექიმზე მიანიჭეთ. მხოლოდ ამ ექიმს ენახება საუბარი ექიმის აპში.",
+        backDashboard: "← პანელი",
+        refreshList: "სიის განახლება",
+        statusLoading: "იტვირთება…",
+        statusUnassigned: "{count} დაუმისამართებელი",
+        thPatient: "პაციენტი",
+        thContact: "კონტაქტი",
+        thPreview: "შინაარსი",
+        thAssign: "ექიმის მიბმა",
+        empty: "დაუმისამართებელი მოთხოვნები არ არის.",
+        selectDoctor: "აირჩიეთ ექიმი…",
+        assign: "მიბმა",
+        errChooseDoctor: "ჯერ აირჩიეთ ექიმი.",
+        successAssigned: "დაინიშნა.",
+        errLoad: "ჩატვირთვის შეცდომა"
       }
     }
   };
 
-  // i18n helper
-  const i18n = {
-    currentLang: 'tr',
-    
-    init() {
-      // Load saved language or default to Turkish
-      const saved = localStorage.getItem('admin_lang') || 'tr';
-      this.setLanguage(saved);
-      this.createLangSwitcher();
-      // Render static translations once on init
-      this.updatePage();
-      // Notify page-level hook once, if present
-      if (typeof window.onI18nUpdated === 'function') {
-        try {
-          window.onI18nUpdated(this.currentLang);
-        } catch (e) {
-          console.error("[i18n] onI18nUpdated hook failed during init:", e);
+  /** localhost or ?adminI18nValidate=1 — compare top-level section keys across tr/en/ru/ka */
+  function runOptionalTranslationParityCheck() {
+    try {
+      var h = typeof location !== 'undefined' ? String(location.hostname || '') : '';
+      var validate =
+        h === 'localhost' ||
+        h === '127.0.0.1' ||
+        h === '::1' ||
+        (typeof location !== 'undefined' && /[?&]adminI18nValidate=1(?:&|$)/.test(location.search || ''));
+      if (!validate || !translations || !translations.en || typeof translations.en !== 'object') return;
+      var enKeys = Object.keys(translations.en).sort().join(',');
+      ['tr', 'ru', 'ka'].forEach(function (L) {
+        var o = translations[L];
+        if (!o || typeof o !== 'object') {
+          console.warn('[AdminI18n parity] missing language root:', L);
+          return;
+        }
+        var keys = Object.keys(o).sort().join(',');
+        if (keys !== enKeys) {
+          var enList = Object.keys(translations.en);
+          var missing = enList.filter(function (k) {
+            return !Object.prototype.hasOwnProperty.call(o, k);
+          });
+          var extra = Object.keys(o).filter(function (k) {
+            return !Object.prototype.hasOwnProperty.call(translations.en, k);
+          });
+          if (missing.length) {
+            console.warn('[AdminI18n parity] ' + L + ' missing top-level sections vs en (' + missing.length + '):', missing.slice(0, 40));
+          }
+          if (extra.length) {
+            console.warn('[AdminI18n parity] ' + L + ' extra top-level sections vs en (' + extra.length + '):', extra.slice(0, 40));
+          }
+        }
+      });
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  runOptionalTranslationParityCheck();
+
+  function emitI18nReady() {
+    if (typeof document !== 'undefined' && document.dispatchEvent) {
+      document.dispatchEvent(new Event("i18n:ready"));
+    }
+  }
+
+  function emitAdminLanguageChanged(lang, meta) {
+    if (typeof document === 'undefined' || !document.dispatchEvent) return;
+    try {
+      var detail = Object.assign({ lang: lang }, meta && typeof meta === 'object' ? meta : {});
+      document.dispatchEvent(new CustomEvent('admin-language-changed', { detail: detail }));
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function rerenderAll() {
+    if (typeof window.renderDashboard === 'function') {
+      try { window.renderDashboard(); } catch (e) { console.warn('renderDashboard', e); }
+    }
+    if (typeof window.applyScheduleStaticI18n === 'function' && window.i18n && typeof window.i18n.getLang === 'function') {
+      try { window.applyScheduleStaticI18n(window.i18n.getLang()); } catch (e) { console.warn('applyScheduleStaticI18n', e); }
+    }
+    if (typeof window.renderGrid === 'function' && document.getElementById('calendarGrid')) {
+      const container = document.getElementById('calendarGrid');
+      if (container) container.innerHTML = '';
+      const ap = (typeof window.allAppointments !== 'undefined' && window.allAppointments) ? window.allAppointments : [];
+      const items = Array.isArray(ap) ? ap : [];
+      const L = (window.i18n && typeof window.i18n.getLang === 'function') ? window.i18n.getLang() : 'en';
+      try { window.renderGrid(items, L); } catch (e) { console.warn('renderGrid', e); }
+    }
+    if (typeof window.renderDoctors === 'function') {
+      try { window.renderDoctors(); } catch (e) { console.warn('renderDoctors', e); }
+    }
+    if (typeof window.renderChat === 'function') {
+      try { window.renderChat(); } catch (e) { console.warn('renderChat', e); }
+    }
+    const asyncAfter = [];
+    if (typeof window.rerenderTreatment === 'function') {
+      try {
+        const p = window.rerenderTreatment();
+        if (p && typeof p.then === 'function') asyncAfter.push(p);
+      } catch (e) { console.warn('rerenderTreatment', e); }
+    }
+    if (typeof window.rerenderPatientsI18n === 'function') {
+      try { window.rerenderPatientsI18n(); } catch (e) { console.warn('rerenderPatientsI18n', e); }
+    }
+    if (typeof window.rerenderLeads === 'function') {
+      try { window.rerenderLeads(); } catch (e) { console.warn('rerenderLeads', e); }
+    }
+    if (typeof window.rerenderSettings === 'function') {
+      try {
+        const p = window.rerenderSettings();
+        if (p && typeof p.then === 'function') asyncAfter.push(p);
+      } catch (e) { console.warn('rerenderSettings', e); }
+    }
+    if (typeof window.rerenderLoginPage === 'function') {
+      try { window.rerenderLoginPage(); } catch (e) { console.warn('rerenderLoginPage', e); }
+    }
+    if (typeof window.rerenderRegisterPage === 'function') {
+      try { window.rerenderRegisterPage(); } catch (e) { console.warn('rerenderRegisterPage', e); }
+    }
+    if (typeof window.rerenderDoctorLoginPage === 'function') {
+      try { window.rerenderDoctorLoginPage(); } catch (e) { console.warn('rerenderDoctorLoginPage', e); }
+    }
+    function applyDomI18n() {
+      if (window.i18n && typeof window.i18n.updatePage === 'function') {
+        try { window.i18n.updatePage(); } catch (e) { console.warn('updatePage', e); }
+      }
+    }
+    if (asyncAfter.length) {
+      Promise.all(asyncAfter).then(applyDomI18n, applyDomI18n);
+    } else {
+      applyDomI18n();
+    }
+  }
+  window.rerenderAll = rerenderAll;
+
+  function bindAdminLangButtons() {
+    const allowed = new Set(['tr', 'en', 'ru', 'ka']);
+    document.querySelectorAll('#alLang .lang-btn, #lang-switcher .lang-btn').forEach(function (btn) {
+      if (btn.getAttribute('data-i18n-listener') === '1') return;
+      btn.setAttribute('data-i18n-listener', '1');
+      function run(e) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        const lang = normalizeAdminLang(
+          (e && e.currentTarget && e.currentTarget.getAttribute('data-lang')) || btn.getAttribute('data-lang') || ''
+        );
+        if (!allowed.has(lang)) return;
+        console.log('LANG CLICKED:', lang);
+        if (window.AdminI18n && typeof window.AdminI18n.setLanguage === 'function') {
+          window.AdminI18n.setLanguage(lang);
+        } else if (window.i18n && typeof window.i18n.setLang === 'function') {
+          window.i18n.setLang(lang);
+        } else if (typeof window.onLanguageChange === 'function') {
+          window.onLanguageChange(lang);
+        }
+        if (window.i18n && typeof window.i18n.getLang === 'function') {
+          const cur = window.i18n.getLang();
+          console.log('CURRENT LANG:', cur);
+          if (cur !== lang) {
+            console.warn('Language did not update!');
+          }
         }
       }
+      btn.addEventListener('click', run);
+      btn.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          run(e);
+        }
+      });
+    });
+  }
+  window.rebindAdminLangButtons = bindAdminLangButtons;
+
+  // i18n helper
+  const i18n = {
+    currentLang: 'en',
+    
+    init() {
+      if (this._i18nInitOnce) {
+        return;
+      }
+      this._i18nInitOnce = true;
+      const saved = readAdminLangStorage();
+      const lang0 = translations[saved] ? saved : 'en';
+      this.currentLang = lang0;
+      writeAdminLangStorage(lang0);
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.lang = lang0;
+      }
+      emitAdminLanguageChanged(lang0, { phase: 'init' });
+      this.createLangSwitcher();
+      setTimeout(function () {
+        clearStaleNavTextNodes();
+        emitI18nReady();
+        bindAdminLangButtons();
+        setTimeout(function () {
+          rerenderAll();
+        }, 0);
+      }, 0);
     },
     
-    // State-only: do NOT call updatePage() here.
     setLanguage(lang) {
+      lang = normalizeAdminLang(lang);
       if (!translations[lang]) lang = 'en';
       this.currentLang = lang;
-      localStorage.setItem('admin_lang', lang);
-      document.documentElement.lang = lang;
+      writeAdminLangStorage(lang);
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.lang = lang;
+      }
+      clearStaleNavTextNodes();
+      emitAdminLanguageChanged(lang, { phase: 'user' });
+      emitI18nReady();
+      setTimeout(function () {
+        rerenderAll();
+        if (window.i18n && typeof window.i18n.getLang === 'function') {
+          console.log('FINAL LANG:', window.i18n.getLang());
+        }
+      }, 0);
+      return this;
     },
 
-    // Backward-compatible alias
     setLang(lang) {
       return this.setLanguage(lang);
     },
@@ -1784,6 +3103,16 @@
     },
     
     t(key, params = {}) {
+      const applyParams = (s) => String(s).replace(/\{(\w+)\}/g, (match, p1) => (params[p1] !== undefined ? params[p1] : match));
+      const sb = String(key).match(/^dashboard\.sidebar\.(mainMenu|management|logout|clinic)$/);
+      if (sb) {
+        const node = DASHBOARD_SIDEBAR_I18N[sb[1]];
+        if (node && typeof node === 'object') {
+          const L = this.currentLang;
+          const raw = node[L] != null && node[L] !== '' ? node[L] : (node.en != null && node.en !== '' ? node.en : String(key));
+          return applyParams(raw);
+        }
+      }
       const keys = key.split('.');
       const resolve = (lang) => {
         let value = translations[lang];
@@ -1793,10 +3122,10 @@
         }
         return typeof value === 'string' ? value : null;
       };
-      const value = resolve(this.currentLang) || resolve('en') || key;
-      return value.replace(/\{(\w+)\}/g, (match, p1) => {
-        return params[p1] !== undefined ? params[p1] : match;
-      });
+      let value = resolve(this.currentLang);
+      if (value == null || value === '') value = resolve('en');
+      if (value == null || value === '') value = key;
+      return applyParams(value);
     },
     
     createLangSwitcher() {
@@ -1824,12 +3153,16 @@
 
       const switcher = document.createElement('div');
       switcher.id = 'lang-switcher';
+      switcher.className = 'lang-switcher';
+      switcher.setAttribute('role', 'group');
+      switcher.setAttribute('aria-label', 'Language');
       switcher.style.cssText = `
-        position: fixed; top: 20px; right: 20px; z-index: 1000;
+        position: fixed; top: 20px; right: 20px; z-index: 100000;
         display: flex; gap: 6px;
         background: var(--card, #1f2937); border: 1px solid var(--b, #374151);
         border-radius: 12px; padding: 6px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15); backdrop-filter: blur(10px);
+        pointer-events: auto; touch-action: manipulation;
       `;
 
       const btnStyle = (active) => `
@@ -1842,12 +3175,12 @@
       const buttons = {};
       LANGS.forEach(({ code, label }) => {
         const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'lang-btn';
+        btn.setAttribute('data-lang', code);
+        btn.setAttribute('id', 'lang-sel-' + code);
         btn.textContent = label;
         btn.style.cssText = btnStyle(this.currentLang === code);
-        btn.onclick = () => {
-          if (typeof window.onLanguageChange === 'function') window.onLanguageChange(code);
-          else { this.setLanguage(code); this.updatePage(); }
-        };
         buttons[code] = btn;
         switcher.appendChild(btn);
       });
@@ -1863,6 +3196,7 @@
       const originalUpdatePage = this.updatePage.bind(this);
       this.updatePage = () => { originalUpdatePage(); updateButtons(); };
       updateButtons();
+      bindAdminLangButtons();
     },
     
     updatePage() {
@@ -1870,7 +3204,7 @@
       isUpdatingI18n = true;
       try {
         // Update all elements with data-i18n attribute
-        document.querySelectorAll('[data-i18n]').forEach(el => {
+        document.querySelectorAll('[data-i18n]').forEach((el) => {
           const key = el.getAttribute('data-i18n');
           let params = {};
           try {
@@ -1880,11 +3214,20 @@
             params = {};
           }
           el.textContent = this.t(key, params);
+          const text = (el.textContent || '').trim();
+          if (text === 'Dashboard' || text === 'Kaydet') {
+            console.warn('Hardcoded string detected');
+          }
         });
         
-        // Update all inputs with data-i18n-placeholder
-        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
-          const key = el.getAttribute('data-i18n-placeholder');
+        // Update all inputs with data-i18n-placeholder (skip labelled fields — rely on labels only)
+        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+          if (typeof el.closest === "function" && el.closest(".field")) {
+            el.removeAttribute("data-i18n-placeholder");
+            el.placeholder = "";
+            return;
+          }
+          const key = el.getAttribute("data-i18n-placeholder");
           el.placeholder = this.t(key);
         });
         
@@ -1893,29 +3236,122 @@
           const key = el.getAttribute('data-i18n-title');
           el.title = this.t(key);
         });
+        if (this.currentLang === 'ru' && document.body) {
+          const bodyText = document.body.innerText || '';
+          if (bodyText.match(/[A-Za-z]/)) {
+            console.warn('⚠️ Mixed language detected');
+          }
+        }
       } finally {
         isUpdatingI18n = false;
       }
     }
   };
 
-  // Make i18n globally available
-  window.i18n = i18n;
+  try {
+    Object.defineProperty(window, 'i18n', {
+      value: i18n,
+      configurable: false,
+      writable: false,
+      enumerable: true
+    });
+  } catch (e) {
+    if (!window.i18n) {
+      window.i18n = i18n;
+    }
+  }
+  // Object.freeze(window.i18n) would break setLanguage (mutates currentLang)
 
-  // Global language change entrypoint (single direction; no recursion)
-  // - Only changes language state and triggers a DOM refresh
-  // - Pages can optionally implement window.onI18nUpdated(lang) for dynamic re-renders
-  window.onLanguageChange = function(lang) {
-    try {
-      window.i18n.setLanguage(lang);
+  window.applyI18n = function () {
+    if (window.i18n && typeof window.i18n.updatePage === 'function') {
       window.i18n.updatePage();
-      if (typeof window.onI18nUpdated === 'function') {
-        window.onI18nUpdated(lang);
+    }
+  };
+
+  window.onLanguageChange = function (lang) {
+    try {
+      if (window.AdminI18n && typeof window.AdminI18n.setLanguage === 'function') {
+        window.AdminI18n.setLanguage(lang);
+      } else if (window.i18n && typeof window.i18n.setLanguage === 'function') {
+        window.i18n.setLanguage(lang);
       }
     } catch (e) {
       console.error("[i18n] window.onLanguageChange failed:", e);
     }
   };
+
+  /**
+   * Canonical admin UI language API — all persistence goes through i18n.setLanguage / writeAdminLangStorage.
+   * Do not call localStorage.setItem('admin_lang', ...) elsewhere.
+   */
+  var adminI18nApi = Object.freeze({
+    STORAGE_KEY: ADMIN_LANG_STORAGE_KEY,
+    /** Dispatched on document after language changes: detail = { lang, phase: 'init'|'user' } */
+    LANGUAGE_CHANGED_EVENT: 'admin-language-changed',
+    normalizeLanguage: normalizeAdminLang,
+    readStored: readAdminLangStorage,
+    getLanguage: function () {
+      return i18n.getLang();
+    },
+    setLanguage: function (lang) {
+      return i18n.setLanguage(lang);
+    },
+    /** Before redirect (login → dashboard): align storage + runtime + document.lang. */
+    persistFromUi: function () {
+      try {
+        var norm = normalizeAdminLang(
+          (typeof i18n.getLang === 'function' ? i18n.getLang() : '') || readAdminLangStorage() || 'en'
+        );
+        i18n.setLanguage(norm);
+      } catch (e) {
+        /* ignore */
+      }
+    },
+    /** After layout inject: apply stored language or refresh data-i18n. */
+    syncFromStorage: function () {
+      try {
+        var stored = readAdminLangStorage();
+        if (typeof i18n.getLang === 'function' && i18n.getLang() !== stored) {
+          i18n.setLanguage(stored);
+        } else if (typeof i18n.updatePage === 'function') {
+          i18n.updatePage();
+        }
+      } catch (e) {
+        /* ignore */
+      }
+    },
+  });
+  try {
+    Object.defineProperty(window, 'AdminI18n', {
+      value: adminI18nApi,
+      configurable: false,
+      writable: false,
+      enumerable: true,
+    });
+  } catch (e) {
+    window.AdminI18n = adminI18nApi;
+  }
+
+  /** @deprecated Use AdminI18n.persistFromUi */
+  window.persistAdminUiLanguage = function () {
+    if (window.AdminI18n && typeof window.AdminI18n.persistFromUi === 'function') {
+      window.AdminI18n.persistFromUi();
+    }
+  };
+
+  /** @deprecated Use AdminI18n.syncFromStorage */
+  window.syncAdminLanguageFromStorage = function () {
+    if (window.AdminI18n && typeof window.AdminI18n.syncFromStorage === 'function') {
+      window.AdminI18n.syncFromStorage();
+    }
+  };
+
+  function assertProcedureNameNotMixed(procedure) {
+    if (procedure && typeof procedure.name === "string" && procedure.name.includes("(")) {
+      console.warn("Mixed language UI:", procedure.name);
+    }
+  }
+  window.assertProcedureNameNotMixed = assertProcedureNameNotMixed;
   
   // Auto-initialize when DOM is ready
   if (document.readyState === 'loading') {

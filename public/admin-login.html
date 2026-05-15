@@ -352,6 +352,11 @@
       const savedClinicName = json.clinicName || json.admin?.clinicName || "";
       localStorage.setItem("clinic_code", savedClinicCode);
       localStorage.setItem("clinic_name", savedClinicName);
+      if (json.clinicId != null && json.clinicId !== "") {
+        localStorage.setItem("clinic_id", String(json.clinicId));
+      } else {
+        localStorage.removeItem("clinic_id");
+      }
       // Clear session-specific data from previous clinic sessions
       localStorage.removeItem("selected_patient_id");
       
@@ -535,6 +540,11 @@
             const savedClinicName = json.clinicName || "";
             localStorage.setItem("clinic_code", savedClinicCode);
             localStorage.setItem("clinic_name", savedClinicName);
+            if (json.clinicId != null && json.clinicId !== "") {
+              localStorage.setItem("clinic_id", String(json.clinicId));
+            } else {
+              localStorage.removeItem("clinic_id");
+            }
             // Clear session-specific data from previous clinic sessions
             localStorage.removeItem("selected_patient_id");
             

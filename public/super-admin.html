@@ -218,9 +218,41 @@
   </div>
 </div>
 
+<!-- ════════════════ PLAN MODAL ════════════════ -->
+<div id="planModal" class="modal-overlay" onclick="closeModal('planModal',event)">
+  <div class="modal-content" onclick="event.stopPropagation()" style="max-width:480px">
+    <div class="modal-header">
+      <h3 class="modal-title">Abonelik planı atama</h3>
+      <button class="modal-close" onclick="closeModal('planModal')">×</button>
+    </div>
+    <div class="modal-section">
+      <div class="form-grid" style="grid-template-columns:1fr;">
+        <div class="form-group">
+          <label>Plan</label>
+          <select id="planModalSelect">
+            <option value="FREE">FREE</option>
+            <option value="BASIC">BASIC</option>
+            <option value="PRO">PRO</option>
+            <option value="PREMIUM">PREMIUM</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Süre (gün)</label>
+          <input type="number" id="planModalDays" min="0" step="1" value="30" placeholder="Örn. 30"/>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;padding-top:16px;border-top:1px solid var(--b);">
+      <button class="btn btn-ghost" type="button" onclick="closeModal('planModal')">İptal</button>
+      <button class="btn" type="button" onclick="assignPlan()">Assign</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API = typeof cliniflowApiBase === 'function' ? cliniflowApiBase() : '';
 let allClinics = [];
+let currentClinicId = null;
 
 /* ─── Auth ─────────────────────────── */
 function token() { try { return localStorage.getItem("super_admin_token")||""; } catch { return ""; } }
@@ -364,6 +396,7 @@ function renderTable(list){
           ${hasMail?`<a href="mailto:${esc(c.email)}" class="qa qa-mail">✉️ Mail</a>`:""}
           <button class="qa qa-note" onclick="openCrm('${cid}')">📝 CRM</button>
           <button class="qa qa-detail" onclick="showDetails('${cid}')">📊 Detay</button>
+          <button class="qa" style="background:rgba(16,185,129,.12);color:#6ee7b7;border:1px solid rgba(16,185,129,.3)" type="button" onclick="openPlanModal('${cid}')">💰 Plan</button>
           ${(c.status||"").toUpperCase()==="SUSPENDED"
             ?`<button class="qa" style="background:rgba(22,163,74,.15);color:#86efac;border:1px solid rgba(22,163,74,.3)" onclick="activateClinic('${cid}')">✅</button>`
             :`<button class="qa" style="background:rgba(220,38,38,.12);color:#fca5a5;border:1px solid rgba(220,38,38,.25)" onclick="suspendClinic('${cid}')">⏸</button>`}
@@ -613,6 +646,46 @@ async function activateClinic(clinicId){
     setAlert("✅ Klinik aktifleştirildi","success");
     loadClinics();
   }catch(e){setAlert("Hata: "+e.message);}
+}
+
+function openPlanModal(clinicId){
+  currentClinicId=clinicId;
+  const c=allClinics.find(x=>(x.clinicId||x.id)===clinicId);
+  const p=(c&&c.plan?String(c.plan):"FREE").toUpperCase();
+  const sel=document.getElementById("planModalSelect");
+  if(sel){
+    if(["FREE","BASIC","PRO","PREMIUM"].includes(p)) sel.value=p;
+    else sel.value="FREE";
+  }
+  const d=document.getElementById("planModalDays");
+  if(d) d.value=30;
+  document.getElementById("planModal")?.classList.add("active");
+}
+
+async function assignPlan(){
+  if(!currentClinicId) return;
+  const plan=(document.getElementById("planModalSelect")?.value||"FREE").toUpperCase();
+  const days=parseInt(document.getElementById("planModalDays")?.value,10);
+  if(!Number.isFinite(days)||days<0){
+    setAlert("Geçerli gün sayısı girin","error");
+    return;
+  }
+  try{
+    const res=await fetch(`${API}/api/super-admin/clinics/${encodeURIComponent(currentClinicId)}/assign-plan`,{
+      method:"POST",
+      headers:authH({"Content-Type":"application/json",Accept:"application/json"}),
+      body:JSON.stringify({plan, days:days})
+    });
+    if(res.status===401){logout();return;}
+    const json=await res.json().catch(()=>({}));
+    if(!res.ok||!json.ok) throw new Error(json.message||json.error||`HTTP ${res.status}`);
+    closeModal("planModal");
+    currentClinicId=null;
+    setAlert("✅ Plan atandı","success");
+    loadClinics();
+  }catch(e){
+    setAlert("Hata: "+(e&&e.message?e.message:String(e)),"error");
+  }
 }
 
 /* ─── Modal helpers ─────────────────── */

@@ -561,7 +561,10 @@
         const text = String(
           msg.text != null && msg.text !== ''
             ? msg.text
-            : (msg.message != null ? msg.message : (msg.content != null ? msg.content : ''))
+            : (msg.message != null ? msg.message
+              : (msg.message_text != null ? msg.message_text
+                : (msg.content != null ? msg.content
+                  : (msg.body != null ? msg.body : ''))))
         ).trim();
         const time = msg.createdAt ? new Date(msg.createdAt).toLocaleString('tr-TR') : '';
         const attachment = msg.attachment || null;

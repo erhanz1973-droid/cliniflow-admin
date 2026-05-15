@@ -580,12 +580,9 @@
   // Global logout function - accessible from onclick handlers
   function logout() {
     try {
-      localStorage.removeItem("adminToken");
-      localStorage.removeItem("admin_token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("clinic_code");
-      localStorage.removeItem("clinic_name");
-      console.log("[LOGOUT] All admin data cleared");
+      localStorage.clear();
+      sessionStorage.clear();
+      console.log("[LOGOUT] localStorage and sessionStorage cleared");
     } catch (e) {
       console.error("[LOGOUT] Error clearing data:", e);
     }
