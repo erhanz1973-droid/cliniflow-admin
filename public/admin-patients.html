@@ -876,38 +876,49 @@
       patientsGrid.style.display = 'none';
 
       try {
-        const res = await fetch(`${API_BASE}/api/admin/patients`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json'
-          }
-        });
+        const patients = [];
+        let page = 1;
+        let totalPages = 1;
+        const pageLimit = 100;
 
-        if (!res.ok) {
-          if (res.status === 401) {
-            const message = window.i18n ? window.i18n.t('patients.errors.unauthorized') : '❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
-            showError(message);
-            return;
+        while (page <= totalPages && page <= 40) {
+          const res = await fetch(
+            `${API_BASE}/api/admin/patients?page=${page}&limit=${pageLimit}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json'
+              }
+            }
+          );
+
+          if (!res.ok) {
+            if (res.status === 401) {
+              const message = window.i18n ? window.i18n.t('patients.errors.unauthorized') : '❌ Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
+              showError(message);
+              return;
+            }
+            throw new Error(`HTTP ${res.status}`);
           }
-          throw new Error(`HTTP ${res.status}`);
+
+          const json = await res.json();
+          let batch = [];
+          if (Array.isArray(json)) {
+            batch = json;
+          } else if (json.ok && Array.isArray(json.patients)) {
+            batch = json.patients;
+          } else if (json.ok && Array.isArray(json.list)) {
+            batch = json.list;
+          } else {
+            throw new Error(json.error || 'Invalid patients response');
+          }
+          patients.push(...batch);
+          totalPages = Number(json.totalPages) || 1;
+          if (batch.length < pageLimit) break;
+          page += 1;
         }
 
-        const json = await res.json();
-
-let patients = [];
-
-if (Array.isArray(json)) {
-  // Backend düz array dönüyor
-  patients = json;
-} else if (json.ok && Array.isArray(json.patients)) {
-  // { ok:true, patients:[...] }
-  patients = json.patients;
-} else if (json.ok && Array.isArray(json.list)) {
-  patients = json.list;
-} else {
-  throw new Error(json.error || 'Invalid patients response');
-}
-        console.log('[PATIENTS] API Response:', patients.slice(0, 3)); // Debug first 3 patients
+        console.log('[PATIENTS] loaded', patients.length, 'rows across', page, 'page(s)');
         ALL_PATIENTS = patients;
         applyFilters();
         renderUsageBadge();
@@ -1783,7 +1794,7 @@ if (Array.isArray(json)) {
     }
 
   </script>
-  <script src="/admin-layout.js?v=20260515"></script>
+  <script src="/admin-layout.js?v=202605161"></script>
 </body>
 </html>
 
