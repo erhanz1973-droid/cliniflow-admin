@@ -636,6 +636,8 @@
           ? `<div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:4px;">${escapeHtml(selectedPatientName)}</div>` 
           : '';
         
+        if (!text && !attachmentHtml) return '';
+
         return `
           <div class="message from-${from}">
             ${patientNameDisplay}
@@ -645,7 +647,7 @@
             ${time ? `<div class="message-time">${escapeHtml(time)}</div>` : ''}
           </div>
         `;
-      }).join('');
+      }).filter(Boolean).join('');
 
       // Scroll to bottom only if:
       // 1. forceScroll is true (user just sent a message), OR
