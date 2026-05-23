@@ -1004,12 +1004,21 @@
         const afterPercent = formatScore(afterScore);
         const clinicCode = p.clinicCode || p.clinic_code || '';
         
-        const primaryDoctorIdStr = p.primary_doctor_id ? String(p.primary_doctor_id).trim() : "";
+        const assignedDoctorNameApi = String(p.assigned_doctor_name || p.assignedDoctorName || "").trim();
+        const messagingDoctorIdStr = String(
+          p.messaging_doctor_id ||
+            p.assigned_doctor_id ||
+            p.assignedDoctorId ||
+            p.primary_doctor_id ||
+            "",
+        ).trim();
+        const primaryDoctorIdStr = messagingDoctorIdStr;
         const primaryNk = normalizeDoctorKey(primaryDoctorIdStr);
-        const assignedDoctor =
-          (primaryNk && DOCTORS_BY_ID[primaryNk]) ||
-          (primaryDoctorIdStr && DOCTORS_BY_ID[primaryDoctorIdStr]) ||
-          null;
+        const assignedDoctor = assignedDoctorNameApi
+          ? { name: assignedDoctorNameApi, full_name: assignedDoctorNameApi }
+          : (primaryNk && DOCTORS_BY_ID[primaryNk]) ||
+            (primaryDoctorIdStr && DOCTORS_BY_ID[primaryDoctorIdStr]) ||
+            null;
         
         const initials = displayName.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
         const photoUrl = p.profilePhotoUrl || p.profile_photo_url || '';
