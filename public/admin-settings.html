@@ -852,7 +852,11 @@
       console.log("Submitted plan was:", payload.plan);
       
       if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'HTTP ' + res.status);
+        const errCode = data.error || '';
+        if (errCode === 'address_required') {
+          throw new Error('Klinik adresi gerekli. Ülke/şehir kaydı için adres alanını da doldurun.');
+        }
+        throw new Error(data.message || errCode || 'HTTP ' + res.status);
       }
 
       const successMsg = '✅ Ayarlar kaydedildi!';

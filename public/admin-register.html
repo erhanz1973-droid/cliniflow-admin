@@ -404,6 +404,23 @@
       return div.innerHTML;
     }
 
+    /** Match admin-login session keys; stale adminToken/user would otherwise show the previous clinic. */
+    function persistAdminRegistrationSession({ token, clinicCode, clinicName, email, clinicId }) {
+      localStorage.setItem('admin_token', token);
+      localStorage.setItem('adminToken', token);
+      const code = String(clinicCode || '').trim().toUpperCase();
+      localStorage.setItem('clinic_code', code);
+      localStorage.setItem('clinic_name', clinicName || '');
+      localStorage.removeItem('selected_patient_id');
+      localStorage.setItem('user', JSON.stringify({
+        id: clinicId || 'admin',
+        email: email || '',
+        role: 'ADMIN',
+        clinicCode: code,
+        clinicName: clinicName || '',
+      }));
+    }
+
     document.getElementById('register-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       
@@ -484,14 +501,13 @@
 
         // Direct registration (if OTP not required)
         if (data.token) {
-          // Save token to localStorage
-          localStorage.setItem('admin_token', data.token);
-          if (data.clinicCode) {
-            localStorage.setItem('clinic_code', data.clinicCode);
-          }
-          if (clinicName) {
-            localStorage.setItem('clinic_name', clinicName);
-          }
+          persistAdminRegistrationSession({
+            token: data.token,
+            clinicCode: data.clinicCode || clinicCode,
+            clinicName,
+            email,
+            clinicId: data.clinicId,
+          });
           
           // Show success message briefly, then auto-redirect to dashboard
           document.getElementById('form-container').style.display = 'none';
@@ -641,14 +657,14 @@
           throw new Error(errorMsg);
         }
         
-        // Success - save token and redirect
-        localStorage.setItem('admin_token', data.token);
-        if (data.clinic?.clinic_code) {
-          localStorage.setItem('clinic_code', data.clinic.clinic_code);
-        }
-        if (clinicName) {
-          localStorage.setItem('clinic_name', clinicName);
-        }
+        // Success - save session (both token keys + user) and redirect
+        persistAdminRegistrationSession({
+          token: data.token,
+          clinicCode: data.clinic?.clinic_code || clinicCode,
+          clinicName: data.clinic?.name || clinicName,
+          email,
+          clinicId: data.clinic?.id,
+        });
         
         // Show success
         document.getElementById('otp-container').style.display = 'none';
