@@ -181,7 +181,9 @@
 
 <script src="/admin-layout.js?v=202605161"></script>
 <script>
-  const API = '';
+  const API = (typeof cliniflowAdminApiOrigin === 'function'
+    ? cliniflowAdminApiOrigin()
+    : 'https://cliniflow-backend-clean-production.up.railway.app');
   const params = new URLSearchParams(location.search);
   let currentPatientId = params.get('patientId') || localStorage.getItem('selected_patient_id') || '';
   let allFiles = [];
