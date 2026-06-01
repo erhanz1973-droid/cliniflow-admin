@@ -6,7 +6,7 @@
   <title data-i18n="treatment.pageTitle">Tedaviler - Clinifly Admin</title>
   <link rel="stylesheet" href="/admin-layout.css?v=20260515"/>
   <script src="/api-base.js?v=202603301"></script>
-  <script src="/admin-i18n.js"></script>
+  <script src="/admin-i18n.js?v=37"></script>
   <style>
     body { font-family: system-ui; }
     /* Treatment page has its own dark UI — override the layout background for this page */
@@ -585,6 +585,9 @@
     if (!window.i18n || typeof window.i18n.t !== 'function') return;
     try {
       document.title = t('treatment.pageTitle');
+      const headerTitle = t('treatment.headerTitle') || t('dashboard.nav.treatment');
+      const alPt = document.getElementById('alPageTitle');
+      if (alPt) alPt.textContent = headerTitle;
       const ps = document.getElementById('procStatus');
       if (ps) {
         const cur = ps.value;
@@ -1118,10 +1121,37 @@
     }
   }
 
-  // Reload procedure dropdown + form labels when admin changes language
-  window.onI18nUpdated = function () {
+  function refreshTreatmentStatusMsg() {
+    if (!DATA || !Array.isArray(DATA.teeth)) return;
+    if (DATA.teeth.length === 0) {
+      const elContent = document.getElementById('content');
+      if (elContent && elContent.style.display !== 'none') {
+        setMsg(t('treatment.noRecordsYet'), 'muted');
+      }
+      return;
+    }
+    const procCount = DATA.teeth.reduce(
+      (sum, tooth) => sum + (tooth.procedures?.length || 0),
+      0,
+    );
+    setMsg(
+      t('treatment.loadedSummary', {
+        teethCount: DATA.teeth.length,
+        procCount,
+      }),
+      'ok',
+    );
+  }
+
+  function syncTreatmentPageChrome() {
     applyTreatmentFormI18n();
-    loadProcedureDefs().then(() => {
+    refreshTreatmentStatusMsg();
+  }
+
+  window.rerenderTreatment = function () {
+    applyTreatmentFormI18n();
+    refreshTreatmentStatusMsg();
+    return loadProcedureDefs().then(() => {
       renderSelectedToothList();
       renderDiagnoses();
       renderToothDiagnosisSummary();
@@ -2886,10 +2916,21 @@
   }
 
   // ── Entry point ──────────────────────────────────────────────────────────────
+  document.addEventListener('admin-language-changed', syncTreatmentPageChrome);
+  document.addEventListener('i18n:ready', syncTreatmentPageChrome);
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { init(); loadClinicName(); });
+    document.addEventListener('DOMContentLoaded', () => {
+      init();
+      loadClinicName();
+      setTimeout(syncTreatmentPageChrome, 0);
+      setTimeout(syncTreatmentPageChrome, 150);
+    });
   } else {
-    init(); loadClinicName();
+    init();
+    loadClinicName();
+    setTimeout(syncTreatmentPageChrome, 0);
+    setTimeout(syncTreatmentPageChrome, 150);
   }
 </script>
 
